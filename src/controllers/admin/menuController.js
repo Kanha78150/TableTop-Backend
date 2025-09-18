@@ -1,0 +1,667 @@
+import { FoodCategory } from "../../models/FoodCategory.model.js";
+import { FoodItem } from "../../models/FoodItem.model.js";
+import { Offer } from "../../models/Offer.model.js";
+import { APIResponse } from "../../utils/APIResponse.js";
+import { APIError } from "../../utils/APIError.js";
+
+// Food Category Management
+export const getAllCategories = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      branchId,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
+
+    const query = {};
+
+    if (search) {
+      query.name = new RegExp(search, "i");
+    }
+
+    if (branchId) {
+      query.branch = branchId;
+    }
+
+    // Filter by assigned branches if admin has limited access
+    if (req.admin.role === "branch_admin") {
+      query.branch = { $in: req.admin.assignedBranches };
+    }
+
+    const skip = (page - 1) * limit;
+    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
+    const categories = await FoodCategory.find(query)
+      .populate("branch", "name branchId location")
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const totalCategories = await FoodCategory.countDocuments(query);
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          categories,
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: Math.ceil(totalCategories / limit),
+            totalCategories,
+            hasNextPage: page < Math.ceil(totalCategories / limit),
+            hasPrevPage: page > 1,
+          },
+        },
+        "Categories retrieved successfully"
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createCategory = async (req, res, next) => {
+  try {
+    const { name, description, branchId, isActive = true } = req.body;
+
+    // Check if admin has access to this branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(branchId)
+    ) {
+      return next(new APIError(403, "You don't have access to this branch"));
+    }
+
+    // Check if category with same name exists in this branch
+    const existingCategory = await FoodCategory.findOne({
+      name,
+      branch: branchId,
+    });
+    if (existingCategory) {
+      return next(
+        new APIError(
+          400,
+          "Category with this name already exists in this branch"
+        )
+      );
+    }
+
+    const category = new FoodCategory({
+      name,
+      description,
+      branch: branchId,
+      isActive,
+    });
+
+    await category.save();
+
+    const populatedCategory = await FoodCategory.findById(
+      category._id
+    ).populate("branch", "name branchId location");
+
+    res
+      .status(201)
+      .json(
+        new APIResponse(
+          201,
+          { category: populatedCategory },
+          "Category created successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateCategory = async (req, res, next) => {
+  try {
+    const { categoryId } = req.params;
+    const updates = req.body;
+
+    const category = await FoodCategory.findById(categoryId).populate("branch");
+    if (!category) {
+      return next(new APIError(404, "Category not found"));
+    }
+
+    // Check if admin has access to this category's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(category.branch._id)
+    ) {
+      return next(new APIError(403, "You don't have access to this category"));
+    }
+
+    const updatedCategory = await FoodCategory.findByIdAndUpdate(
+      categoryId,
+      updates,
+      { new: true, runValidators: true }
+    ).populate("branch", "name branchId location");
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { category: updatedCategory },
+          "Category updated successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteCategory = async (req, res, next) => {
+  try {
+    const { categoryId } = req.params;
+
+    const category = await FoodCategory.findById(categoryId).populate("branch");
+    if (!category) {
+      return next(new APIError(404, "Category not found"));
+    }
+
+    // Check if admin has access to this category's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(category.branch._id)
+    ) {
+      return next(new APIError(403, "You don't have access to this category"));
+    }
+
+    // Check if category has food items
+    const itemCount = await FoodItem.countDocuments({ category: categoryId });
+    if (itemCount > 0) {
+      return next(
+        new APIError(400, "Cannot delete category with existing food items")
+      );
+    }
+
+    await FoodCategory.findByIdAndDelete(categoryId);
+
+    res
+      .status(200)
+      .json(new APIResponse(200, null, "Category deleted successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Food Item Management
+export const getAllFoodItems = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      branchId,
+      categoryId,
+      isAvailable,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
+
+    const query = {};
+
+    if (search) {
+      query.$or = [
+        { name: new RegExp(search, "i") },
+        { description: new RegExp(search, "i") },
+      ];
+    }
+
+    if (branchId) {
+      query.branch = branchId;
+    }
+
+    if (categoryId) {
+      query.category = categoryId;
+    }
+
+    if (isAvailable !== undefined) {
+      query.isAvailable = isAvailable === "true";
+    }
+
+    // Filter by assigned branches if admin has limited access
+    if (req.admin.role === "branch_admin") {
+      query.branch = { $in: req.admin.assignedBranches };
+    }
+
+    const skip = (page - 1) * limit;
+    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
+    const foodItems = await FoodItem.find(query)
+      .populate("branch", "name branchId location")
+      .populate("category", "name")
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const totalFoodItems = await FoodItem.countDocuments(query);
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          foodItems,
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: Math.ceil(totalFoodItems / limit),
+            totalFoodItems,
+            hasNextPage: page < Math.ceil(totalFoodItems / limit),
+            hasPrevPage: page > 1,
+          },
+        },
+        "Food items retrieved successfully"
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createFoodItem = async (req, res, next) => {
+  try {
+    const {
+      name,
+      description,
+      price,
+      categoryId,
+      branchId,
+      isAvailable = true,
+      preparationTime,
+      ingredients,
+      allergens,
+      nutritionalInfo,
+      images,
+    } = req.body;
+
+    // Check if admin has access to this branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(branchId)
+    ) {
+      return next(new APIError(403, "You don't have access to this branch"));
+    }
+
+    // Check if food item with same name exists in this branch
+    const existingItem = await FoodItem.findOne({ name, branch: branchId });
+    if (existingItem) {
+      return next(
+        new APIError(
+          400,
+          "Food item with this name already exists in this branch"
+        )
+      );
+    }
+
+    const foodItem = new FoodItem({
+      name,
+      description,
+      price,
+      category: categoryId,
+      branch: branchId,
+      isAvailable,
+      preparationTime,
+      ingredients,
+      allergens,
+      nutritionalInfo,
+      images,
+    });
+
+    await foodItem.save();
+
+    const populatedFoodItem = await FoodItem.findById(foodItem._id)
+      .populate("branch", "name branchId location")
+      .populate("category", "name");
+
+    res
+      .status(201)
+      .json(
+        new APIResponse(
+          201,
+          { foodItem: populatedFoodItem },
+          "Food item created successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateFoodItem = async (req, res, next) => {
+  try {
+    const { itemId } = req.params;
+    const updates = req.body;
+
+    const foodItem = await FoodItem.findById(itemId).populate("branch");
+    if (!foodItem) {
+      return next(new APIError(404, "Food item not found"));
+    }
+
+    // Check if admin has access to this food item's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(foodItem.branch._id)
+    ) {
+      return next(new APIError(403, "You don't have access to this food item"));
+    }
+
+    // Check pricing permission for price updates
+    if (
+      updates.price !== undefined &&
+      !req.admin.hasPermission("managePricing")
+    ) {
+      return next(
+        new APIError(403, "You don't have permission to update pricing")
+      );
+    }
+
+    const updatedFoodItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
+      new: true,
+      runValidators: true,
+    })
+      .populate("branch", "name branchId location")
+      .populate("category", "name");
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { foodItem: updatedFoodItem },
+          "Food item updated successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteFoodItem = async (req, res, next) => {
+  try {
+    const { itemId } = req.params;
+
+    const foodItem = await FoodItem.findById(itemId).populate("branch");
+    if (!foodItem) {
+      return next(new APIError(404, "Food item not found"));
+    }
+
+    // Check if admin has access to this food item's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(foodItem.branch._id)
+    ) {
+      return next(new APIError(403, "You don't have access to this food item"));
+    }
+
+    await FoodItem.findByIdAndDelete(itemId);
+
+    res
+      .status(200)
+      .json(new APIResponse(200, null, "Food item deleted successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Bulk update food item availability
+export const updateFoodItemAvailability = async (req, res, next) => {
+  try {
+    const { itemIds, isAvailable } = req.body;
+
+    if (!Array.isArray(itemIds) || itemIds.length === 0) {
+      return next(new APIError(400, "Item IDs array is required"));
+    }
+
+    // Filter items based on admin's branch access
+    let query = { _id: { $in: itemIds } };
+    if (req.admin.role === "branch_admin") {
+      query.branch = { $in: req.admin.assignedBranches };
+    }
+
+    const result = await FoodItem.updateMany(
+      query,
+      { isAvailable },
+      { runValidators: true }
+    );
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          modifiedCount: result.modifiedCount,
+        },
+        `${result.modifiedCount} food items updated successfully`
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Offers Management
+export const getAllOffers = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      branchId,
+      isActive,
+      type,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = req.query;
+
+    const query = {};
+
+    if (search) {
+      query.$or = [
+        { title: new RegExp(search, "i") },
+        { description: new RegExp(search, "i") },
+        { couponCode: new RegExp(search, "i") },
+      ];
+    }
+
+    if (branchId) {
+      query.applicableBranches = branchId;
+    }
+
+    if (isActive !== undefined) {
+      query.isActive = isActive === "true";
+    }
+
+    if (type) {
+      query.type = type;
+    }
+
+    // Filter by assigned branches if admin has limited access
+    if (req.admin.role === "branch_admin") {
+      query.applicableBranches = { $in: req.admin.assignedBranches };
+    }
+
+    const skip = (page - 1) * limit;
+    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
+    const offers = await Offer.find(query)
+      .populate("applicableBranches", "name branchId location")
+      .populate("applicableItems", "name price")
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const totalOffers = await Offer.countDocuments(query);
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          offers,
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: Math.ceil(totalOffers / limit),
+            totalOffers,
+            hasNextPage: page < Math.ceil(totalOffers / limit),
+            hasPrevPage: page > 1,
+          },
+        },
+        "Offers retrieved successfully"
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createOffer = async (req, res, next) => {
+  try {
+    const {
+      title,
+      description,
+      type,
+      discountType,
+      discountValue,
+      minOrderAmount,
+      maxDiscountAmount,
+      couponCode,
+      validFrom,
+      validUntil,
+      usageLimit,
+      applicableBranches,
+      applicableItems,
+      isActive = true,
+    } = req.body;
+
+    // Check if admin has access to all specified branches
+    if (req.admin.role === "branch_admin") {
+      const hasAccess = applicableBranches.every((branchId) =>
+        req.admin.canAccessBranch(branchId)
+      );
+      if (!hasAccess) {
+        return next(
+          new APIError(
+            403,
+            "You don't have access to one or more specified branches"
+          )
+        );
+      }
+    }
+
+    // Check if coupon code already exists (if provided)
+    if (couponCode) {
+      const existingOffer = await Offer.findOne({ couponCode });
+      if (existingOffer) {
+        return next(new APIError(400, "Coupon code already exists"));
+      }
+    }
+
+    const offer = new Offer({
+      title,
+      description,
+      type,
+      discountType,
+      discountValue,
+      minOrderAmount,
+      maxDiscountAmount,
+      couponCode,
+      validFrom,
+      validUntil,
+      usageLimit,
+      applicableBranches,
+      applicableItems,
+      isActive,
+      createdBy: req.admin._id,
+    });
+
+    await offer.save();
+
+    const populatedOffer = await Offer.findById(offer._id)
+      .populate("applicableBranches", "name branchId location")
+      .populate("applicableItems", "name price");
+
+    res
+      .status(201)
+      .json(
+        new APIResponse(
+          201,
+          { offer: populatedOffer },
+          "Offer created successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateOffer = async (req, res, next) => {
+  try {
+    const { offerId } = req.params;
+    const updates = req.body;
+
+    const offer = await Offer.findById(offerId);
+    if (!offer) {
+      return next(new APIError(404, "Offer not found"));
+    }
+
+    // Check if admin has access to this offer's branches
+    if (req.admin.role === "branch_admin") {
+      const hasAccess = offer.applicableBranches.some((branchId) =>
+        req.admin.canAccessBranch(branchId)
+      );
+      if (!hasAccess) {
+        return next(new APIError(403, "You don't have access to this offer"));
+      }
+    }
+
+    const updatedOffer = await Offer.findByIdAndUpdate(offerId, updates, {
+      new: true,
+      runValidators: true,
+    })
+      .populate("applicableBranches", "name branchId location")
+      .populate("applicableItems", "name price");
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { offer: updatedOffer },
+          "Offer updated successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteOffer = async (req, res, next) => {
+  try {
+    const { offerId } = req.params;
+
+    const offer = await Offer.findById(offerId);
+    if (!offer) {
+      return next(new APIError(404, "Offer not found"));
+    }
+
+    // Check if admin has access to this offer's branches
+    if (req.admin.role === "branch_admin") {
+      const hasAccess = offer.applicableBranches.some((branchId) =>
+        req.admin.canAccessBranch(branchId)
+      );
+      if (!hasAccess) {
+        return next(new APIError(403, "You don't have access to this offer"));
+      }
+    }
+
+    await Offer.findByIdAndDelete(offerId);
+
+    res
+      .status(200)
+      .json(new APIResponse(200, null, "Offer deleted successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
