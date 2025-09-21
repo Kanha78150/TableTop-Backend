@@ -170,6 +170,7 @@ const adminSchema = new mongoose.Schema(
   }
 );
 
+// checking the github connection
 // Virtual field to check if account is locked
 adminSchema.virtual("isLocked").get(function () {
   return !!(this.lockUntil && this.lockUntil > Date.now());
