@@ -3,11 +3,21 @@ import {
   Manager,
   managerValidationSchemas,
 } from "../../models/Manager.model.js";
-import { Staff } from "../../models/Staff.model.js";
+import { Staff, staffValidationSchemas } from "../../models/Staff.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
 import { Branch } from "../../models/Branch.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import {
+  sendManagerWelcomeEmail,
+  sendStaffWelcomeEmail,
+} from "../../utils/emailService.js";
+import {
+  addServiceStatusToManagers,
+  addManagerServiceStatus,
+  addServiceStatusToStaff,
+  addStaffServiceStatus,
+} from "../../utils/hotelStatusHelper.js";
 
 // User Management
 export const getAllUsers = async (req, res, next) => {
@@ -223,7 +233,6 @@ export const getAllManagers = async (req, res, next) => {
       limit = 10,
       search,
       branchId,
-      status,
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;
@@ -251,8 +260,8 @@ export const getAllManagers = async (req, res, next) => {
     const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
     const managers = await Manager.find(query)
-      .populate("hotel", "name hotelId")
-      .populate("branch", "name branchId location")
+      .populate("hotel", "name hotelId status")
+      .populate("branch", "name branchId location status")
       .select("-password -refreshToken")
       .sort(sort)
       .skip(skip)
@@ -260,11 +269,14 @@ export const getAllManagers = async (req, res, next) => {
 
     const totalManagers = await Manager.countDocuments(query);
 
+    // Add service status to managers
+    const managersWithStatus = addServiceStatusToManagers(managers);
+
     res.status(200).json(
       new APIResponse(
         200,
         {
-          managers,
+          managers: managersWithStatus,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(totalManagers / limit),
@@ -290,14 +302,14 @@ export const getManagerById = async (req, res, next) => {
     if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
       // It's a valid MongoDB ObjectId
       manager = await Manager.findById(managerId)
-        .populate("hotel", "name hotelId location")
-        .populate("branch", "name branchId location")
+        .populate("hotel", "name hotelId location status")
+        .populate("branch", "name branchId location status")
         .select("-password -refreshToken");
     } else {
       // It's a custom employeeId (e.g., MGR-2025-00001)
       manager = await Manager.findOne({ employeeId: managerId })
-        .populate("hotel", "name hotelId location")
-        .populate("branch", "name branchId location")
+        .populate("hotel", "name hotelId location status")
+        .populate("branch", "name branchId location status")
         .select("-password -refreshToken");
     }
 
@@ -313,10 +325,17 @@ export const getManagerById = async (req, res, next) => {
       return next(new APIError(403, "You don't have access to this manager"));
     }
 
+    // Add service status to manager
+    const managerWithStatus = addManagerServiceStatus(manager);
+
     res
       .status(200)
       .json(
-        new APIResponse(200, { manager }, "Manager retrieved successfully")
+        new APIResponse(
+          200,
+          { manager: managerWithStatus },
+          "Manager retrieved successfully"
+        )
       );
   } catch (error) {
     next(error);
@@ -325,37 +344,72 @@ export const getManagerById = async (req, res, next) => {
 
 export const createManager = async (req, res, next) => {
   try {
-    const { name, email, phone, password, hotelId, branchId } = req.body;
+    // Validate request body using Joi schema
+    const { error } = managerValidationSchemas.register.validate(req.body);
+    if (error) {
+      return next(new APIError(400, error.details[0].message));
+    }
+
+    const {
+      name,
+      email,
+      phone,
+      password,
+      hotel: hotelId,
+      branch: branchId,
+    } = req.body;
+
+    console.log("Creating manager with data:", {
+      name,
+      email,
+      phone,
+      hotel: hotelId,
+      branch: branchId,
+    });
 
     // Only admins can create managers
-    if (req.admin.role !== "super_admin" && req.admin.role !== "branch_admin") {
+    if (!["admin", "super_admin", "branch_admin"].includes(req.admin.role)) {
       return next(new APIError(403, "Only admins can create managers"));
     }
 
-    // Validate hotel exists
-    const hotel = await Hotel.findById(hotelId);
+    // Validate hotel exists - support both auto-generated hotelId and MongoDB _id
+    let hotel;
+    if (hotelId.match(/^[0-9a-fA-F]{24}$/)) {
+      hotel = await Hotel.findById(hotelId);
+    } else {
+      hotel = await Hotel.findOne({ hotelId: hotelId });
+    }
     if (!hotel) {
       return next(new APIError(404, "Hotel not found"));
     }
 
-    // Validate branch exists and belongs to the specified hotel
-    const branch = await Branch.findById(branchId).populate("hotel");
-    if (!branch) {
-      return next(new APIError(404, "Branch not found"));
-    }
+    // Validate branch exists and belongs to the specified hotel (if branchId is provided)
+    let branch = null;
+    if (branchId) {
+      if (branchId.match(/^[0-9a-fA-F]{24}$/)) {
+        branch = await Branch.findById(branchId).populate("hotel");
+      } else {
+        branch = await Branch.findOne({ branchId: branchId }).populate("hotel");
+      }
 
-    if (branch.hotel._id.toString() !== hotelId) {
-      return next(
-        new APIError(400, "Branch does not belong to the specified hotel")
-      );
-    }
+      if (!branch) {
+        return next(new APIError(404, "Branch not found"));
+      }
 
-    // Check if admin has access to this branch
-    if (
-      req.admin.role === "branch_admin" &&
-      !req.admin.canAccessBranch(branchId)
-    ) {
-      return next(new APIError(403, "You don't have access to this branch"));
+      if (branch.hotel._id.toString() !== hotel._id.toString()) {
+        return next(
+          new APIError(400, "Branch does not belong to the specified hotel")
+        );
+      }
+
+      // Check if admin has access to this branch
+      if (
+        req.admin.role === "branch_admin" &&
+        req.admin.canAccessBranch &&
+        !req.admin.canAccessBranch(branch._id)
+      ) {
+        return next(new APIError(403, "You don't have access to this branch"));
+      }
     }
 
     // Check if manager with same email exists
@@ -364,21 +418,45 @@ export const createManager = async (req, res, next) => {
       return next(new APIError(400, "Manager with this email already exists"));
     }
 
+    // Store plain text password for email (before hashing)
+    const plainTextPassword = password;
+
     const manager = new Manager({
       name,
       email,
       phone,
       password,
-      hotel: hotelId,
-      branch: branchId,
+      hotel: hotel._id, // Always use MongoDB ObjectId for reference
+      branch: branch ? branch._id : null, // Use MongoDB ObjectId if branch exists, null if optional
     });
 
     await manager.save();
 
     const populatedManager = await Manager.findById(manager._id)
-      .populate("hotel", "name hotelId")
+      .populate("hotel", "name hotelId email")
       .populate("branch", "name branchId location")
       .select("-password -refreshToken");
+
+    // Send welcome email with credentials
+    try {
+      await sendManagerWelcomeEmail(
+        {
+          name: manager.name,
+          email: manager.email,
+          employeeId: manager.employeeId,
+          tempPassword: plainTextPassword,
+        },
+        {
+          name: hotel.name,
+          email: hotel.email,
+        },
+        branch ? { name: branch.name } : null
+      );
+      console.log(`Welcome email sent to manager: ${manager.email}`);
+    } catch (emailError) {
+      console.error("Failed to send welcome email to manager:", emailError);
+      // Don't fail the creation if email fails, just log the error
+    }
 
     res
       .status(201)
@@ -494,13 +572,127 @@ export const deleteManager = async (req, res, next) => {
   }
 };
 
+// Deactivate manager (set status to inactive)
+export const deactivateManager = async (req, res, next) => {
+  try {
+    const { managerId } = req.params;
+
+    // Try to find manager by MongoDB ObjectId first, then by custom employeeId
+    let manager;
+    if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
+      manager = await Manager.findById(managerId);
+    } else {
+      manager = await Manager.findOne({ employeeId: managerId });
+    }
+
+    if (!manager) {
+      return next(new APIError(404, "Manager not found"));
+    }
+
+    // Check if admin has access to this manager's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(manager.branch)
+    ) {
+      return next(new APIError(403, "You don't have access to this manager"));
+    }
+
+    if (manager.status === "inactive") {
+      return next(new APIError(400, "Manager is already inactive"));
+    }
+
+    // Update manager status
+    manager.status = "inactive";
+    manager.updatedAt = new Date();
+    await manager.save();
+
+    // Populate related data for service status
+    const populatedManager = await Manager.findById(manager._id)
+      .populate("hotel", "name hotelId status")
+      .populate("branch", "name branchId status")
+      .select("-password -refreshToken");
+
+    // Add service status
+    const managerWithStatus = addManagerServiceStatus(populatedManager);
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          managerWithStatus,
+          "Manager deactivated successfully. They will appear in search results but marked as no services provided."
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reactivate manager (set status to active)
+export const reactivateManager = async (req, res, next) => {
+  try {
+    const { managerId } = req.params;
+
+    // Try to find manager by MongoDB ObjectId first, then by custom employeeId
+    let manager;
+    if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
+      manager = await Manager.findById(managerId);
+    } else {
+      manager = await Manager.findOne({ employeeId: managerId });
+    }
+
+    if (!manager) {
+      return next(new APIError(404, "Manager not found"));
+    }
+
+    // Check if admin has access to this manager's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(manager.branch)
+    ) {
+      return next(new APIError(403, "You don't have access to this manager"));
+    }
+
+    if (manager.status === "active") {
+      return next(new APIError(400, "Manager is already active"));
+    }
+
+    // Update manager status
+    manager.status = "active";
+    manager.updatedAt = new Date();
+    await manager.save();
+
+    // Populate related data for service status
+    const populatedManager = await Manager.findById(manager._id)
+      .populate("hotel", "name hotelId status")
+      .populate("branch", "name branchId status")
+      .select("-password -refreshToken");
+
+    // Add service status
+    const managerWithStatus = addManagerServiceStatus(populatedManager);
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          managerWithStatus,
+          "Manager reactivated successfully. Services are now available."
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const updateManagerPermissions = async (req, res, next) => {
   try {
     const { managerId } = req.params;
     const { permissions } = req.body;
 
     // Only super admin can update manager permissions
-    if (req.admin.role !== "super_admin") {
+    if (!["admin", "super_admin"].includes(req.admin.role)) {
       return next(
         new APIError(403, "Only super admin can update manager permissions")
       );
@@ -602,7 +794,14 @@ export const getAllStaff = async (req, res, next) => {
     const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
     const staff = await Staff.find(query)
-      .populate("branch", "name branchId location")
+      .populate({
+        path: "branch",
+        select: "name branchId location status",
+        populate: {
+          path: "hotel",
+          select: "name hotelId status",
+        },
+      })
       .select("-password -refreshToken")
       .sort(sort)
       .skip(skip)
@@ -610,11 +809,14 @@ export const getAllStaff = async (req, res, next) => {
 
     const totalStaff = await Staff.countDocuments(query);
 
+    // Add service status to staff
+    const staffWithStatus = addServiceStatusToStaff(staff);
+
     res.status(200).json(
       new APIResponse(
         200,
         {
-          staff,
+          staff: staffWithStatus,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(totalStaff / limit),
@@ -633,59 +835,108 @@ export const getAllStaff = async (req, res, next) => {
 
 export const createStaff = async (req, res, next) => {
   try {
+    // Validate request body using Joi schema
+    const { error } = staffValidationSchemas.register.validate(req.body);
+    if (error) {
+      return next(new APIError(400, error.details[0].message));
+    }
+
     const {
       name,
       email,
       phone,
       password,
-      hotelId,
-      branchId,
+      hotel: hotelId,
+      branch: branchId,
       role,
       department,
-      managerId,
+      manager: managerId,
     } = req.body;
 
-    // Only admins can create staff and assign managers
-    if (req.admin.role !== "super_admin" && req.admin.role !== "branch_admin") {
-      return next(new APIError(403, "Only admins can create staff"));
+    console.log("Creating staff with data:", {
+      name,
+      email,
+      phone,
+      hotel: hotelId,
+      branch: branchId,
+      role,
+      department,
+      manager: managerId,
+    });
+
+    // Only admins and managers can create staff
+    if (
+      !["admin", "super_admin", "branch_admin", "branch_manager"].includes(
+        req.admin?.role || req.manager?.role
+      )
+    ) {
+      return next(
+        new APIError(403, "Only admins and managers can create staff")
+      );
     }
 
-    // Validate hotel exists
-    const hotel = await Hotel.findById(hotelId);
+    // Validate hotel exists - support both auto-generated hotelId and MongoDB _id
+    let hotel;
+    if (hotelId.match(/^[0-9a-fA-F]{24}$/)) {
+      hotel = await Hotel.findById(hotelId);
+    } else {
+      hotel = await Hotel.findOne({ hotelId: hotelId });
+    }
     if (!hotel) {
       return next(new APIError(404, "Hotel not found"));
     }
 
-    // Validate branch exists and belongs to the specified hotel
-    const branch = await Branch.findById(branchId).populate("hotel");
-    if (!branch) {
-      return next(new APIError(404, "Branch not found"));
-    }
+    // Validate branch exists and belongs to the specified hotel (if branchId is provided)
+    let branch = null;
+    if (branchId) {
+      if (branchId.match(/^[0-9a-fA-F]{24}$/)) {
+        branch = await Branch.findById(branchId).populate("hotel");
+      } else {
+        branch = await Branch.findOne({ branchId: branchId }).populate("hotel");
+      }
 
-    if (branch.hotel._id.toString() !== hotelId) {
-      return next(
-        new APIError(400, "Branch does not belong to the specified hotel")
-      );
-    }
+      if (!branch) {
+        return next(new APIError(404, "Branch not found"));
+      }
 
-    // Check if admin has access to this branch
-    if (
-      req.admin.role === "branch_admin" &&
-      !req.admin.canAccessBranch(branchId)
-    ) {
-      return next(new APIError(403, "You don't have access to this branch"));
+      if (branch.hotel._id.toString() !== hotel._id.toString()) {
+        return next(
+          new APIError(400, "Branch does not belong to the specified hotel")
+        );
+      }
+
+      // Check if admin has access to this branch
+      if (
+        (req.admin?.role === "branch_admin" &&
+          req.admin.canAccessBranch &&
+          !req.admin.canAccessBranch(branch._id)) ||
+        (req.manager?.role === "branch_manager" &&
+          req.manager.branch.toString() !== branch._id.toString())
+      ) {
+        return next(new APIError(403, "You don't have access to this branch"));
+      }
     }
 
     // Validate manager assignment - support both ObjectId and custom employeeId
+    let manager = null;
     if (managerId) {
-      let manager;
+      console.log("Looking for manager with ID:", managerId);
+
       if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
         // It's a valid MongoDB ObjectId
         manager = await Manager.findById(managerId).populate("branch hotel");
+        console.log(
+          "Found manager by ObjectId:",
+          manager ? "Found" : "Not found"
+        );
       } else {
         // It's a custom employeeId (e.g., MGR-2025-00001)
         manager = await Manager.findOne({ employeeId: managerId }).populate(
           "branch hotel"
+        );
+        console.log(
+          "Found manager by employeeId:",
+          manager ? "Found" : "Not found"
         );
       }
 
@@ -693,23 +944,52 @@ export const createStaff = async (req, res, next) => {
         return next(new APIError(404, "Manager not found"));
       }
 
-      // Ensure manager is from the same branch and hotel
-      if (manager.branch._id.toString() !== branchId) {
+      console.log("Manager found:", {
+        id: manager._id,
+        employeeId: manager.employeeId,
+        hasHotel: !!manager.hotel,
+        hotelId: manager.hotel?._id,
+        hasBranch: !!manager.branch,
+        branchId: manager.branch?._id,
+      });
+
+      // Ensure manager has hotel populated and is from the same hotel
+      if (!manager.hotel || !manager.hotel._id) {
         return next(
-          new APIError(400, "Manager must be from the same branch as staff")
+          new APIError(500, "Manager hotel data not properly populated")
         );
       }
 
-      if (manager.hotel._id.toString() !== hotelId) {
+      if (manager.hotel._id.toString() !== hotel._id.toString()) {
         return next(
           new APIError(400, "Manager must be from the same hotel as staff")
         );
       }
 
-      // Check if admin has access to the manager's branch
+      // If branch is specified, ensure manager is from the same branch
+      if (branch) {
+        if (!manager.branch || !manager.branch._id) {
+          return next(
+            new APIError(400, "Manager does not have a branch assigned")
+          );
+        }
+
+        if (manager.branch._id.toString() !== branch._id.toString()) {
+          return next(
+            new APIError(400, "Manager must be from the same branch as staff")
+          );
+        }
+      }
+
+      // Check if admin/manager has access to assign this manager
       if (
-        req.admin.role === "branch_admin" &&
-        !req.admin.canAccessBranch(manager.branch._id)
+        (req.admin?.role === "branch_admin" &&
+          req.admin.canAccessBranch &&
+          manager.branch &&
+          !req.admin.canAccessBranch(manager.branch._id)) ||
+        (req.manager?.role === "branch_manager" &&
+          manager.branch &&
+          req.manager.branch.toString() !== manager.branch._id.toString())
       ) {
         return next(
           new APIError(403, "You don't have access to assign this manager")
@@ -723,25 +1003,52 @@ export const createStaff = async (req, res, next) => {
       return next(new APIError(400, "Staff with this email already exists"));
     }
 
+    // Store plain text password for email (before hashing)
+    const plainTextPassword = password;
+
     const staff = new Staff({
       name,
       email,
       phone,
       password,
-      hotel: hotelId,
-      branch: branchId,
+      hotel: hotel._id, // Always use MongoDB ObjectId for reference
+      branch: branch ? branch._id : null, // Use MongoDB ObjectId if branch exists, null if optional
       role,
       department,
-      manager: managerId || null, // Admin can optionally assign a manager
+      manager: manager ? manager._id : null, // Use MongoDB ObjectId if manager exists, null if not assigned
     });
 
     await staff.save();
 
     const populatedStaff = await Staff.findById(staff._id)
-      .populate("hotel", "name hotelId")
+      .populate("hotel", "name hotelId email")
       .populate("branch", "name branchId location")
-      .populate("manager", "name employeeId email")
+      .populate("manager", "name employeeId")
       .select("-password -refreshToken");
+
+    // Send welcome email with credentials
+    try {
+      await sendStaffWelcomeEmail(
+        {
+          name: staff.name,
+          email: staff.email,
+          staffId: staff.staffId,
+          tempPassword: plainTextPassword,
+          role: staff.role,
+          department: staff.department,
+        },
+        {
+          name: hotel.name,
+          email: hotel.email,
+        },
+        branch ? { name: branch.name } : null,
+        manager ? { name: manager.name } : null
+      );
+      console.log(`Welcome email sent to staff: ${staff.email}`);
+    } catch (emailError) {
+      console.error("Failed to send welcome email to staff:", emailError);
+      // Don't fail the creation if email fails, just log the error
+    }
 
     res
       .status(201)
@@ -763,7 +1070,7 @@ export const updateStaff = async (req, res, next) => {
     const updates = req.body;
 
     // Only admins can update staff
-    if (req.admin.role !== "super_admin" && req.admin.role !== "branch_admin") {
+    if (!["admin", "super_admin", "branch_admin"].includes(req.admin.role)) {
       return next(new APIError(403, "Only admins can update staff"));
     }
 
@@ -771,8 +1078,18 @@ export const updateStaff = async (req, res, next) => {
     delete updates.password;
     delete updates.refreshToken;
 
-    // Get the current staff to check permissions
-    const currentStaff = await Staff.findById(staffId).populate("branch");
+    // Get the current staff to check permissions - support both MongoDB _id and staffId
+    let currentStaff;
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      // It's a MongoDB ObjectId
+      currentStaff = await Staff.findById(staffId).populate("branch");
+    } else {
+      // It's a staffId (auto-generated)
+      currentStaff = await Staff.findOne({ staffId: staffId }).populate(
+        "branch"
+      );
+    }
+
     if (!currentStaff) {
       return next(new APIError(404, "Staff not found"));
     }
@@ -816,13 +1133,27 @@ export const updateStaff = async (req, res, next) => {
       }
     }
 
-    const staff = await Staff.findByIdAndUpdate(staffId, updates, {
-      new: true,
-      runValidators: true,
-    })
-      .populate("branch", "name branchId location")
-      .populate("manager", "name employeeId email")
-      .select("-password -refreshToken");
+    // Update the staff using the correct query
+    let staff;
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      // It's a MongoDB ObjectId
+      staff = await Staff.findByIdAndUpdate(staffId, updates, {
+        new: true,
+        runValidators: true,
+      })
+        .populate("branch", "name branchId location")
+        .populate("manager", "name employeeId email")
+        .select("-password -refreshToken");
+    } else {
+      // It's a staffId (auto-generated)
+      staff = await Staff.findOneAndUpdate({ staffId: staffId }, updates, {
+        new: true,
+        runValidators: true,
+      })
+        .populate("branch", "name branchId location")
+        .populate("manager", "name employeeId email")
+        .select("-password -refreshToken");
+    }
 
     res
       .status(200)
@@ -836,7 +1167,16 @@ export const deleteStaff = async (req, res, next) => {
   try {
     const { staffId } = req.params;
 
-    const staff = await Staff.findById(staffId).populate("branch");
+    // Find staff by MongoDB ObjectId or staffId - support both formats
+    let staff;
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      // It's a MongoDB ObjectId
+      staff = await Staff.findById(staffId).populate("branch");
+    } else {
+      // It's a staffId (auto-generated)
+      staff = await Staff.findOne({ staffId: staffId }).populate("branch");
+    }
+
     if (!staff) {
       return next(new APIError(404, "Staff not found"));
     }
@@ -851,11 +1191,142 @@ export const deleteStaff = async (req, res, next) => {
       );
     }
 
-    await Staff.findByIdAndDelete(staffId);
+    // Delete using the MongoDB ObjectId
+    await Staff.findByIdAndDelete(staff._id);
 
     res
       .status(200)
       .json(new APIResponse(200, null, "Staff deleted successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Deactivate staff (set status to inactive)
+export const deactivateStaff = async (req, res, next) => {
+  try {
+    const { staffId } = req.params;
+
+    // Find staff by MongoDB ObjectId or staffId - support both formats
+    let staff;
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      staff = await Staff.findById(staffId);
+    } else {
+      staff = await Staff.findOne({ staffId: staffId });
+    }
+
+    if (!staff) {
+      return next(new APIError(404, "Staff not found"));
+    }
+
+    // Check if admin has access to this staff's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(staff.branch)
+    ) {
+      return next(
+        new APIError(403, "You don't have access to this staff member")
+      );
+    }
+
+    if (staff.status === "inactive") {
+      return next(new APIError(400, "Staff is already inactive"));
+    }
+
+    // Update staff status
+    staff.status = "inactive";
+    staff.updatedAt = new Date();
+    await staff.save();
+
+    // Populate related data for service status
+    const populatedStaff = await Staff.findById(staff._id)
+      .populate({
+        path: "branch",
+        select: "name branchId status",
+        populate: {
+          path: "hotel",
+          select: "name hotelId status",
+        },
+      })
+      .select("-password -refreshToken");
+
+    // Add service status
+    const staffWithStatus = addStaffServiceStatus(populatedStaff);
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          staffWithStatus,
+          "Staff deactivated successfully. They will appear in search results but marked as no services provided."
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reactivate staff (set status to active)
+export const reactivateStaff = async (req, res, next) => {
+  try {
+    const { staffId } = req.params;
+
+    // Find staff by MongoDB ObjectId or staffId - support both formats
+    let staff;
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      staff = await Staff.findById(staffId);
+    } else {
+      staff = await Staff.findOne({ staffId: staffId });
+    }
+
+    if (!staff) {
+      return next(new APIError(404, "Staff not found"));
+    }
+
+    // Check if admin has access to this staff's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(staff.branch)
+    ) {
+      return next(
+        new APIError(403, "You don't have access to this staff member")
+      );
+    }
+
+    if (staff.status === "active") {
+      return next(new APIError(400, "Staff is already active"));
+    }
+
+    // Update staff status
+    staff.status = "active";
+    staff.updatedAt = new Date();
+    await staff.save();
+
+    // Populate related data for service status
+    const populatedStaff = await Staff.findById(staff._id)
+      .populate({
+        path: "branch",
+        select: "name branchId status",
+        populate: {
+          path: "hotel",
+          select: "name hotelId status",
+        },
+      })
+      .select("-password -refreshToken");
+
+    // Add service status
+    const staffWithStatus = addStaffServiceStatus(populatedStaff);
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          staffWithStatus,
+          "Staff reactivated successfully. Services are now available."
+        )
+      );
   } catch (error) {
     next(error);
   }
@@ -868,14 +1339,22 @@ export const assignStaffToManager = async (req, res, next) => {
     const { managerId } = req.body;
 
     // Only admins can assign staff to managers
-    if (req.admin.role !== "super_admin" && req.admin.role !== "branch_admin") {
+    if (!["admin", "super_admin", "branch_admin"].includes(req.admin.role)) {
       return next(
         new APIError(403, "Only admins can assign staff to managers")
       );
     }
 
-    // Get staff details
-    const staff = await Staff.findById(staffId).populate("branch");
+    // Get staff details - support both MongoDB ObjectId and staffId
+    let staff;
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      // It's a MongoDB ObjectId
+      staff = await Staff.findById(staffId).populate("branch");
+    } else {
+      // It's a staffId (auto-generated)
+      staff = await Staff.findOne({ staffId: staffId }).populate("branch");
+    }
+
     if (!staff) {
       return next(new APIError(404, "Staff not found"));
     }
@@ -920,8 +1399,8 @@ export const assignStaffToManager = async (req, res, next) => {
     staff.manager = managerId || null;
     await staff.save();
 
-    // Populate the updated staff
-    const updatedStaff = await Staff.findById(staffId)
+    // Populate the updated staff using the MongoDB ObjectId
+    const updatedStaff = await Staff.findById(staff._id)
       .populate("branch", "name branchId location")
       .populate("manager", "name employeeId email")
       .select("-password -refreshToken");
@@ -955,7 +1434,7 @@ export const getStaffByManager = async (req, res, next) => {
     } = req.query;
 
     // Only admins can view staff assignments
-    if (req.admin.role !== "super_admin" && req.admin.role !== "branch_admin") {
+    if (!["admin", "super_admin", "branch_admin"].includes(req.admin.role)) {
       return next(new APIError(403, "Only admins can view staff assignments"));
     }
 

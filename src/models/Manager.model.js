@@ -46,7 +46,7 @@ const managerSchema = new mongoose.Schema(
     branch: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
-      required: [true, "Branch assignment is required"],
+      required: false,
     },
     hotel: {
       type: mongoose.Schema.Types.ObjectId,
@@ -122,6 +122,7 @@ const managerSchema = new mongoose.Schema(
       ref: "Admin", // Created by Super Admin
     },
     lastLogin: { type: Date },
+    isFirstLogin: { type: Boolean, default: true }, // Flag to track first login
 
     // Additional manager info
     shiftSchedule: {
@@ -170,8 +171,11 @@ managerSchema.pre("save", async function (next) {
     }
   }
 
-  // Validate hotel-branch relationship
-  if (this.isNew || this.isModified("hotel") || this.isModified("branch")) {
+  // Validate hotel-branch relationship (only if branch is provided)
+  if (
+    (this.isNew || this.isModified("hotel") || this.isModified("branch")) &&
+    this.branch
+  ) {
     try {
       const Branch = this.constructor.model("Branch");
       const branch = await Branch.findById(this.branch).populate("hotel");
@@ -275,21 +279,13 @@ export const managerValidationSchemas = {
       "string.max": "Employee ID cannot exceed 20 characters",
     }),
 
-    hotel: Joi.string()
-      .pattern(/^[0-9a-fA-F]{24}$/)
-      .required()
-      .messages({
-        "string.pattern.base": "Invalid hotel ID format",
-        "string.empty": "Hotel assignment is required",
-      }),
+    hotel: Joi.string().required().messages({
+      "string.empty": "Hotel assignment is required",
+    }),
 
-    branch: Joi.string()
-      .pattern(/^[0-9a-fA-F]{24}$/)
-      .required()
-      .messages({
-        "string.pattern.base": "Invalid branch ID format",
-        "string.empty": "Branch assignment is required",
-      }),
+    branch: Joi.string().optional().allow(null, "").messages({
+      "string.base": "Branch ID must be a string",
+    }),
 
     department: Joi.string()
       .valid("operations", "kitchen", "service", "management")
@@ -322,9 +318,8 @@ export const managerValidationSchemas = {
 
   // Login validation
   login: Joi.object({
-    email: Joi.string().email().trim().lowercase().required().messages({
-      "string.email": "Please provide a valid email address",
-      "string.empty": "Email is required",
+    identifier: Joi.string().trim().required().messages({
+      "string.empty": "Email or Employee ID is required",
     }),
 
     password: Joi.string().min(6).required().messages({

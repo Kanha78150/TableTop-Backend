@@ -1,3 +1,53 @@
+// Update admin profile
+export const updateAdminProfile = async (req, res, next) => {
+  try {
+    const allowedUpdates = ["name", "phone", "profileImage"];
+    const updates = {};
+    allowedUpdates.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+    const admin = await Admin.findByIdAndUpdate(req.admin._id, updates, {
+      new: true,
+      runValidators: true,
+    });
+    if (!admin) {
+      return next(new APIError(404, "Admin not found"));
+    }
+    res
+      .status(200)
+      .json(new APIResponse(200, { admin }, "Profile updated successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
+// ...existing code...
+
+// Change password
+export const changePassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return next(new APIError(400, "Current and new password are required"));
+    }
+    const admin = await Admin.findById(req.admin._id);
+    if (!admin) {
+      return next(new APIError(404, "Admin not found"));
+    }
+    const isCurrentPasswordValid = await admin.comparePassword(currentPassword);
+    if (!isCurrentPasswordValid) {
+      return next(new APIError(400, "Current password is incorrect"));
+    }
+    admin.password = newPassword;
+    await admin.save();
+    res
+      .status(200)
+      .json(new APIResponse(200, null, "Password changed successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
 import {
   Admin,
   validateAdmin,
@@ -10,6 +60,7 @@ import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import { sendEmail } from "../../utils/emailService.js";
+import { generateOtp } from "../../utils/otpGenerator.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
@@ -20,6 +71,52 @@ const generateResetToken = () => {
 };
 
 // Helper function to set auth cookies
+// Request password reset for admin
+export const requestAdminPasswordReset = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    const admin = await Admin.findOne({ email });
+    if (!admin) {
+      return next(new APIError(404, "Admin not found"));
+    }
+    const token = generateResetToken();
+    admin.resetPasswordToken = token;
+    admin.resetPasswordExpires = Date.now() + 3600000; // 1 hour
+    await admin.save();
+    // Send email with reset link
+    const resetUrl = `${process.env.FRONTEND_URL}/admin/reset-password?token=${token}&email=${email}`;
+    await sendEmail({
+      to: email,
+      subject: "Admin Password Reset",
+      text: `Reset your password using this link: ${resetUrl}`,
+    });
+    res.json(new APIResponse(200, null, "Password reset email sent"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reset admin password using token
+export const resetAdminPassword = async (req, res, next) => {
+  try {
+    const { email, token, newPassword } = req.body;
+    const admin = await Admin.findOne({
+      email,
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() },
+    });
+    if (!admin) {
+      return next(new APIError(400, "Invalid or expired token"));
+    }
+    admin.password = await bcrypt.hash(newPassword, 12);
+    admin.resetPasswordToken = null;
+    admin.resetPasswordExpires = null;
+    await admin.save();
+    res.json(new APIResponse(200, null, "Password reset successful"));
+  } catch (error) {
+    next(error);
+  }
+};
 const setAuthCookies = (res, tokens) => {
   const cookieOptions = {
     httpOnly: true,
@@ -38,131 +135,7 @@ const setAuthCookies = (res, tokens) => {
   });
 };
 
-// Register new admin (only super_admin can create other admins)
-// Note: Admin registration function commented out - admin layer removed
-// Only Super Admin (via bootstrap) and Branch Admin roles exist now
-/*
-export const registerAdmin = async (req, res, next) => {
-  try {
-    const { error } = validateAdmin(req.body);
-    if (error) {
-      return next(new APIError(400, error.details[0].message));
-    }
-
-    const {
-      name,
-      email,
-      phone,
-      password,
-      role = "admin",
-      department,
-      employeeId,
-      assignedBranches,
-      permissions,
-      notes,
-    } = req.body;
-
-    // Check if admin with same email already exists
-    const existingAdmin = await Admin.findOne({ email });
-    if (existingAdmin) {
-      return next(new APIError(400, "Admin with this email already exists"));
-    }
-
-    // Check if employee ID is provided and unique
-    if (employeeId) {
-      const existingEmployeeId = await Admin.findOne({ employeeId });
-      if (existingEmployeeId) {
-        return next(new APIError(400, "Employee ID already exists"));
-      }
-    }
-
-    // Set default permissions based on role
-    let adminPermissions = permissions || {};
-    if (role === "super_admin") {
-      adminPermissions = {
-        manageBranches: true,
-        manageUsers: true,
-        manageManagers: true,
-        manageStaff: true,
-        manageMenu: true,
-        managePricing: true,
-        manageOffers: true,
-        viewReports: true,
-        viewAnalytics: true,
-        viewFinancials: true,
-        manageInventory: true,
-        manageSystem: true,
-        manageAdmins: true,
-      };
-    } else if (role === "branch_admin") {
-      adminPermissions = {
-        manageBranches: false,
-        manageUsers: true,
-        manageManagers: false,
-        manageStaff: true,
-        manageMenu: true,
-        managePricing: false,
-        manageOffers: true,
-        viewReports: true,
-        viewAnalytics: true,
-        viewFinancials: false,
-        manageInventory: true,
-        manageSystem: false,
-        manageAdmins: false,
-      };
-    }
-
-    const admin = new Admin({
-      name,
-      email,
-      phone,
-      password,
-      role,
-      department,
-      employeeId,
-      assignedBranches,
-      permissions: adminPermissions,
-      notes,
-      createdBy: req.admin ? req.admin._id : null,
-      emailVerificationToken: crypto.randomBytes(32).toString("hex"),
-    });
-
-    await admin.save();
-
-    // Send verification email
-    const verificationUrl = `${process.env.FRONTEND_URL}/admin/verify-email?token=${admin.emailVerificationToken}`;
-    await sendEmail({
-      to: admin.email,
-      subject: "Admin Account Created - Verify Your Email",
-      template: "admin-welcome",
-      data: {
-        name: admin.name,
-        verificationUrl,
-        role: admin.role,
-      },
-    });
-
-    res.status(201).json(
-      new APIResponse(
-        201,
-        {
-          admin: {
-            id: admin._id,
-            name: admin.name,
-            email: admin.email,
-            role: admin.role,
-            department: admin.department,
-            status: admin.status,
-          },
-        },
-        "Admin created successfully. Verification email sent."
-      )
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-*/
+// ...existing code...
 
 // Admin login
 export const loginAdmin = async (req, res, next) => {
@@ -350,72 +323,68 @@ export const getAdminProfile = async (req, res, next) => {
 };
 
 // Update admin profile
-export const updateAdminProfile = async (req, res, next) => {
+export const registerAdmin = async (req, res, next) => {
   try {
-    const { error } = validateAdminUpdate(req.body);
+    const { error } = validateAdmin(req.body);
     if (error) {
       return next(new APIError(400, error.details[0].message));
     }
 
-    const allowedUpdates = ["name", "phone", "department"];
-    const updates = {};
+    const { name, email, phone, password, profileImage } = req.body;
 
-    // Only allow certain fields to be updated by the admin themselves
-    allowedUpdates.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
-      }
+    // Check if admin with same email already exists
+    const existingAdmin = await Admin.findOne({ email });
+    if (existingAdmin) {
+      return next(new APIError(400, "Admin with this email already exists"));
+    }
+
+    // Generate OTP and expiry
+    const otp = generateOtp();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    const admin = new Admin({
+      name,
+      email,
+      phone,
+      password,
+      profileImage: profileImage || null,
+      role: "admin",
+      status: "active",
+      emailVerified: false,
+      emailVerificationOtp: otp,
+      emailVerificationOtpExpiry: otpExpiry,
     });
 
-    const admin = await Admin.findByIdAndUpdate(req.admin._id, updates, {
-      new: true,
-      runValidators: true,
-    }).populate("assignedBranches", "name branchId location");
-
-    if (!admin) {
-      return next(new APIError(404, "Admin not found"));
-    }
-
-    res
-      .status(200)
-      .json(new APIResponse(200, { admin }, "Profile updated successfully"));
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Change password
-export const changePassword = async (req, res, next) => {
-  try {
-    const { error } = validatePasswordChange(req.body);
-    if (error) {
-      return next(new APIError(400, error.details[0].message));
-    }
-
-    const { currentPassword, newPassword } = req.body;
-
-    const admin = await Admin.findById(req.admin._id);
-    if (!admin) {
-      return next(new APIError(404, "Admin not found"));
-    }
-
-    // Verify current password
-    const isCurrentPasswordValid = await admin.comparePassword(currentPassword);
-    if (!isCurrentPasswordValid) {
-      return next(new APIError(400, "Current password is incorrect"));
-    }
-
-    // Update password
-    admin.password = newPassword;
     await admin.save();
 
-    res
-      .status(200)
-      .json(new APIResponse(200, null, "Password changed successfully"));
+    // Send OTP email
+    await sendEmail({
+      to: admin.email,
+      subject: "Verify your admin account",
+      text: `Your OTP for email verification is: ${otp}`,
+    });
+
+    res.status(201).json(
+      new APIResponse(
+        201,
+        {
+          admin: {
+            id: admin._id,
+            name: admin.name,
+            email: admin.email,
+            role: admin.role,
+            status: admin.status,
+            profileImage: admin.profileImage,
+          },
+        },
+        "Admin created successfully. Please verify your email using the OTP sent to your email before logging in."
+      )
+    );
   } catch (error) {
     next(error);
   }
 };
+// ...existing code...
 
 // Forgot password
 export const forgotPassword = async (req, res, next) => {
@@ -507,22 +476,38 @@ export const resetPassword = async (req, res, next) => {
   }
 };
 
-// Verify email
+// Verify email by OTP
 export const verifyEmail = async (req, res, next) => {
   try {
-    const { token } = req.query;
+    const { email, otp } = req.body;
 
-    if (!token) {
-      return next(new APIError(400, "Verification token is required"));
+    if (!email || !otp) {
+      return next(new APIError(400, "Email and OTP are required"));
     }
 
-    const admin = await Admin.findOne({ emailVerificationToken: token });
+    const admin = await Admin.findOne({ email });
     if (!admin) {
-      return next(new APIError(400, "Invalid verification token"));
+      return next(new APIError(404, "Admin not found"));
+    }
+
+    if (admin.emailVerified) {
+      return res
+        .status(200)
+        .json(new APIResponse(200, null, "Email already verified"));
+    }
+
+    if (
+      !admin.emailVerificationOtp ||
+      admin.emailVerificationOtp !== otp ||
+      !admin.emailVerificationOtpExpiry ||
+      admin.emailVerificationOtpExpiry < new Date()
+    ) {
+      return next(new APIError(400, "Invalid or expired OTP"));
     }
 
     admin.emailVerified = true;
-    admin.emailVerificationToken = undefined;
+    admin.emailVerificationOtp = undefined;
+    admin.emailVerificationOtpExpiry = undefined;
     await admin.save();
 
     res

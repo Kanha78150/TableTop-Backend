@@ -35,13 +35,21 @@ const adminSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: {
-        values: ["super_admin"],
-        message: "Role must be super_admin",
+        values: ["admin"],
+        message: "Role must be admin",
       },
-      default: "super_admin",
+      default: "admin",
     },
     permissions: {
       // Branch Management
+      resetPasswordToken: {
+        type: String,
+        default: null,
+      },
+      resetPasswordExpires: {
+        type: Date,
+        default: null,
+      },
       manageBranches: { type: Boolean, default: true },
 
       // User Management
@@ -119,8 +127,12 @@ const adminSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    emailVerificationToken: {
+    emailVerificationOtp: {
       type: String,
+      default: null,
+    },
+    emailVerificationOtpExpiry: {
+      type: Date,
       default: null,
     },
     twoFactorEnabled: {
@@ -248,7 +260,8 @@ export const validateAdmin = (data) => {
           "Phone number must be between 10-15 digits and can include +, spaces, -, (, )",
       }),
     password: Joi.string().min(6).required(),
-    role: Joi.string().valid("super_admin").optional(),
+    profileImage: Joi.string().uri().optional().allow(null, ""),
+    role: Joi.string().valid("admin").optional(),
     department: Joi.string()
       .valid("operations", "finance", "marketing", "hr", "it", "system")
       .optional(),

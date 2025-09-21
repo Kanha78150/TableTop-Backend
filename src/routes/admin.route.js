@@ -9,6 +9,7 @@ import {
   updateHotel,
   deleteHotel,
   deactivateHotel,
+  reactivateHotel,
   searchHotels,
   searchHotelsByLocation,
 } from "../controllers/admin/hotelController.js";
@@ -19,6 +20,8 @@ import {
   getBranchById,
   updateBranch,
   deleteBranch,
+  deactivateBranch,
+  reactivateBranch,
   searchBranchesByLocation,
   getBranchesByHotel,
 } from "../controllers/admin/branchController.js";
@@ -37,10 +40,14 @@ import {
   updateManager,
   updateManagerPermissions,
   deleteManager,
+  deactivateManager,
+  reactivateManager,
   getAllStaff,
   createStaff,
   updateStaff,
   deleteStaff,
+  deactivateStaff,
+  reactivateStaff,
   assignStaffToManager,
   getStaffByManager,
 } from "../controllers/admin/userController.js";
@@ -118,8 +125,22 @@ router.put(
   updateHotel
 );
 
-router.delete("/hotels/:hotelId", requireSuperAdmin, deleteHotel);
-router.patch("/hotels/:hotelId/deactivate", requireSuperAdmin, deactivateHotel);
+router.delete(
+  "/hotels/:hotelId",
+  rbac({ roles: ["admin", "super_admin"] }),
+  deleteHotel
+);
+router.patch(
+  "/hotels/:hotelId/deactivate",
+  rbac({ roles: ["admin", "super_admin"] }),
+  deactivateHotel
+);
+
+router.patch(
+  "/hotels/:hotelId/reactivate",
+  rbac({ roles: ["admin", "super_admin"] }),
+  reactivateHotel
+);
 
 router.get(
   "/hotels/:hotelId/branches",
@@ -156,23 +177,42 @@ router.get(
 
 router.get(
   "/branches/:branchId",
-  rbac({ permissions: ["manageBranches"], branchAccess: true }),
+  rbac({ permissions: ["manageBranches"] }),
   getBranchById
 );
 
 router.put(
   "/branches/:branchId",
-  rbac({ permissions: ["manageBranches"], branchAccess: true }),
+  rbac({ permissions: ["manageBranches"] }),
   updateBranch
 );
 
 router.delete(
   "/branches/:branchId",
   rbac({
-    roles: ["super_admin", "branch_admin"],
+    roles: ["admin", "super_admin", "branch_admin"],
     permissions: ["manageBranches"],
   }),
   deleteBranch
+);
+
+// Branch deactivation/reactivation routes
+router.patch(
+  "/branches/:branchId/deactivate",
+  rbac({
+    roles: ["admin", "super_admin", "branch_admin"],
+    permissions: ["manageBranches"],
+  }),
+  deactivateBranch
+);
+
+router.patch(
+  "/branches/:branchId/reactivate",
+  rbac({
+    roles: ["admin", "super_admin", "branch_admin"],
+    permissions: ["manageBranches"],
+  }),
+  reactivateBranch
 );
 
 // ======================
@@ -239,9 +279,22 @@ router.delete(
   deleteManager
 );
 
+// Manager deactivation/reactivation routes
+router.patch(
+  "/managers/:managerId/deactivate",
+  rbac({ permissions: ["manageManagers"] }),
+  deactivateManager
+);
+
+router.patch(
+  "/managers/:managerId/reactivate",
+  rbac({ permissions: ["manageManagers"] }),
+  reactivateManager
+);
+
 router.put(
   "/managers/:managerId/permissions",
-  requireSuperAdmin,
+  rbac({ roles: ["admin", "super_admin"] }),
   updateManagerPermissions
 );
 
@@ -260,6 +313,19 @@ router.delete(
   "/staff/:staffId",
   rbac({ permissions: ["manageStaff"] }),
   deleteStaff
+);
+
+// Staff deactivation/reactivation routes
+router.patch(
+  "/staff/:staffId/deactivate",
+  rbac({ permissions: ["manageStaff"] }),
+  deactivateStaff
+);
+
+router.patch(
+  "/staff/:staffId/reactivate",
+  rbac({ permissions: ["manageStaff"] }),
+  reactivateStaff
 );
 
 // Staff-Manager Assignment (Admin Only)

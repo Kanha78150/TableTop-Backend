@@ -7,6 +7,10 @@ import {
 import { Hotel } from "../../models/Hotel.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import {
+  addServiceStatusToBranches,
+  addBranchServiceStatus,
+} from "../../utils/hotelStatusHelper.js";
 
 // Create a new branch
 export const createBranch = async (req, res, next) => {
@@ -16,8 +20,20 @@ export const createBranch = async (req, res, next) => {
       return next(new APIError(400, error.details[0].message));
     }
 
-    // Check if hotel exists
-    const hotel = await Hotel.findById(req.body.hotel);
+    // Check if hotel exists - support both auto-generated hotelId and MongoDB _id
+    let hotel;
+    const hotelIdentifier = req.body.hotel;
+
+    // Try to find by MongoDB ObjectId first
+    if (hotelIdentifier.match(/^[0-9a-fA-F]{24}$/)) {
+      hotel = await Hotel.findById(hotelIdentifier);
+    }
+
+    // If not found by ObjectId, try to find by auto-generated hotelId
+    if (!hotel) {
+      hotel = await Hotel.findOne({ hotelId: hotelIdentifier });
+    }
+
     if (!hotel) {
       return next(new APIError(404, "Hotel not found"));
     }
@@ -30,7 +46,10 @@ export const createBranch = async (req, res, next) => {
       return next(new APIError(400, "Branch with this email already exists"));
     }
 
-    const branch = new Branch(req.body);
+    const branch = new Branch({
+      ...req.body,
+      hotel: hotel._id, // Always use the MongoDB ObjectId for the reference
+    });
     await branch.save();
 
     // Populate hotel information
@@ -51,14 +70,13 @@ export const getAllBranches = async (req, res, next) => {
       hotelId,
       city,
       state,
-      status = "active",
       page = 1,
       limit = 10,
       sortBy = "createdAt",
       sortOrder = "desc",
     } = req.query;
 
-    const query = { status };
+    const query = {};
 
     if (hotelId) {
       const hotel = await Hotel.findOne({ hotelId });
@@ -82,15 +100,18 @@ export const getAllBranches = async (req, res, next) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
-      .populate("hotel", "name hotelId mainLocation");
+      .populate("hotel", "name hotelId mainLocation status");
 
     const totalBranches = await Branch.countDocuments(query);
+
+    // Add service status to branches
+    const branchesWithStatus = addServiceStatusToBranches(branches);
 
     res.status(200).json(
       new APIResponse(
         200,
         {
-          branches,
+          branches: branchesWithStatus,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(totalBranches / limit),
@@ -114,16 +135,21 @@ export const getBranchById = async (req, res, next) => {
 
     const branch = await Branch.findOne({ branchId }).populate(
       "hotel",
-      "name hotelId mainLocation contactInfo"
+      "name hotelId mainLocation contactInfo status"
     );
 
     if (!branch) {
       return next(new APIError(404, "Branch not found"));
     }
 
+    // Add service status to branch
+    const branchWithStatus = addBranchServiceStatus(branch);
+
     res
       .status(200)
-      .json(new APIResponse(200, branch, "Branch retrieved successfully"));
+      .json(
+        new APIResponse(200, branchWithStatus, "Branch retrieved successfully")
+      );
   } catch (error) {
     next(error);
   }
@@ -161,19 +187,148 @@ export const deleteBranch = async (req, res, next) => {
   try {
     const { branchId } = req.params;
 
-    const branch = await Branch.findOneAndUpdate(
-      { branchId },
-      { status: "inactive" },
-      { new: true }
-    );
-
+    // Find the branch first to check if it exists
+    const branch = await Branch.findOne({ branchId });
     if (!branch) {
       return next(new APIError(404, "Branch not found"));
     }
 
+    // Check if there are any active managers, staff, or bookings associated with this branch
+    const [activeManagers, activeStaff, activeBookings] = await Promise.all([
+      // Check for managers in this branch
+      req.app
+        .get("models")
+        ?.Manager?.countDocuments({ branch: branch._id, status: "active" }) ||
+        0,
+      // Check for staff in this branch
+      req.app
+        .get("models")
+        ?.Staff?.countDocuments({ branch: branch._id, status: "active" }) || 0,
+      // Check for active bookings in this branch
+      req.app.get("models")?.Booking?.countDocuments({
+        branch: branch._id,
+        status: { $in: ["confirmed", "pending"] },
+      }) || 0,
+    ]);
+
+    // Prevent deletion if there are active associations
+    if (activeManagers > 0) {
+      return next(
+        new APIError(
+          400,
+          `Cannot delete branch: ${activeManagers} active manager(s) still assigned to this branch`
+        )
+      );
+    }
+    if (activeStaff > 0) {
+      return next(
+        new APIError(
+          400,
+          `Cannot delete branch: ${activeStaff} active staff member(s) still assigned to this branch`
+        )
+      );
+    }
+    if (activeBookings > 0) {
+      return next(
+        new APIError(
+          400,
+          `Cannot delete branch: ${activeBookings} active booking(s) still exist for this branch`
+        )
+      );
+    }
+
+    // Completely delete the branch from database
+    await Branch.findOneAndDelete({ branchId });
+
     res
       .status(200)
-      .json(new APIResponse(200, null, "Branch deleted successfully"));
+      .json(
+        new APIResponse(200, null, "Branch permanently deleted from database")
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Deactivate branch (set status to inactive)
+export const deactivateBranch = async (req, res, next) => {
+  try {
+    const { branchId } = req.params;
+
+    const branch = await Branch.findOne({ branchId });
+    if (!branch) {
+      return next(new APIError(404, "Branch not found"));
+    }
+
+    if (branch.status === "inactive") {
+      return next(new APIError(400, "Branch is already inactive"));
+    }
+
+    // Update branch status
+    branch.status = "inactive";
+    branch.updatedAt = new Date();
+    await branch.save();
+
+    // Populate hotel data for service status
+    const populatedBranch = await Branch.findOne({ branchId }).populate(
+      "hotel",
+      "name hotelId status"
+    );
+
+    // Add service status
+    const branchWithStatus = addBranchServiceStatus(populatedBranch);
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          branchWithStatus,
+          "Branch deactivated successfully. It will appear in search results but marked as no services provided."
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reactivate branch (set status to active)
+export const reactivateBranch = async (req, res, next) => {
+  try {
+    const { branchId } = req.params;
+
+    const branch = await Branch.findOne({ branchId });
+    if (!branch) {
+      return next(new APIError(404, "Branch not found"));
+    }
+
+    if (branch.status === "active") {
+      return next(new APIError(400, "Branch is already active"));
+    }
+
+    // Update branch status
+    branch.status = "active";
+    branch.updatedAt = new Date();
+    await branch.save();
+
+    // Populate hotel data for service status
+    const populatedBranch = await Branch.findOne({ branchId }).populate(
+      "hotel",
+      "name hotelId status"
+    );
+
+    // Add service status
+    const branchWithStatus = addBranchServiceStatus(populatedBranch);
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          branchWithStatus,
+          "Branch reactivated successfully. Services are now available."
+        )
+      );
   } catch (error) {
     next(error);
   }

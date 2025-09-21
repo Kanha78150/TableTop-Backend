@@ -6,6 +6,10 @@ import {
 import { Branch } from "../../models/Branch.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import {
+  addServiceStatusToHotels,
+  categorizeHotelsByStatus,
+} from "../../utils/hotelStatusHelper.js";
 
 // Create a new hotel
 export const createHotel = async (req, res, next) => {
@@ -263,11 +267,82 @@ export const deactivateHotel = async (req, res, next) => {
     }
 
     // Also deactivate all branches of this hotel
-    await Branch.updateMany({ hotel: hotel._id }, { status: "inactive" });
+    const branchUpdateResult = await Branch.updateMany(
+      { hotel: hotel._id },
+      { status: "inactive" }
+    );
 
-    res
-      .status(200)
-      .json(new APIResponse(200, null, "Hotel deactivated successfully"));
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          hotel: {
+            hotelId: hotel.hotelId,
+            name: hotel.name,
+            status: hotel.status,
+            serviceStatus: {
+              available: false,
+              message: "No services provided by hotel",
+              statusCode: "INACTIVE",
+              reason: "Hotel has been deactivated and is currently offline",
+            },
+          },
+          branchesAffected: branchUpdateResult.modifiedCount,
+        },
+        "Hotel deactivated successfully. Services are no longer available for this hotel and its branches."
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reactivate hotel function
+export const reactivateHotel = async (req, res, next) => {
+  try {
+    const { hotelId } = req.params;
+
+    const hotel = await Hotel.findOneAndUpdate(
+      { hotelId },
+      { status: "active" },
+      { new: true }
+    );
+
+    if (!hotel) {
+      return next(new APIError(404, "Hotel not found"));
+    }
+
+    // Optionally reactivate all branches of this hotel
+    const { reactivateBranches = true } = req.body;
+    let branchUpdateResult = { modifiedCount: 0 };
+
+    if (reactivateBranches) {
+      branchUpdateResult = await Branch.updateMany(
+        { hotel: hotel._id, status: "inactive" },
+        { status: "active" }
+      );
+    }
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          hotel: {
+            hotelId: hotel.hotelId,
+            name: hotel.name,
+            status: hotel.status,
+            serviceStatus: {
+              available: true,
+              message: "Services available",
+              statusCode: "ACTIVE",
+              reason: "Hotel has been reactivated and is now online",
+            },
+          },
+          branchesReactivated: branchUpdateResult.modifiedCount,
+        },
+        "Hotel reactivated successfully. Services are now available for this hotel."
+      )
+    );
   } catch (error) {
     next(error);
   }
@@ -276,7 +351,14 @@ export const deactivateHotel = async (req, res, next) => {
 // Simple search hotels by city/state (for /hotels/search endpoint)
 export const searchHotels = async (req, res, next) => {
   try {
-    const { city, state, name, page = 1, limit = 10 } = req.query;
+    const {
+      city,
+      state,
+      name,
+      page = 1,
+      limit = 10,
+      includeInactive = "true",
+    } = req.query;
 
     if (!city && !state && !name) {
       return next(
@@ -287,7 +369,14 @@ export const searchHotels = async (req, res, next) => {
       );
     }
 
-    let query = { status: "active" };
+    let query = {};
+
+    // Include both active and inactive hotels by default for search results
+    if (includeInactive === "false") {
+      query.status = "active";
+    } else {
+      query.status = { $in: ["active", "inactive", "maintenance"] };
+    }
 
     // Search by hotel name
     if (name) {
@@ -311,14 +400,24 @@ export const searchHotels = async (req, res, next) => {
     const hotels = await Hotel.find(query)
       .populate({
         path: "branches",
-        match: { status: "active" },
-        select: "name branchId location contactInfo operatingHours rating",
+        select:
+          "name branchId location contactInfo operatingHours rating status",
       })
-      .sort({ "rating.average": -1, createdAt: -1 })
+      .sort({
+        status: 1, // Active hotels first
+        "rating.average": -1,
+        createdAt: -1,
+      })
       .skip(skip)
       .limit(parseInt(limit));
 
     const totalHotels = await Hotel.countDocuments(query);
+
+    // Add service status information to each hotel
+    const hotelsWithServiceStatus = addServiceStatusToHotels(hotels);
+
+    // Categorize hotels by status for better insights
+    const statusBreakdown = categorizeHotelsByStatus(hotels);
 
     console.log(`✅ Found ${hotels.length} hotels matching criteria`);
 
@@ -326,7 +425,8 @@ export const searchHotels = async (req, res, next) => {
       new APIResponse(
         200,
         {
-          hotels,
+          hotels: hotelsWithServiceStatus,
+          statusBreakdown,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(totalHotels / limit),
@@ -355,6 +455,7 @@ export const searchHotelsByLocation = async (req, res, next) => {
       radius = 25,
       page = 1,
       limit = 10,
+      includeInactive = "true",
     } = req.query;
 
     if (!city && !state && !(latitude && longitude)) {
@@ -366,8 +467,14 @@ export const searchHotelsByLocation = async (req, res, next) => {
       );
     }
 
-    // Search for hotels by their main location
-    let hotelQuery = { status: "active" };
+    // Search for hotels by their main location (include inactive for visibility)
+    let hotelQuery = {};
+
+    if (includeInactive === "false") {
+      hotelQuery.status = "active";
+    } else {
+      hotelQuery.status = { $in: ["active", "inactive", "maintenance"] };
+    }
 
     if (city) {
       hotelQuery["mainLocation.city"] = new RegExp(city, "i");
@@ -395,23 +502,30 @@ export const searchHotelsByLocation = async (req, res, next) => {
       })
         .populate({
           path: "branches",
-          match: { status: "active" },
-          select: "name branchId location contactInfo operatingHours rating",
+          select:
+            "name branchId location contactInfo operatingHours rating status",
         })
-        .sort({ "rating.average": -1 });
+        .sort({
+          status: 1, // Active hotels first
+          "rating.average": -1,
+        });
     } else {
       foundHotels = await Hotel.find(hotelQuery)
         .populate({
           path: "branches",
-          match: { status: "active" },
-          select: "name branchId location contactInfo operatingHours rating",
+          select:
+            "name branchId location contactInfo operatingHours rating status",
         })
-        .sort({ "rating.average": -1 });
+        .sort({
+          status: 1, // Active hotels first
+          "rating.average": -1,
+        });
     }
 
     // Also search for branches in the location and get their hotels
-    let branchQuery = { status: "active" };
+    let branchQuery = {};
 
+    // For branches, still show those from inactive hotels but mark them appropriately
     if (city) {
       branchQuery["location.city"] = new RegExp(city, "i");
     }
@@ -436,11 +550,17 @@ export const searchHotelsByLocation = async (req, res, next) => {
           },
         },
       })
-        .populate("hotel", "name hotelId mainLocation contactInfo rating")
+        .populate(
+          "hotel",
+          "name hotelId mainLocation contactInfo rating status"
+        )
         .sort({ "rating.average": -1 });
     } else {
       branches = await Branch.find(branchQuery)
-        .populate("hotel", "name hotelId mainLocation contactInfo rating")
+        .populate(
+          "hotel",
+          "name hotelId mainLocation contactInfo rating status"
+        )
         .sort({ "rating.average": -1 });
     }
 
@@ -460,6 +580,7 @@ export const searchHotelsByLocation = async (req, res, next) => {
             rating: hotel.rating,
             starRating: hotel.starRating,
             amenities: hotel.amenities,
+            status: hotel.status,
           },
           branches: hotel.branches || [],
         });
@@ -468,49 +589,91 @@ export const searchHotelsByLocation = async (req, res, next) => {
 
     // Add hotels found through branches
     branches.forEach((branch) => {
-      const hotelId = branch.hotel.hotelId;
-      if (!hotelsMap.has(hotelId)) {
-        hotelsMap.set(hotelId, {
-          hotel: branch.hotel,
-          branches: [],
-        });
-      }
+      if (branch.hotel) {
+        // Ensure hotel exists
+        const hotelId = branch.hotel.hotelId;
+        if (!hotelsMap.has(hotelId)) {
+          hotelsMap.set(hotelId, {
+            hotel: branch.hotel,
+            branches: [],
+          });
+        }
 
-      // Add this branch to the hotel's branches
-      const hotelData = hotelsMap.get(hotelId);
-      const branchExists = hotelData.branches.some(
-        (b) => b._id.toString() === branch._id.toString()
-      );
+        // Add this branch to the hotel's branches
+        const hotelData = hotelsMap.get(hotelId);
+        const branchExists = hotelData.branches.some(
+          (b) => b._id.toString() === branch._id.toString()
+        );
 
-      if (!branchExists) {
-        hotelData.branches.push({
-          _id: branch._id,
-          name: branch.name,
-          branchId: branch.branchId,
-          location: branch.location,
-          contactInfo: branch.contactInfo,
-          operatingHours: branch.operatingHours,
-          rating: branch.rating,
-        });
+        if (!branchExists) {
+          hotelData.branches.push({
+            _id: branch._id,
+            name: branch.name,
+            branchId: branch.branchId,
+            location: branch.location,
+            contactInfo: branch.contactInfo,
+            operatingHours: branch.operatingHours,
+            rating: branch.rating,
+            status: branch.status,
+          });
+        }
       }
     });
 
     const resultHotels = Array.from(hotelsMap.values());
 
+    // Add service status to hotels
+    const hotelsWithServiceStatus = resultHotels.map((hotelData) => ({
+      ...hotelData,
+      hotel: addServiceStatusToHotels([hotelData.hotel])[0],
+      branches: hotelData.branches.map((branch) => ({
+        ...branch,
+        serviceStatus: {
+          available:
+            branch.status === "active" && hotelData.hotel.status === "active",
+          message:
+            branch.status === "active" && hotelData.hotel.status === "active"
+              ? "Services available"
+              : "No services provided by this branch",
+          statusCode:
+            branch.status === "active" && hotelData.hotel.status === "active"
+              ? "ACTIVE"
+              : "INACTIVE",
+        },
+      })),
+    }));
+
+    // Sort results to show active hotels first
+    hotelsWithServiceStatus.sort((a, b) => {
+      if (a.hotel.status === "active" && b.hotel.status !== "active") return -1;
+      if (a.hotel.status !== "active" && b.hotel.status === "active") return 1;
+      return b.hotel.rating.average - a.hotel.rating.average;
+    });
+
+    // Categorize for insights
+    const statusBreakdown = categorizeHotelsByStatus(
+      resultHotels.map((h) => h.hotel)
+    );
+
     // Pagination
     const skip = (page - 1) * limit;
-    const paginatedHotels = resultHotels.slice(skip, skip + parseInt(limit));
+    const paginatedHotels = hotelsWithServiceStatus.slice(
+      skip,
+      skip + parseInt(limit)
+    );
 
     res.status(200).json(
       new APIResponse(
         200,
         {
           hotels: paginatedHotels,
+          statusBreakdown,
           pagination: {
             currentPage: parseInt(page),
-            totalPages: Math.ceil(resultHotels.length / limit),
-            totalHotels: resultHotels.length,
-            hasNextPage: page < Math.ceil(resultHotels.length / limit),
+            totalPages: Math.ceil(hotelsWithServiceStatus.length / limit),
+            totalHotels: hotelsWithServiceStatus.length,
+            hasNextPage:
+              page < Math.ceil(hotelsWithServiceStatus.length / limit),
             hasPrevPage: page > 1,
           },
         },

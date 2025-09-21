@@ -90,8 +90,8 @@ export const authenticateAdmin = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    if (decoded.role !== "super_admin") {
-      return next(new APIError(403, "Super admin access required"));
+    if (!["admin", "super_admin"].includes(decoded.role)) {
+      return next(new APIError(403, "Admin access required"));
     }
 
     const admin = await Admin.findById(decoded.id)

@@ -58,6 +58,134 @@ export const sendEmail = async ({
           </div>
         `;
         break;
+      case "manager-welcome":
+        emailContent = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8f9fa; padding: 20px;">
+            <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="color: #2c3e50; margin: 0;">Welcome to ${
+                  data.hotelName
+                }!</h1>
+                <p style="color: #7f8c8d; margin: 5px 0;">Hotel Management System</p>
+              </div>
+              
+              <h2 style="color: #e74c3c;">Manager Account Created</h2>
+              <p>Dear ${data.name},</p>
+              <p>Congratulations! Your manager account has been successfully created for <strong>${
+                data.hotelName
+              }</strong>.</p>
+              
+              <div style="background-color: #ecf0f1; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h3 style="color: #2c3e50; margin-top: 0;">Your Account Credentials:</h3>
+                <p><strong>Name:</strong> ${data.name}</p>
+                <p><strong>Email:</strong> ${data.email}</p>
+                <p><strong>Employee ID:</strong> <span style="background-color: #3498db; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;">${
+                  data.employeeId
+                }</span></p>
+                <p><strong>Temporary Password:</strong> <span style="background-color: #e74c3c; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;">${
+                  data.password
+                }</span></p>
+                <p><strong>Hotel:</strong> ${data.hotelName}</p>
+                ${
+                  data.branchName
+                    ? `<p><strong>Branch:</strong> ${data.branchName}</p>`
+                    : "<p><em>No specific branch assigned - Full hotel access</em></p>"
+                }
+              </div>
+              
+              <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <h4 style="color: #b7850b; margin-top: 0;">🔒 Security Notice:</h4>
+                <p style="color: #856404; margin-bottom: 0;">Please change your password immediately after your first login for security purposes.</p>
+              </div>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <p style="color: #7f8c8d;">Ready to get started?</p>
+                <a href="${
+                  process.env.FRONTEND_URL || "http://localhost:5173"
+                }/manager/login" style="background-color: #27ae60; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">Login to Dashboard</a>
+              </div>
+              
+              <hr style="margin: 30px 0; border: none; border-top: 1px solid #ecf0f1;">
+              <p style="color: #95a5a6; font-size: 12px; text-align: center;">
+                This email was sent from ${
+                  data.hotelName
+                } Hotel Management System<br>
+                If you have any questions, please contact your hotel administrator.
+              </p>
+            </div>
+          </div>
+        `;
+        break;
+      case "staff-welcome":
+        emailContent = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8f9fa; padding: 20px;">
+            <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="color: #2c3e50; margin: 0;">Welcome to ${
+                  data.hotelName
+                }!</h1>
+                <p style="color: #7f8c8d; margin: 5px 0;">Hotel Management System</p>
+              </div>
+              
+              <h2 style="color: #3498db;">Staff Account Created</h2>
+              <p>Dear ${data.name},</p>
+              <p>Welcome aboard! Your staff account has been successfully created for <strong>${
+                data.hotelName
+              }</strong>.</p>
+              
+              <div style="background-color: #ecf0f1; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h3 style="color: #2c3e50; margin-top: 0;">Your Account Credentials:</h3>
+                <p><strong>Name:</strong> ${data.name}</p>
+                <p><strong>Email:</strong> ${data.email}</p>
+                <p><strong>Staff ID:</strong> <span style="background-color: #9b59b6; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;">${
+                  data.staffId
+                }</span></p>
+                <p><strong>Temporary Password:</strong> <span style="background-color: #e74c3c; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;">${
+                  data.password
+                }</span></p>
+                <p><strong>Role:</strong> <span style="text-transform: capitalize;">${
+                  data.role
+                }</span></p>
+                <p><strong>Department:</strong> <span style="text-transform: capitalize;">${data.department.replace(
+                  "_",
+                  " "
+                )}</span></p>
+                <p><strong>Hotel:</strong> ${data.hotelName}</p>
+                ${
+                  data.branchName
+                    ? `<p><strong>Branch:</strong> ${data.branchName}</p>`
+                    : "<p><em>No specific branch assigned</em></p>"
+                }
+                ${
+                  data.managerName
+                    ? `<p><strong>Manager:</strong> ${data.managerName}</p>`
+                    : "<p><em>No manager assigned</em></p>"
+                }
+              </div>
+              
+              <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <h4 style="color: #b7850b; margin-top: 0;">🔒 Security Notice:</h4>
+                <p style="color: #856404; margin-bottom: 0;">Please change your password immediately after your first login for security purposes.</p>
+              </div>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <p style="color: #7f8c8d;">Ready to start working?</p>
+                <a href="${
+                  process.env.FRONTEND_URL || "http://localhost:5173"
+                }/staff/login" style="background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">Login to Dashboard</a>
+              </div>
+              
+              <hr style="margin: 30px 0; border: none; border-top: 1px solid #ecf0f1;">
+              <p style="color: #95a5a6; font-size: 12px; text-align: center;">
+                This email was sent from ${
+                  data.hotelName
+                } Hotel Management System<br>
+                If you have any questions, please contact your manager or hotel administrator.
+              </p>
+            </div>
+          </div>
+        `;
+        break;
       default:
         emailContent = html || text || "No content provided";
     }
@@ -113,5 +241,51 @@ export const sendPasswordResetEmail = async (to, resetToken) => {
         <p style="color: #666; font-size: 12px;">This is an automated email XYZ Company. Please do not reply to this email.</p>
       </div>
     `,
+  });
+};
+
+// Send welcome email to newly created manager
+export const sendManagerWelcomeEmail = async (
+  managerData,
+  hotelData,
+  branchData = null
+) => {
+  await sendEmail({
+    to: managerData.email,
+    subject: `Welcome to ${hotelData.name} - Manager Account Created`,
+    template: "manager-welcome",
+    data: {
+      name: managerData.name,
+      email: managerData.email,
+      employeeId: managerData.employeeId,
+      password: managerData.tempPassword, // Plain text password (only sent once)
+      hotelName: hotelData.name,
+      branchName: branchData?.name || null,
+    },
+  });
+};
+
+// Send welcome email to newly created staff
+export const sendStaffWelcomeEmail = async (
+  staffData,
+  hotelData,
+  branchData = null,
+  managerData = null
+) => {
+  await sendEmail({
+    to: staffData.email,
+    subject: `Welcome to ${hotelData.name} - Staff Account Created`,
+    template: "staff-welcome",
+    data: {
+      name: staffData.name,
+      email: staffData.email,
+      staffId: staffData.staffId,
+      password: staffData.tempPassword, // Plain text password (only sent once)
+      role: staffData.role,
+      department: staffData.department,
+      hotelName: hotelData.name,
+      branchName: branchData?.name || null,
+      managerName: managerData?.name || null,
+    },
   });
 };

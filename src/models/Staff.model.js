@@ -79,7 +79,7 @@ const staffSchema = new mongoose.Schema(
     branch: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
-      required: [true, "Branch assignment is required"],
+      required: false,
     },
     manager: {
       type: mongoose.Schema.Types.ObjectId,
@@ -166,6 +166,7 @@ const staffSchema = new mongoose.Schema(
       ref: "Manager", // Created by Branch Manager
     },
     lastLogin: { type: Date },
+    isFirstLogin: { type: Boolean, default: true }, // Flag to track first login
 
     // Additional staff info
     dateOfJoining: { type: Date, default: Date.now },
@@ -222,8 +223,11 @@ staffSchema.pre("save", async function (next) {
     }
   }
 
-  // Validate hotel-branch relationship
-  if (this.isNew || this.isModified("hotel") || this.isModified("branch")) {
+  // Validate hotel-branch relationship (only if branch is provided)
+  if (
+    (this.isNew || this.isModified("hotel") || this.isModified("branch")) &&
+    this.branch
+  ) {
     try {
       const Branch = this.constructor.model("Branch");
       const branch = await Branch.findById(this.branch).populate("hotel");
@@ -432,28 +436,17 @@ export const staffValidationSchemas = {
           "Department must be service, kitchen, housekeeping, front_desk, or security",
       }),
 
-    hotel: Joi.string()
-      .pattern(/^[0-9a-fA-F]{24}$/)
-      .required()
-      .messages({
-        "string.pattern.base": "Invalid hotel ID format",
-        "string.empty": "Hotel assignment is required",
-      }),
+    hotel: Joi.string().required().messages({
+      "string.empty": "Hotel assignment is required",
+    }),
 
-    branch: Joi.string()
-      .pattern(/^[0-9a-fA-F]{24}$/)
-      .required()
-      .messages({
-        "string.pattern.base": "Invalid branch ID format",
-        "string.empty": "Branch assignment is required",
-      }),
+    branch: Joi.string().optional().allow(null, "").messages({
+      "string.base": "Branch ID must be a string",
+    }),
 
-    manager: Joi.string()
-      .pattern(/^[0-9a-fA-F]{24}$/)
-      .optional()
-      .messages({
-        "string.pattern.base": "Invalid manager ID format",
-      }),
+    manager: Joi.string().optional().allow(null, "").messages({
+      "string.base": "Manager ID must be a string",
+    }),
 
     // Permission customization (optional, defaults will be applied based on role)
     permissions: Joi.object({
@@ -485,9 +478,8 @@ export const staffValidationSchemas = {
 
   // Login validation
   login: Joi.object({
-    email: Joi.string().email().trim().lowercase().required().messages({
-      "string.email": "Please provide a valid email address",
-      "string.empty": "Email is required",
+    identifier: Joi.string().trim().required().messages({
+      "string.empty": "Email or Staff ID is required",
     }),
 
     password: Joi.string().min(6).required().messages({

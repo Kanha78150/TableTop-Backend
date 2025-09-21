@@ -5,6 +5,12 @@ import {
 } from "../../models/Branch.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import {
+  addServiceStatusToHotels,
+  addServiceStatus,
+  addBranchServiceStatus,
+  categorizeHotelsByStatus,
+} from "../../utils/hotelStatusHelper.js";
 
 // Get all hotels for users
 export const getHotels = async (req, res, next) => {
@@ -16,9 +22,17 @@ export const getHotels = async (req, res, next) => {
       limit = 10,
       sortBy = "rating.average",
       sortOrder = "desc",
+      includeInactive = "true",
     } = req.query;
 
-    const query = { status: "active" };
+    let query = {};
+
+    // Include inactive hotels in search results but show their status
+    if (includeInactive === "false") {
+      query.status = "active";
+    } else {
+      query.status = { $in: ["active", "inactive", "maintenance"] };
+    }
 
     if (city) {
       query["mainLocation.city"] = new RegExp(city, "i");
@@ -29,11 +43,14 @@ export const getHotels = async (req, res, next) => {
     }
 
     const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+    const sort = {
+      status: 1, // Active hotels first
+      [sortBy]: sortOrder === "desc" ? -1 : 1,
+    };
 
     const hotels = await Hotel.find(query)
       .select(
-        "name hotelId description mainLocation contactInfo images rating starRating amenities"
+        "name hotelId description mainLocation contactInfo images rating starRating amenities status"
       )
       .sort(sort)
       .skip(skip)
@@ -41,11 +58,18 @@ export const getHotels = async (req, res, next) => {
 
     const totalHotels = await Hotel.countDocuments(query);
 
+    // Add service status information
+    const hotelsWithServiceStatus = addServiceStatusToHotels(hotels);
+
+    // Categorize hotels by status for better insights
+    const statusBreakdown = categorizeHotelsByStatus(hotels);
+
     res.status(200).json(
       new APIResponse(
         200,
         {
-          hotels,
+          hotels: hotelsWithServiceStatus,
+          statusBreakdown,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(totalHotels / limit),
@@ -67,25 +91,41 @@ export const getHotelDetails = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
 
-    const hotel = await Hotel.findOne({ hotelId, status: "active" })
+    // Allow viewing details of inactive hotels too, but show status
+    const hotel = await Hotel.findOne({ hotelId })
       .select(
-        "name hotelId description mainLocation contactInfo images rating starRating amenities establishedYear"
+        "name hotelId description mainLocation contactInfo images rating starRating amenities establishedYear status"
       )
       .populate({
         path: "branches",
-        match: { status: "active" },
         select:
-          "name branchId location contactInfo operatingHours capacity rating images amenities",
+          "name branchId location contactInfo operatingHours capacity rating images amenities status",
       });
 
     if (!hotel) {
       return next(new APIError(404, "Hotel not found"));
     }
 
+    // Add service status information to hotel
+    const hotelWithServiceStatus = addServiceStatus(hotel);
+
+    // Add service status to branches
+    const branchesWithServiceStatus = hotel.branches.map((branch) =>
+      addBranchServiceStatus({
+        ...branch.toObject(),
+        hotel: { status: hotel.status },
+      })
+    );
+
+    const response = {
+      ...hotelWithServiceStatus,
+      branches: branchesWithServiceStatus,
+    };
+
     res
       .status(200)
       .json(
-        new APIResponse(200, hotel, "Hotel details retrieved successfully")
+        new APIResponse(200, response, "Hotel details retrieved successfully")
       );
   } catch (error) {
     next(error);
@@ -110,18 +150,25 @@ export const getHotelBranchesByLocation = async (req, res, next) => {
       radius = 25,
       page = 1,
       limit = 10,
+      includeInactive = "true",
     } = req.query;
 
-    // First check if hotel exists and is active
-    const hotel = await Hotel.findOne({ hotelId, status: "active" });
+    // Show hotel even if inactive, but indicate service status
+    const hotel = await Hotel.findOne({ hotelId });
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found or inactive"));
+      return next(new APIError(404, "Hotel not found"));
     }
 
     let query = {
       hotel: hotel._id,
-      status: "active",
     };
+
+    // Include inactive branches but show their status
+    if (includeInactive === "false") {
+      query.status = "active";
+    } else {
+      query.status = { $in: ["active", "inactive", "maintenance"] };
+    }
 
     // Location-based filtering
     if (city) {
@@ -154,9 +201,12 @@ export const getHotelBranchesByLocation = async (req, res, next) => {
         },
       })
         .select(
-          "name branchId location contactInfo operatingHours capacity rating images amenities"
+          "name branchId location contactInfo operatingHours capacity rating images amenities status"
         )
-        .sort({ "rating.average": -1 })
+        .sort({
+          status: 1, // Active branches first
+          "rating.average": -1,
+        })
         .limit(parseInt(limit));
 
       totalBranches = branches.length;
@@ -165,25 +215,38 @@ export const getHotelBranchesByLocation = async (req, res, next) => {
 
       branches = await Branch.find(query)
         .select(
-          "name branchId location contactInfo operatingHours capacity rating images amenities"
+          "name branchId location contactInfo operatingHours capacity rating images amenities status"
         )
-        .sort({ "rating.average": -1 })
+        .sort({
+          status: 1, // Active branches first
+          "rating.average": -1,
+        })
         .skip(skip)
         .limit(parseInt(limit));
 
       totalBranches = await Branch.countDocuments(query);
     }
 
+    // Add service status to hotel and branches
+    const hotelWithServiceStatus = addServiceStatus(hotel);
+    const branchesWithServiceStatus = branches.map((branch) =>
+      addBranchServiceStatus({
+        ...branch.toObject(),
+        hotel: { status: hotel.status },
+      })
+    );
+
     res.status(200).json(
       new APIResponse(
         200,
         {
           hotel: {
-            name: hotel.name,
-            hotelId: hotel.hotelId,
-            description: hotel.description,
+            name: hotelWithServiceStatus.name,
+            hotelId: hotelWithServiceStatus.hotelId,
+            description: hotelWithServiceStatus.description,
+            serviceStatus: hotelWithServiceStatus.serviceStatus,
           },
-          branches,
+          branches: branchesWithServiceStatus,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(totalBranches / limit),
@@ -216,6 +279,7 @@ export const searchNearbyHotels = async (req, res, next) => {
       radius = 25,
       page = 1,
       limit = 10,
+      includeInactive = "true",
     } = req.query;
 
     if (!city && !state && !(latitude && longitude)) {
@@ -227,7 +291,14 @@ export const searchNearbyHotels = async (req, res, next) => {
       );
     }
 
-    let branchQuery = { status: "active" };
+    let branchQuery = {};
+
+    // Include inactive branches but show their status
+    if (includeInactive === "false") {
+      branchQuery.status = "active";
+    } else {
+      branchQuery.status = { $in: ["active", "inactive", "maintenance"] };
+    }
 
     if (city) {
       branchQuery["location.city"] = new RegExp(city, "i");
@@ -253,27 +324,35 @@ export const searchNearbyHotels = async (req, res, next) => {
           },
         },
       })
-        .select("name branchId location contactInfo operatingHours rating")
+        .select(
+          "name branchId location contactInfo operatingHours rating status"
+        )
         .populate({
           path: "hotel",
-          match: { status: "active" },
           select:
-            "name hotelId description mainLocation rating starRating images",
+            "name hotelId description mainLocation rating starRating images status",
         })
-        .sort({ "rating.average": -1 });
+        .sort({
+          status: 1, // Active branches first
+          "rating.average": -1,
+        });
     } else {
       branches = await Branch.find(branchQuery)
-        .select("name branchId location contactInfo operatingHours rating")
+        .select(
+          "name branchId location contactInfo operatingHours rating status"
+        )
         .populate({
           path: "hotel",
-          match: { status: "active" },
           select:
-            "name hotelId description mainLocation rating starRating images",
+            "name hotelId description mainLocation rating starRating images status",
         })
-        .sort({ "rating.average": -1 });
+        .sort({
+          status: 1, // Active branches first
+          "rating.average": -1,
+        });
     }
 
-    // Filter out branches whose hotels are inactive
+    // Don't filter out branches whose hotels are inactive - show them with status
     branches = branches.filter((branch) => branch.hotel);
 
     // Group branches by hotel
@@ -295,25 +374,54 @@ export const searchNearbyHotels = async (req, res, next) => {
         contactInfo: branch.contactInfo,
         operatingHours: branch.operatingHours,
         rating: branch.rating,
+        status: branch.status,
       });
     });
 
     const hotels = Array.from(hotelsMap.values());
 
+    // Add service status to hotels and branches
+    const hotelsWithServiceStatus = hotels.map((hotelData) => ({
+      hotel: addServiceStatus(hotelData.hotel),
+      branches: hotelData.branches.map((branch) =>
+        addBranchServiceStatus({
+          ...branch,
+          hotel: { status: hotelData.hotel.status },
+        })
+      ),
+    }));
+
+    // Sort hotels to show active ones first
+    hotelsWithServiceStatus.sort((a, b) => {
+      if (a.hotel.status === "active" && b.hotel.status !== "active") return -1;
+      if (a.hotel.status !== "active" && b.hotel.status === "active") return 1;
+      return b.hotel.rating.average - a.hotel.rating.average;
+    });
+
+    // Categorize for insights
+    const statusBreakdown = categorizeHotelsByStatus(
+      hotels.map((h) => h.hotel)
+    );
+
     // Pagination
     const skip = (page - 1) * limit;
-    const paginatedHotels = hotels.slice(skip, skip + parseInt(limit));
+    const paginatedHotels = hotelsWithServiceStatus.slice(
+      skip,
+      skip + parseInt(limit)
+    );
 
     res.status(200).json(
       new APIResponse(
         200,
         {
           hotels: paginatedHotels,
+          statusBreakdown,
           pagination: {
             currentPage: parseInt(page),
-            totalPages: Math.ceil(hotels.length / limit),
-            totalHotels: hotels.length,
-            hasNextPage: page < Math.ceil(hotels.length / limit),
+            totalPages: Math.ceil(hotelsWithServiceStatus.length / limit),
+            totalHotels: hotelsWithServiceStatus.length,
+            hasNextPage:
+              page < Math.ceil(hotelsWithServiceStatus.length / limit),
             hasPrevPage: page > 1,
           },
         },
@@ -330,24 +438,35 @@ export const getBranchDetails = async (req, res, next) => {
   try {
     const { branchId } = req.params;
 
-    const branch = await Branch.findOne({ branchId, status: "active" })
+    // Show branch details even if inactive, but indicate service status
+    const branch = await Branch.findOne({ branchId })
       .select(
-        "name branchId location contactInfo operatingHours capacity rating images amenities"
+        "name branchId location contactInfo operatingHours capacity rating images amenities status"
       )
       .populate({
         path: "hotel",
-        match: { status: "active" },
-        select: "name hotelId description mainLocation rating starRating",
+        select:
+          "name hotelId description mainLocation rating starRating status",
       });
 
     if (!branch || !branch.hotel) {
-      return next(new APIError(404, "Branch not found or inactive"));
+      return next(new APIError(404, "Branch not found"));
     }
+
+    // Add service status information
+    const branchWithServiceStatus = addBranchServiceStatus({
+      ...branch.toObject(),
+      hotel: branch.hotel,
+    });
 
     res
       .status(200)
       .json(
-        new APIResponse(200, branch, "Branch details retrieved successfully")
+        new APIResponse(
+          200,
+          branchWithServiceStatus,
+          "Branch details retrieved successfully"
+        )
       );
   } catch (error) {
     next(error);
