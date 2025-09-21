@@ -1,29 +1,439 @@
 import mongoose from "mongoose";
 import Joi from "joi";
+import { generateFoodItemId, getNextCounter } from "../utils/idGenerator.js";
 
 const foodItemSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
-    description: { type: String, default: "" },
-    price: { type: Number, required: true },
-    isAvailable: { type: Boolean, default: true },
-    category: { type: mongoose.Schema.Types.ObjectId, ref: "FoodCategory" },
-    branch: { type: mongoose.Schema.Types.ObjectId, ref: "Branch" },
-    image: { type: String, default: null }, // food image (URL or path)
+    name: {
+      type: String,
+      required: [true, "Food item name is required"],
+      trim: true,
+      maxlength: [150, "Food item name cannot exceed 150 characters"],
+    },
+    itemId: {
+      type: String,
+      unique: true,
+      trim: true,
+      // Will be auto-generated in pre-save middleware
+    },
+    description: {
+      type: String,
+      default: "",
+      maxlength: [1000, "Description cannot exceed 1000 characters"],
+    },
+    shortDescription: {
+      type: String,
+      maxlength: [200, "Short description cannot exceed 200 characters"],
+    },
+    price: {
+      type: Number,
+      required: [true, "Price is required"],
+      min: [0, "Price cannot be negative"],
+    },
+    discountPrice: {
+      type: Number,
+      min: [0, "Discount price cannot be negative"],
+      validate: {
+        validator: function (value) {
+          return !value || value < this.price;
+        },
+        message: "Discount price must be less than regular price",
+      },
+    },
+    // Veg/Non-veg classification
+    foodType: {
+      type: String,
+      enum: {
+        values: ["veg", "non-veg", "vegan", "jain"],
+        message: "Food type must be veg, non-veg, vegan, or jain",
+      },
+      required: [true, "Food type is required"],
+    },
+    // Spice level
+    spiceLevel: {
+      type: String,
+      enum: {
+        values: ["mild", "medium", "hot", "extra-hot", "none"],
+        message: "Spice level must be mild, medium, hot, extra-hot, or none",
+      },
+      default: "medium",
+    },
+    // Dietary information
+    dietaryInfo: {
+      glutenFree: { type: Boolean, default: false },
+      dairyFree: { type: Boolean, default: false },
+      nutFree: { type: Boolean, default: false },
+      sugarFree: { type: Boolean, default: false },
+      organic: { type: Boolean, default: false },
+    },
+    // Availability
+    isAvailable: {
+      type: Boolean,
+      default: true,
+    },
+    isRecommended: {
+      type: Boolean,
+      default: false,
+    },
+    isBestSeller: {
+      type: Boolean,
+      default: false,
+    },
+    isNew: {
+      type: Boolean,
+      default: false,
+    },
+    // Menu timing availability
+    availableTimings: {
+      breakfast: { type: Boolean, default: false },
+      lunch: { type: Boolean, default: true },
+      dinner: { type: Boolean, default: true },
+      snacks: { type: Boolean, default: false },
+    },
+    // Relationships
+    category: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "FoodCategory",
+      required: [true, "Category is required"],
+    },
+    branch: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      required: [true, "Branch is required"],
+    },
+    hotel: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Hotel",
+      required: [true, "Hotel is required"],
+    },
+    // Media
+    image: {
+      type: String,
+      default: null,
+    },
+    images: [
+      {
+        type: String,
+      },
+    ],
+    // Nutritional information
+    nutritionalInfo: {
+      calories: { type: Number, min: 0 },
+      protein: { type: Number, min: 0 }, // in grams
+      carbs: { type: Number, min: 0 }, // in grams
+      fat: { type: Number, min: 0 }, // in grams
+      fiber: { type: Number, min: 0 }, // in grams
+      sodium: { type: Number, min: 0 }, // in mg
+    },
+    // Additional details
+    preparationTime: {
+      type: Number, // in minutes
+      min: [1, "Preparation time must be at least 1 minute"],
+      max: [180, "Preparation time cannot exceed 180 minutes"],
+    },
+    servingSize: {
+      type: String,
+      default: "1 portion",
+    },
+    ingredients: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    allergens: [
+      {
+        type: String,
+        enum: [
+          "nuts",
+          "dairy",
+          "gluten",
+          "soy",
+          "eggs",
+          "shellfish",
+          "fish",
+          "sesame",
+        ],
+        message: "Invalid allergen type",
+      },
+    ],
+    tags: [
+      {
+        type: String,
+        trim: true,
+        maxlength: [50, "Tag cannot exceed 50 characters"],
+      },
+    ],
+    // SEO and ordering
+    slug: {
+      type: String,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    displayOrder: {
+      type: Number,
+      default: 0,
+    },
+    // Ratings and reviews
+    averageRating: {
+      type: Number,
+      min: 0,
+      max: 5,
+      default: 0,
+    },
+    totalReviews: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Inventory tracking
+    isLimitedQuantity: {
+      type: Boolean,
+      default: false,
+    },
+    quantityAvailable: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
+    // Audit
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+    },
+    lastModifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
 );
+
+// Auto-generate itemId before saving
+foodItemSchema.pre("save", async function (next) {
+  if (!this.itemId && this.isNew) {
+    try {
+      const year = new Date().getFullYear();
+      const prefix = `ITEM-${year}`;
+      const counter = await getNextCounter(this.constructor, "itemId", prefix);
+      this.itemId = generateFoodItemId(counter);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  // Auto-generate slug from name if not provided
+  if (!this.slug) {
+    this.slug = this.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+
+    // Ensure slug uniqueness
+    const existingItem = await this.constructor.findOne({
+      slug: this.slug,
+      _id: { $ne: this._id },
+    });
+    if (existingItem) {
+      this.slug = `${this.slug}-${Date.now()}`;
+    }
+  }
+
+  // Set lastModifiedBy on update
+  if (this.isModified() && !this.isNew) {
+    this.lastModifiedBy = this.createdBy; // You can set this from the request context
+  }
+
+  next();
+});
+
+// Indexes for better performance
+foodItemSchema.index({ category: 1 });
+foodItemSchema.index({ branch: 1 });
+foodItemSchema.index({ hotel: 1 });
+foodItemSchema.index({ isAvailable: 1 });
+foodItemSchema.index({ foodType: 1 });
+foodItemSchema.index({ price: 1 });
+foodItemSchema.index({ isRecommended: 1 });
+foodItemSchema.index({ isBestSeller: 1 });
+foodItemSchema.index({ slug: 1 });
+foodItemSchema.index({ displayOrder: 1 });
+foodItemSchema.index({ averageRating: -1 });
+
+// Virtual for effective price (with discount)
+foodItemSchema.virtual("effectivePrice").get(function () {
+  return this.discountPrice || this.price;
+});
+
+// Virtual for discount percentage
+foodItemSchema.virtual("discountPercentage").get(function () {
+  if (this.discountPrice && this.discountPrice < this.price) {
+    return Math.round(((this.price - this.discountPrice) / this.price) * 100);
+  }
+  return 0;
+});
 
 export const FoodItem = mongoose.model("FoodItem", foodItemSchema);
 
-export const validateFoodItem = (data) => {
-  const schema = Joi.object({
-    name: Joi.string().required(),
-    description: Joi.string().allow("").optional(),
-    price: Joi.number().positive().required(),
-    category: Joi.string().required(),
-    branch: Joi.string().required(),
+// Enhanced validation schemas
+export const foodItemValidationSchemas = {
+  create: Joi.object({
+    name: Joi.string().trim().min(2).max(150).required().messages({
+      "string.empty": "Food item name is required",
+      "string.min": "Food item name must be at least 2 characters long",
+      "string.max": "Food item name cannot exceed 150 characters",
+    }),
+    description: Joi.string().max(1000).allow("").optional(),
+    shortDescription: Joi.string().max(200).allow("").optional(),
+    price: Joi.number().positive().required().messages({
+      "number.positive": "Price must be a positive number",
+      "any.required": "Price is required",
+    }),
+    discountPrice: Joi.number().positive().optional(),
+    foodType: Joi.string()
+      .valid("veg", "non-veg", "vegan", "jain")
+      .required()
+      .messages({
+        "any.only": "Food type must be veg, non-veg, vegan, or jain",
+        "any.required": "Food type is required",
+      }),
+    spiceLevel: Joi.string()
+      .valid("mild", "medium", "hot", "extra-hot", "none")
+      .default("medium"),
+    dietaryInfo: Joi.object({
+      glutenFree: Joi.boolean().default(false),
+      dairyFree: Joi.boolean().default(false),
+      nutFree: Joi.boolean().default(false),
+      sugarFree: Joi.boolean().default(false),
+      organic: Joi.boolean().default(false),
+    }).optional(),
+    isAvailable: Joi.boolean().default(true),
+    isRecommended: Joi.boolean().default(false),
+    isBestSeller: Joi.boolean().default(false),
+    isNew: Joi.boolean().default(false),
+    availableTimings: Joi.object({
+      breakfast: Joi.boolean().default(false),
+      lunch: Joi.boolean().default(true),
+      dinner: Joi.boolean().default(true),
+      snacks: Joi.boolean().default(false),
+    }).optional(),
+    category: Joi.string().required().messages({
+      "string.empty": "Category is required",
+    }),
+    branch: Joi.string().required().messages({
+      "string.empty": "Branch is required",
+    }),
+    hotel: Joi.string().required().messages({
+      "string.empty": "Hotel is required",
+    }),
     image: Joi.string().uri().optional().allow(null, ""),
-  });
-  return schema.validate(data);
+    images: Joi.array().items(Joi.string().uri()).optional(),
+    nutritionalInfo: Joi.object({
+      calories: Joi.number().min(0).optional(),
+      protein: Joi.number().min(0).optional(),
+      carbs: Joi.number().min(0).optional(),
+      fat: Joi.number().min(0).optional(),
+      fiber: Joi.number().min(0).optional(),
+      sodium: Joi.number().min(0).optional(),
+    }).optional(),
+    preparationTime: Joi.number().min(1).max(180).optional(),
+    servingSize: Joi.string().max(50).optional(),
+    ingredients: Joi.array().items(Joi.string().trim().max(100)).optional(),
+    allergens: Joi.array()
+      .items(
+        Joi.string().valid(
+          "nuts",
+          "dairy",
+          "gluten",
+          "soy",
+          "eggs",
+          "shellfish",
+          "fish",
+          "sesame"
+        )
+      )
+      .optional(),
+    tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+    displayOrder: Joi.number().integer().min(0).default(0),
+    isLimitedQuantity: Joi.boolean().default(false),
+    quantityAvailable: Joi.number().min(0).optional().allow(null),
+    slug: Joi.string().lowercase().trim().optional(),
+  }),
+
+  update: Joi.object({
+    name: Joi.string().trim().min(2).max(150).optional(),
+    description: Joi.string().max(1000).allow("").optional(),
+    shortDescription: Joi.string().max(200).allow("").optional(),
+    price: Joi.number().positive().optional(),
+    discountPrice: Joi.number().positive().optional().allow(null),
+    foodType: Joi.string().valid("veg", "non-veg", "vegan", "jain").optional(),
+    spiceLevel: Joi.string()
+      .valid("mild", "medium", "hot", "extra-hot", "none")
+      .optional(),
+    dietaryInfo: Joi.object({
+      glutenFree: Joi.boolean(),
+      dairyFree: Joi.boolean(),
+      nutFree: Joi.boolean(),
+      sugarFree: Joi.boolean(),
+      organic: Joi.boolean(),
+    }).optional(),
+    isAvailable: Joi.boolean().optional(),
+    isRecommended: Joi.boolean().optional(),
+    isBestSeller: Joi.boolean().optional(),
+    isNew: Joi.boolean().optional(),
+    availableTimings: Joi.object({
+      breakfast: Joi.boolean(),
+      lunch: Joi.boolean(),
+      dinner: Joi.boolean(),
+      snacks: Joi.boolean(),
+    }).optional(),
+    category: Joi.string().optional(),
+    image: Joi.string().uri().optional().allow(null, ""),
+    images: Joi.array().items(Joi.string().uri()).optional(),
+    nutritionalInfo: Joi.object({
+      calories: Joi.number().min(0),
+      protein: Joi.number().min(0),
+      carbs: Joi.number().min(0),
+      fat: Joi.number().min(0),
+      fiber: Joi.number().min(0),
+      sodium: Joi.number().min(0),
+    }).optional(),
+    preparationTime: Joi.number().min(1).max(180).optional(),
+    servingSize: Joi.string().max(50).optional(),
+    ingredients: Joi.array().items(Joi.string().trim().max(100)).optional(),
+    allergens: Joi.array()
+      .items(
+        Joi.string().valid(
+          "nuts",
+          "dairy",
+          "gluten",
+          "soy",
+          "eggs",
+          "shellfish",
+          "fish",
+          "sesame"
+        )
+      )
+      .optional(),
+    tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+    displayOrder: Joi.number().integer().min(0).optional(),
+    isLimitedQuantity: Joi.boolean().optional(),
+    quantityAvailable: Joi.number().min(0).optional().allow(null),
+    slug: Joi.string().lowercase().trim().optional(),
+  }),
+
+  updateAvailability: Joi.object({
+    isAvailable: Joi.boolean().required(),
+    quantityAvailable: Joi.number().min(0).optional().allow(null),
+  }),
+};
+
+// Legacy validation function for backward compatibility
+export const validateFoodItem = (data) => {
+  return foodItemValidationSchemas.create.validate(data);
 };

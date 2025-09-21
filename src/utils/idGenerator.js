@@ -146,6 +146,30 @@ export const generateBookingId = (counter = 1) => {
   return `BKG-${dateStr}-${paddedCounter}`;
 };
 
+/**
+ * Generate Food Category ID
+ * Format: CAT-YYYY-XXXXX (e.g., CAT-2025-00001)
+ * @param {number} counter - Sequential counter for uniqueness
+ * @returns {string} Generated category ID
+ */
+export const generateCategoryId = (counter = 1) => {
+  const year = new Date().getFullYear();
+  const paddedCounter = counter.toString().padStart(5, "0");
+  return `CAT-${year}-${paddedCounter}`;
+};
+
+/**
+ * Generate Food Item ID
+ * Format: ITEM-YYYY-XXXXX (e.g., ITEM-2025-00001)
+ * @param {number} counter - Sequential counter for uniqueness
+ * @returns {string} Generated food item ID
+ */
+export const generateFoodItemId = (counter = 1) => {
+  const year = new Date().getFullYear();
+  const paddedCounter = counter.toString().padStart(5, "0");
+  return `ITEM-${year}-${paddedCounter}`;
+};
+
 export default {
   generateHotelId,
   generateBranchId,
@@ -155,4 +179,6 @@ export default {
   getNextCounter,
   generateOrderId,
   generateBookingId,
+  generateCategoryId,
+  generateFoodItemId,
 };

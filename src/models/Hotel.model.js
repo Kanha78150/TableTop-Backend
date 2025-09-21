@@ -125,6 +125,11 @@ const hotelSchema = new mongoose.Schema(
       min: [1, "Star rating must be at least 1"],
       max: [5, "Star rating cannot exceed 5"],
     },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: [true, "Created by admin is required"],
+    },
   },
   {
     timestamps: true,
@@ -161,6 +166,7 @@ hotelSchema.index({ "mainLocation.city": 1 });
 hotelSchema.index({ "mainLocation.state": 1 });
 hotelSchema.index({ status: 1 });
 hotelSchema.index({ "rating.average": -1 });
+hotelSchema.index({ createdBy: 1 }); // Index for admin-specific queries
 
 export const Hotel = mongoose.model("Hotel", hotelSchema);
 

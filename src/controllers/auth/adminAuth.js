@@ -55,6 +55,8 @@ import {
   validateAdminUpdate,
   validatePasswordChange,
   validatePasswordReset,
+  validateEmailVerification,
+  validateResendOtp,
 } from "../../models/Admin.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
@@ -171,6 +173,16 @@ export const loginAdmin = async (req, res, next) => {
     if (admin.status !== "active") {
       return next(
         new APIError(403, "Account is inactive. Please contact super admin.")
+      );
+    }
+
+    // Check if email is verified
+    if (!admin.emailVerified) {
+      return next(
+        new APIError(
+          403,
+          "Please verify your email first before logging in. Check your email for the verification OTP."
+        )
       );
     }
 
@@ -479,11 +491,12 @@ export const resetPassword = async (req, res, next) => {
 // Verify email by OTP
 export const verifyEmail = async (req, res, next) => {
   try {
-    const { email, otp } = req.body;
-
-    if (!email || !otp) {
-      return next(new APIError(400, "Email and OTP are required"));
+    const { error } = validateEmailVerification(req.body);
+    if (error) {
+      return next(new APIError(400, error.details[0].message));
     }
+
+    const { email, otp } = req.body;
 
     const admin = await Admin.findOne({ email });
     if (!admin) {
@@ -513,6 +526,72 @@ export const verifyEmail = async (req, res, next) => {
     res
       .status(200)
       .json(new APIResponse(200, null, "Email verified successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Resend email verification OTP
+export const resendVerificationOtp = async (req, res, next) => {
+  try {
+    const { error } = validateResendOtp(req.body);
+    if (error) {
+      return next(new APIError(400, error.details[0].message));
+    }
+
+    const { email } = req.body;
+
+    const admin = await Admin.findOne({ email });
+    if (!admin) {
+      return next(new APIError(404, "Admin not found"));
+    }
+
+    if (admin.emailVerified) {
+      return res
+        .status(200)
+        .json(new APIResponse(200, null, "Email is already verified"));
+    }
+
+    // Check if we can resend OTP (rate limiting)
+    const now = new Date();
+    const lastOtpTime = admin.emailVerificationOtpExpiry
+      ? new Date(admin.emailVerificationOtpExpiry.getTime() - 10 * 60 * 1000)
+      : null; // Subtract 10 minutes to get creation time
+
+    if (lastOtpTime && now - lastOtpTime < 60 * 1000) {
+      // 1 minute cooldown
+      return next(
+        new APIError(
+          429,
+          "Please wait at least 1 minute before requesting a new OTP"
+        )
+      );
+    }
+
+    // Generate new OTP and expiry
+    const otp = generateOtp();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    admin.emailVerificationOtp = otp;
+    admin.emailVerificationOtpExpiry = otpExpiry;
+    await admin.save();
+
+    // Send OTP email
+    await sendEmail({
+      to: admin.email,
+      subject: "Verify your admin account - New OTP",
+      text: `Your new OTP for email verification is: ${otp}. This OTP will expire in 10 minutes.`,
+    });
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          null,
+          "New verification OTP has been sent to your email address"
+        )
+      );
   } catch (error) {
     next(error);
   }
@@ -706,7 +785,7 @@ export const bootstrapSuperAdmin = async (req, res, next) => {
       },
       emailVerificationToken,
       emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-      isEmailVerified: true, // Auto-verify for bootstrap
+      emailVerified: true, // Auto-verify for bootstrap
       status: "active",
     });
 

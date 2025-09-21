@@ -45,6 +45,7 @@ import {
   getAllStaff,
   createStaff,
   updateStaff,
+  updateStaffPermissions,
   deleteStaff,
   deactivateStaff,
   reactivateStaff,
@@ -307,6 +308,13 @@ router.put(
   "/staff/:staffId",
   rbac({ permissions: ["manageStaff"] }),
   updateStaff
+);
+
+// Staff Permissions Update (Admin and Super Admin Only - not Branch Admin)
+router.put(
+  "/staff/:staffId/permissions",
+  rbac({ permissions: ["manageStaff"] }),
+  updateStaffPermissions
 );
 
 router.delete(

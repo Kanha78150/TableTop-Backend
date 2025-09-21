@@ -27,7 +27,11 @@ export const createHotel = async (req, res, next) => {
       return next(new APIError(400, "Hotel with this email already exists"));
     }
 
-    const hotel = new Hotel(req.body);
+    // Create hotel with admin association
+    const hotel = new Hotel({
+      ...req.body,
+      createdBy: req.admin._id, // Associate with current admin
+    });
     await hotel.save();
 
     res
@@ -38,7 +42,7 @@ export const createHotel = async (req, res, next) => {
   }
 };
 
-// Get all hotels with optional filtering
+// Get all hotels with optional filtering (admin-specific)
 export const getAllHotels = async (req, res, next) => {
   try {
     const {
@@ -51,7 +55,13 @@ export const getAllHotels = async (req, res, next) => {
       sortOrder = "desc",
     } = req.query;
 
+    // Base query: only show hotels created by the current admin
+    // Exception: Super admin can see all hotels
     const query = { status };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
 
     if (city) {
       query["mainLocation.city"] = new RegExp(city, "i");
@@ -72,7 +82,8 @@ export const getAllHotels = async (req, res, next) => {
         path: "branches",
         match: { status: "active" },
         select: "name location contactInfo rating",
-      });
+      })
+      .populate("createdBy", "name email"); // Include admin info
 
     const totalHotels = await Hotel.countDocuments(query);
 
@@ -97,19 +108,28 @@ export const getAllHotels = async (req, res, next) => {
   }
 };
 
-// Get hotel by ID with its branches
+// Get hotel by ID with its branches (admin-specific)
 export const getHotelById = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
 
-    const hotel = await Hotel.findOne({ hotelId }).populate({
-      path: "branches",
-      match: { status: "active" },
-      select: "name location contactInfo operatingHours capacity rating",
-    });
+    // Base query with admin restriction
+    const query = { hotelId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    const hotel = await Hotel.findOne(query)
+      .populate({
+        path: "branches",
+        match: { status: "active" },
+        select: "name location contactInfo operatingHours capacity rating",
+      })
+      .populate("createdBy", "name email");
 
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     res
@@ -120,7 +140,7 @@ export const getHotelById = async (req, res, next) => {
   }
 };
 
-// Get hotel branches by location
+// Get hotel branches by location (admin-specific)
 export const getHotelBranchesByLocation = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
@@ -133,10 +153,16 @@ export const getHotelBranchesByLocation = async (req, res, next) => {
       radius = 10,
     } = req.query;
 
-    // First check if hotel exists
-    const hotel = await Hotel.findOne({ hotelId });
+    // First check if hotel exists and belongs to current admin
+    const hotelQuery = { hotelId };
+
+    if (req.admin.role !== "super_admin") {
+      hotelQuery.createdBy = req.admin._id;
+    }
+
+    const hotel = await Hotel.findOne(hotelQuery);
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     let query = {
@@ -200,7 +226,7 @@ export const getHotelBranchesByLocation = async (req, res, next) => {
   }
 };
 
-// Update hotel
+// Update hotel (admin-specific)
 export const updateHotel = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
@@ -210,13 +236,20 @@ export const updateHotel = async (req, res, next) => {
       return next(new APIError(400, error.details[0].message));
     }
 
-    const hotel = await Hotel.findOneAndUpdate({ hotelId }, req.body, {
+    // Base query with admin restriction
+    const query = { hotelId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    const hotel = await Hotel.findOneAndUpdate(query, req.body, {
       new: true,
       runValidators: true,
-    });
+    }).populate("createdBy", "name email");
 
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     res
@@ -227,15 +260,22 @@ export const updateHotel = async (req, res, next) => {
   }
 };
 
-// Delete hotel (hard delete - permanently removes from database)
+// Delete hotel (hard delete - permanently removes from database) (admin-specific)
 export const deleteHotel = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
 
-    const hotel = await Hotel.findOneAndDelete({ hotelId });
+    // Base query with admin restriction
+    const query = { hotelId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    const hotel = await Hotel.findOneAndDelete(query);
 
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     // Also permanently delete all branches of this hotel
@@ -251,19 +291,26 @@ export const deleteHotel = async (req, res, next) => {
   }
 };
 
-// Soft delete function (if you want to keep both options)
+// Soft delete function (if you want to keep both options) (admin-specific)
 export const deactivateHotel = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
 
+    // Base query with admin restriction
+    const query = { hotelId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     const hotel = await Hotel.findOneAndUpdate(
-      { hotelId },
+      query,
       { status: "inactive" },
       { new: true }
     );
 
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     // Also deactivate all branches of this hotel
@@ -297,19 +344,26 @@ export const deactivateHotel = async (req, res, next) => {
   }
 };
 
-// Reactivate hotel function
+// Reactivate hotel function (admin-specific)
 export const reactivateHotel = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
 
+    // Base query with admin restriction
+    const query = { hotelId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     const hotel = await Hotel.findOneAndUpdate(
-      { hotelId },
+      query,
       { status: "active" },
       { new: true }
     );
 
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     // Optionally reactivate all branches of this hotel
@@ -348,7 +402,7 @@ export const reactivateHotel = async (req, res, next) => {
   }
 };
 
-// Simple search hotels by city/state (for /hotels/search endpoint)
+// Simple search hotels by city/state (for /hotels/search endpoint) (admin-specific)
 export const searchHotels = async (req, res, next) => {
   try {
     const {
@@ -370,6 +424,11 @@ export const searchHotels = async (req, res, next) => {
     }
 
     let query = {};
+
+    // Base query with admin restriction
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
 
     // Include both active and inactive hotels by default for search results
     if (includeInactive === "false") {
@@ -403,6 +462,7 @@ export const searchHotels = async (req, res, next) => {
         select:
           "name branchId location contactInfo operatingHours rating status",
       })
+      .populate("createdBy", "name email")
       .sort({
         status: 1, // Active hotels first
         "rating.average": -1,
@@ -444,7 +504,7 @@ export const searchHotels = async (req, res, next) => {
   }
 };
 
-// Search hotels by location and get their active branches
+// Search hotels by location and get their active branches (admin-specific)
 export const searchHotelsByLocation = async (req, res, next) => {
   try {
     const {
@@ -469,6 +529,11 @@ export const searchHotelsByLocation = async (req, res, next) => {
 
     // Search for hotels by their main location (include inactive for visibility)
     let hotelQuery = {};
+
+    // Base query with admin restriction
+    if (req.admin.role !== "super_admin") {
+      hotelQuery.createdBy = req.admin._id;
+    }
 
     if (includeInactive === "false") {
       hotelQuery.status = "active";
@@ -505,6 +570,7 @@ export const searchHotelsByLocation = async (req, res, next) => {
           select:
             "name branchId location contactInfo operatingHours rating status",
         })
+        .populate("createdBy", "name email")
         .sort({
           status: 1, // Active hotels first
           "rating.average": -1,
@@ -516,13 +582,14 @@ export const searchHotelsByLocation = async (req, res, next) => {
           select:
             "name branchId location contactInfo operatingHours rating status",
         })
+        .populate("createdBy", "name email")
         .sort({
           status: 1, // Active hotels first
           "rating.average": -1,
         });
     }
 
-    // Also search for branches in the location and get their hotels
+    // Also search for branches in the location and get their hotels (but only those belonging to current admin)
     let branchQuery = {};
 
     // For branches, still show those from inactive hotels but mark them appropriately
@@ -550,19 +617,32 @@ export const searchHotelsByLocation = async (req, res, next) => {
           },
         },
       })
-        .populate(
-          "hotel",
-          "name hotelId mainLocation contactInfo rating status"
-        )
+        .populate({
+          path: "hotel",
+          select:
+            "name hotelId mainLocation contactInfo rating status createdBy",
+          match:
+            req.admin.role !== "super_admin"
+              ? { createdBy: req.admin._id }
+              : {},
+        })
         .sort({ "rating.average": -1 });
     } else {
       branches = await Branch.find(branchQuery)
-        .populate(
-          "hotel",
-          "name hotelId mainLocation contactInfo rating status"
-        )
+        .populate({
+          path: "hotel",
+          select:
+            "name hotelId mainLocation contactInfo rating status createdBy",
+          match:
+            req.admin.role !== "super_admin"
+              ? { createdBy: req.admin._id }
+              : {},
+        })
         .sort({ "rating.average": -1 });
     }
+
+    // Filter out branches whose hotels don't belong to current admin
+    branches = branches.filter((branch) => branch.hotel !== null);
 
     // Combine results - hotels found by main location and hotels found through branches
     const hotelsMap = new Map();
@@ -581,6 +661,7 @@ export const searchHotelsByLocation = async (req, res, next) => {
             starRating: hotel.starRating,
             amenities: hotel.amenities,
             status: hotel.status,
+            createdBy: hotel.createdBy,
           },
           branches: hotel.branches || [],
         });

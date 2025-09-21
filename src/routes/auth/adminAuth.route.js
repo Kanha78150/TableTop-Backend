@@ -10,6 +10,7 @@ import {
   forgotPassword,
   resetPassword,
   verifyEmail,
+  resendVerificationOtp,
   getAllAdmins,
   updateAdmin,
   deleteAdmin,
@@ -25,11 +26,21 @@ import {
 const router = express.Router();
 
 // Public routes (no authentication required)
+router.post(
+  "/bootstrap-super-admin",
+  rateLimitSensitiveOps,
+  bootstrapSuperAdmin
+); // Bootstrap super admin (only works if no super admin exists)
 router.post("/register", registerAdmin); // Admin signup
 router.post("/login", loginAdmin); // Admin login
 router.post("/forgot-password", rateLimitSensitiveOps, forgotPassword);
 router.post("/reset-password", rateLimitSensitiveOps, resetPassword);
 router.post("/verify-email", verifyEmail);
+router.post(
+  "/resend-verification-otp",
+  rateLimitSensitiveOps,
+  resendVerificationOtp
+);
 router.post("/refresh-token", refreshToken);
 
 // Protected routes (authentication required)

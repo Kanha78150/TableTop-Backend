@@ -26,7 +26,6 @@ import {
   getAllStaff,
   updateStaff,
   deleteStaff,
-  updateStaffPermissions,
   updateStaffStatus,
   getStaffPerformance,
   updateStaffPerformance,
@@ -141,13 +140,6 @@ router.delete(
   requirePermission("manageStaff"),
   rateLimitSensitiveOps,
   deleteStaff
-);
-
-router.put(
-  "/staff/:staffId/permissions",
-  requireRole(["branch_manager"]),
-  requirePermission("manageStaff"),
-  updateStaffPermissions
 );
 
 router.put(

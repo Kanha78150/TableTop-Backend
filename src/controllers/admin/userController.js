@@ -1104,19 +1104,53 @@ export const updateStaff = async (req, res, next) => {
       );
     }
 
+    // Handle branch ID conversion (support both MongoDB ObjectId and auto-generated branchId)
+    if (updates.branch) {
+      if (!updates.branch.match(/^[0-9a-fA-F]{24}$/)) {
+        // It's an auto-generated branchId, find the corresponding MongoDB ObjectId
+        const branch = await Branch.findOne({ branchId: updates.branch });
+        if (!branch) {
+          return next(new APIError(404, "Branch not found"));
+        }
+        updates.branch = branch._id;
+      }
+    }
+
+    // Handle hotel ID conversion (support both MongoDB ObjectId and auto-generated hotelId)
+    if (updates.hotel) {
+      if (!updates.hotel.match(/^[0-9a-fA-F]{24}$/)) {
+        // It's an auto-generated hotelId, find the corresponding MongoDB ObjectId
+        const hotel = await Hotel.findOne({ hotelId: updates.hotel });
+        if (!hotel) {
+          return next(new APIError(404, "Hotel not found"));
+        }
+        updates.hotel = hotel._id;
+      }
+    }
+
     // If manager assignment is being updated, validate it
     if (updates.manager) {
-      const manager = await Manager.findById(updates.manager).populate(
-        "branch"
-      );
+      let manager;
+      if (updates.manager.match(/^[0-9a-fA-F]{24}$/)) {
+        // It's a MongoDB ObjectId
+        manager = await Manager.findById(updates.manager).populate("branch");
+      } else {
+        // It's an auto-generated employeeId
+        manager = await Manager.findOne({
+          employeeId: updates.manager,
+        }).populate("branch");
+      }
+
       if (!manager) {
         return next(new APIError(404, "Manager not found"));
       }
 
-      // Ensure manager is from the same branch as staff
-      if (
-        manager.branch._id.toString() !== currentStaff.branch._id.toString()
-      ) {
+      // Convert manager to ObjectId if it was an employeeId
+      updates.manager = manager._id;
+
+      // Ensure manager is from the same branch as staff (use updated branch if provided)
+      const staffBranchId = updates.branch || currentStaff.branch._id;
+      if (manager.branch._id.toString() !== staffBranchId.toString()) {
         return next(
           new APIError(400, "Manager must be from the same branch as staff")
         );
@@ -1359,6 +1393,11 @@ export const assignStaffToManager = async (req, res, next) => {
       return next(new APIError(404, "Staff not found"));
     }
 
+    // Check if staff has a branch assigned
+    if (!staff.branch) {
+      return next(new APIError(400, "Staff member has no branch assigned"));
+    }
+
     // Check if admin has access to this staff's branch
     if (
       req.admin.role === "branch_admin" &&
@@ -1371,10 +1410,24 @@ export const assignStaffToManager = async (req, res, next) => {
 
     let manager = null;
     if (managerId) {
-      // Get manager details
-      manager = await Manager.findById(managerId).populate("branch");
+      // Get manager details - support both MongoDB ObjectId and managerId
+      if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
+        // It's a MongoDB ObjectId
+        manager = await Manager.findById(managerId).populate("branch");
+      } else {
+        // It's a managerId (auto-generated)
+        manager = await Manager.findOne({ employeeId: managerId }).populate(
+          "branch"
+        );
+      }
+
       if (!manager) {
         return next(new APIError(404, "Manager not found"));
+      }
+
+      // Check if manager has a branch assigned
+      if (!manager.branch) {
+        return next(new APIError(400, "Manager has no branch assigned"));
       }
 
       // Ensure manager is from the same branch as staff
@@ -1396,7 +1449,7 @@ export const assignStaffToManager = async (req, res, next) => {
     }
 
     // Update staff's manager assignment
-    staff.manager = managerId || null;
+    staff.manager = manager ? manager._id : null;
     await staff.save();
 
     // Populate the updated staff using the MongoDB ObjectId
@@ -1411,7 +1464,7 @@ export const assignStaffToManager = async (req, res, next) => {
         new APIResponse(
           200,
           { staff: updatedStaff },
-          managerId
+          manager
             ? `Staff assigned to manager ${manager.name} successfully`
             : "Staff unassigned from manager successfully"
         )
@@ -1454,6 +1507,11 @@ export const getStaffByManager = async (req, res, next) => {
       return next(new APIError(404, "Manager not found"));
     }
 
+    // Check if manager has a branch assigned
+    if (!manager.branch) {
+      return next(new APIError(400, "Manager has no branch assigned"));
+    }
+
     // Check if admin has access to the manager's branch
     if (
       req.admin.role === "branch_admin" &&
@@ -1464,8 +1522,8 @@ export const getStaffByManager = async (req, res, next) => {
       );
     }
 
-    // Build query
-    const query = { manager: managerId, status };
+    // Build query - use manager's MongoDB ObjectId for the query
+    const query = { manager: manager._id, status };
     if (role) query.role = role;
     if (department) query.department = department;
 
@@ -1503,6 +1561,74 @@ export const getStaffByManager = async (req, res, next) => {
         "Staff under manager retrieved successfully"
       )
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Admin-only function to update staff permissions
+export const updateStaffPermissions = async (req, res, next) => {
+  try {
+    const { staffId } = req.params;
+    const { permissions } = req.body;
+
+    // Only admin and super_admin can update staff permissions (not branch_admin)
+    if (!["admin", "super_admin"].includes(req.admin.role)) {
+      return next(
+        new APIError(
+          403,
+          "Only admin and super admin can update staff permissions"
+        )
+      );
+    }
+
+    // Validate the permissions data using the updatePermissions schema
+    const { error } = staffValidationSchemas.updatePermissions.validate({
+      permissions,
+    });
+
+    if (error) {
+      return next(new APIError(400, error.details[0].message));
+    }
+
+    // Get staff details - support both MongoDB ObjectId and staffId
+    let staff;
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      // It's a MongoDB ObjectId
+      staff = await Staff.findById(staffId).populate("branch");
+    } else {
+      // It's a staffId (auto-generated)
+      staff = await Staff.findOne({ staffId: staffId }).populate("branch");
+    }
+
+    if (!staff) {
+      return next(new APIError(404, "Staff not found"));
+    }
+
+    // No branch access check needed since only admin and super_admin can access this endpoint
+
+    // Update staff permissions using the MongoDB ObjectId
+    const updatedStaff = await Staff.findByIdAndUpdate(
+      staff._id,
+      { permissions },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate("branch", "name branchId location")
+      .populate("manager", "name employeeId email")
+      .select("-password -refreshToken");
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { staff: updatedStaff },
+          "Staff permissions updated successfully"
+        )
+      );
   } catch (error) {
     next(error);
   }
