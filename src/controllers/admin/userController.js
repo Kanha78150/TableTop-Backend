@@ -225,7 +225,7 @@ export const deleteUser = async (req, res, next) => {
   }
 };
 
-// Manager Management
+// Manager Management (admin-specific)
 export const getAllManagers = async (req, res, next) => {
   try {
     const {
@@ -239,6 +239,11 @@ export const getAllManagers = async (req, res, next) => {
 
     const query = {};
 
+    // Add admin restriction (super admin can see all)
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     if (search) {
       query.$or = [
         { name: new RegExp(search, "i") },
@@ -248,7 +253,18 @@ export const getAllManagers = async (req, res, next) => {
     }
 
     if (branchId) {
-      query.branch = branchId;
+      // Verify branch belongs to admin before filtering
+      const branchQuery = { branchId };
+      if (req.admin.role !== "super_admin") {
+        branchQuery.createdBy = req.admin._id;
+      }
+
+      const branch = await Branch.findOne(branchQuery);
+      if (!branch) {
+        return next(new APIError(404, "Branch not found or access denied"));
+      }
+
+      query.branch = branch._id;
     }
 
     // Filter by assigned branches if admin has limited access
@@ -297,24 +313,32 @@ export const getManagerById = async (req, res, next) => {
   try {
     const { managerId } = req.params;
 
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     // Try to find manager by MongoDB ObjectId first, then by custom employeeId
     let manager;
     if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
       // It's a valid MongoDB ObjectId
-      manager = await Manager.findById(managerId)
+      query._id = managerId;
+      manager = await Manager.findOne(query)
         .populate("hotel", "name hotelId location status")
         .populate("branch", "name branchId location status")
         .select("-password -refreshToken");
     } else {
       // It's a custom employeeId (e.g., MGR-2025-00001)
-      manager = await Manager.findOne({ employeeId: managerId })
+      query.employeeId = managerId;
+      manager = await Manager.findOne(query)
         .populate("hotel", "name hotelId location status")
         .populate("branch", "name branchId location status")
         .select("-password -refreshToken");
     }
 
     if (!manager) {
-      return next(new APIError(404, "Manager not found"));
+      return next(new APIError(404, "Manager not found or access denied"));
     }
 
     // Check if admin has access to this manager's branch
@@ -374,26 +398,40 @@ export const createManager = async (req, res, next) => {
 
     // Validate hotel exists - support both auto-generated hotelId and MongoDB _id
     let hotel;
+    const hotelQuery = {};
+    if (req.admin.role !== "super_admin") {
+      hotelQuery.createdBy = req.admin._id;
+    }
+
     if (hotelId.match(/^[0-9a-fA-F]{24}$/)) {
-      hotel = await Hotel.findById(hotelId);
+      hotelQuery._id = hotelId;
+      hotel = await Hotel.findOne(hotelQuery);
     } else {
-      hotel = await Hotel.findOne({ hotelId: hotelId });
+      hotelQuery.hotelId = hotelId;
+      hotel = await Hotel.findOne(hotelQuery);
     }
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     // Validate branch exists and belongs to the specified hotel (if branchId is provided)
     let branch = null;
     if (branchId) {
+      const branchQuery = { hotel: hotel._id };
+      if (req.admin.role !== "super_admin") {
+        branchQuery.createdBy = req.admin._id;
+      }
+
       if (branchId.match(/^[0-9a-fA-F]{24}$/)) {
-        branch = await Branch.findById(branchId).populate("hotel");
+        branchQuery._id = branchId;
+        branch = await Branch.findOne(branchQuery).populate("hotel");
       } else {
-        branch = await Branch.findOne({ branchId: branchId }).populate("hotel");
+        branchQuery.branchId = branchId;
+        branch = await Branch.findOne(branchQuery).populate("hotel");
       }
 
       if (!branch) {
-        return next(new APIError(404, "Branch not found"));
+        return next(new APIError(404, "Branch not found or access denied"));
       }
 
       if (branch.hotel._id.toString() !== hotel._id.toString()) {
@@ -428,6 +466,7 @@ export const createManager = async (req, res, next) => {
       password,
       hotel: hotel._id, // Always use MongoDB ObjectId for reference
       branch: branch ? branch._id : null, // Use MongoDB ObjectId if branch exists, null if optional
+      createdBy: req.admin._id, // Associate manager with creating admin
     });
 
     await manager.save();
@@ -480,12 +519,20 @@ export const updateManager = async (req, res, next) => {
     // Remove sensitive fields from updates
     delete updates.password;
     delete updates.refreshToken;
+    delete updates.createdBy; // Prevent changing the creator
+
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
 
     // Try to find and update manager by MongoDB ObjectId first, then by custom employeeId
     let manager;
     if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
       // It's a valid MongoDB ObjectId
-      manager = await Manager.findByIdAndUpdate(managerId, updates, {
+      query._id = managerId;
+      manager = await Manager.findOneAndUpdate(query, updates, {
         new: true,
         runValidators: true,
       })
@@ -494,21 +541,18 @@ export const updateManager = async (req, res, next) => {
         .select("-password -refreshToken");
     } else {
       // It's a custom employeeId (e.g., MGR-2025-00001)
-      manager = await Manager.findOneAndUpdate(
-        { employeeId: managerId },
-        updates,
-        {
-          new: true,
-          runValidators: true,
-        }
-      )
+      query.employeeId = managerId;
+      manager = await Manager.findOneAndUpdate(query, updates, {
+        new: true,
+        runValidators: true,
+      })
         .populate("hotel", "name hotelId location")
         .populate("branch", "name branchId location")
         .select("-password -refreshToken");
     }
 
     if (!manager) {
-      return next(new APIError(404, "Manager not found"));
+      return next(new APIError(404, "Manager not found or access denied"));
     }
 
     // Check if admin has access to this manager's branch
@@ -531,22 +575,30 @@ export const deleteManager = async (req, res, next) => {
   try {
     const { managerId } = req.params;
 
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     // Try to find manager by MongoDB ObjectId first, then by custom employeeId
     let manager;
     if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
       // It's a valid MongoDB ObjectId
-      manager = await Manager.findById(managerId)
+      query._id = managerId;
+      manager = await Manager.findOne(query)
         .populate("hotel", "name hotelId location")
         .populate("branch", "name branchId location");
     } else {
       // It's a custom employeeId (e.g., MGR-2025-00001)
-      manager = await Manager.findOne({ employeeId: managerId })
+      query.employeeId = managerId;
+      manager = await Manager.findOne(query)
         .populate("hotel", "name hotelId location")
         .populate("branch", "name branchId location");
     }
 
     if (!manager) {
-      return next(new APIError(404, "Manager not found"));
+      return next(new APIError(404, "Manager not found or access denied"));
     }
 
     // Check if admin has access to this manager's branch
@@ -557,12 +609,8 @@ export const deleteManager = async (req, res, next) => {
       return next(new APIError(403, "You don't have access to this manager"));
     }
 
-    // Delete manager by ObjectId or custom employeeId
-    if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
-      await Manager.findByIdAndDelete(managerId);
-    } else {
-      await Manager.findOneAndDelete({ employeeId: managerId });
-    }
+    // Delete manager using the same query to ensure admin restriction
+    await Manager.findOneAndDelete(query);
 
     res
       .status(200)
@@ -572,21 +620,29 @@ export const deleteManager = async (req, res, next) => {
   }
 };
 
-// Deactivate manager (set status to inactive)
+// Deactivate manager (set status to inactive) (admin-specific)
 export const deactivateManager = async (req, res, next) => {
   try {
     const { managerId } = req.params;
 
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     // Try to find manager by MongoDB ObjectId first, then by custom employeeId
     let manager;
     if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
-      manager = await Manager.findById(managerId);
+      query._id = managerId;
+      manager = await Manager.findOne(query);
     } else {
-      manager = await Manager.findOne({ employeeId: managerId });
+      query.employeeId = managerId;
+      manager = await Manager.findOne(query);
     }
 
     if (!manager) {
-      return next(new APIError(404, "Manager not found"));
+      return next(new APIError(404, "Manager not found or access denied"));
     }
 
     // Check if admin has access to this manager's branch
@@ -629,21 +685,29 @@ export const deactivateManager = async (req, res, next) => {
   }
 };
 
-// Reactivate manager (set status to active)
+// Reactivate manager (set status to active) (admin-specific)
 export const reactivateManager = async (req, res, next) => {
   try {
     const { managerId } = req.params;
 
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     // Try to find manager by MongoDB ObjectId first, then by custom employeeId
     let manager;
     if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
-      manager = await Manager.findById(managerId);
+      query._id = managerId;
+      manager = await Manager.findOne(query);
     } else {
-      manager = await Manager.findOne({ employeeId: managerId });
+      query.employeeId = managerId;
+      manager = await Manager.findOne(query);
     }
 
     if (!manager) {
-      return next(new APIError(404, "Manager not found"));
+      return next(new APIError(404, "Manager not found or access denied"));
     }
 
     // Check if admin has access to this manager's branch
@@ -754,7 +818,7 @@ export const updateManagerPermissions = async (req, res, next) => {
   }
 };
 
-// Staff Management
+// Staff Management (admin-specific)
 export const getAllStaff = async (req, res, next) => {
   try {
     const {
@@ -769,6 +833,11 @@ export const getAllStaff = async (req, res, next) => {
 
     const query = {};
 
+    // Add admin restriction (super admin can see all)
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     if (search) {
       query.$or = [
         { name: new RegExp(search, "i") },
@@ -778,7 +847,18 @@ export const getAllStaff = async (req, res, next) => {
     }
 
     if (branchId) {
-      query.branch = branchId;
+      // Verify branch belongs to admin before filtering
+      const branchQuery = { branchId };
+      if (req.admin.role !== "super_admin") {
+        branchQuery.createdBy = req.admin._id;
+      }
+
+      const branch = await Branch.findOne(branchQuery);
+      if (!branch) {
+        return next(new APIError(404, "Branch not found or access denied"));
+      }
+
+      query.branch = branch._id;
     }
 
     if (role) {
@@ -877,26 +957,40 @@ export const createStaff = async (req, res, next) => {
 
     // Validate hotel exists - support both auto-generated hotelId and MongoDB _id
     let hotel;
+    const hotelQuery = {};
+    if (req.admin && req.admin.role !== "super_admin") {
+      hotelQuery.createdBy = req.admin._id;
+    }
+
     if (hotelId.match(/^[0-9a-fA-F]{24}$/)) {
-      hotel = await Hotel.findById(hotelId);
+      hotelQuery._id = hotelId;
+      hotel = await Hotel.findOne(hotelQuery);
     } else {
-      hotel = await Hotel.findOne({ hotelId: hotelId });
+      hotelQuery.hotelId = hotelId;
+      hotel = await Hotel.findOne(hotelQuery);
     }
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     // Validate branch exists and belongs to the specified hotel (if branchId is provided)
     let branch = null;
     if (branchId) {
+      const branchQuery = { hotel: hotel._id };
+      if (req.admin && req.admin.role !== "super_admin") {
+        branchQuery.createdBy = req.admin._id;
+      }
+
       if (branchId.match(/^[0-9a-fA-F]{24}$/)) {
-        branch = await Branch.findById(branchId).populate("hotel");
+        branchQuery._id = branchId;
+        branch = await Branch.findOne(branchQuery).populate("hotel");
       } else {
-        branch = await Branch.findOne({ branchId: branchId }).populate("hotel");
+        branchQuery.branchId = branchId;
+        branch = await Branch.findOne(branchQuery).populate("hotel");
       }
 
       if (!branch) {
-        return next(new APIError(404, "Branch not found"));
+        return next(new APIError(404, "Branch not found or access denied"));
       }
 
       if (branch.hotel._id.toString() !== hotel._id.toString()) {
@@ -922,18 +1016,23 @@ export const createStaff = async (req, res, next) => {
     if (managerId) {
       console.log("Looking for manager with ID:", managerId);
 
+      const managerQuery = {};
+      if (req.admin && req.admin.role !== "super_admin") {
+        managerQuery.createdBy = req.admin._id;
+      }
+
       if (managerId.match(/^[0-9a-fA-F]{24}$/)) {
         // It's a valid MongoDB ObjectId
-        manager = await Manager.findById(managerId).populate("branch hotel");
+        managerQuery._id = managerId;
+        manager = await Manager.findOne(managerQuery).populate("branch hotel");
         console.log(
           "Found manager by ObjectId:",
           manager ? "Found" : "Not found"
         );
       } else {
         // It's a custom employeeId (e.g., MGR-2025-00001)
-        manager = await Manager.findOne({ employeeId: managerId }).populate(
-          "branch hotel"
-        );
+        managerQuery.employeeId = managerId;
+        manager = await Manager.findOne(managerQuery).populate("branch hotel");
         console.log(
           "Found manager by employeeId:",
           manager ? "Found" : "Not found"
@@ -941,7 +1040,7 @@ export const createStaff = async (req, res, next) => {
       }
 
       if (!manager) {
-        return next(new APIError(404, "Manager not found"));
+        return next(new APIError(404, "Manager not found or access denied"));
       }
 
       console.log("Manager found:", {
@@ -1016,6 +1115,7 @@ export const createStaff = async (req, res, next) => {
       role,
       department,
       manager: manager ? manager._id : null, // Use MongoDB ObjectId if manager exists, null if not assigned
+      createdBy: req.admin ? req.admin._id : req.manager?.createdBy, // Associate staff with creating admin
     });
 
     await staff.save();

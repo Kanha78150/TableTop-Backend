@@ -152,6 +152,8 @@ const managerSchema = new mongoose.Schema(
 // Indexes for better performance
 managerSchema.index({ branch: 1 });
 managerSchema.index({ status: 1 });
+managerSchema.index({ createdBy: 1 });
+managerSchema.index({ createdBy: 1, status: 1 });
 
 // Pre-save middleware to auto-generate employeeId and hash password
 managerSchema.pre("save", async function (next) {

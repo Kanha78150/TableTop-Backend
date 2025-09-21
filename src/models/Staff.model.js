@@ -208,6 +208,8 @@ staffSchema.index({ manager: 1 });
 staffSchema.index({ status: 1 });
 staffSchema.index({ role: 1 });
 staffSchema.index({ department: 1 });
+staffSchema.index({ createdBy: 1 });
+staffSchema.index({ createdBy: 1, status: 1 });
 
 // Hash password before saving
 staffSchema.pre("save", async function (next) {

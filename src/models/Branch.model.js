@@ -133,6 +133,11 @@ const branchSchema = new mongoose.Schema(
         default: 0,
       },
     },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: [true, "Created by admin is required"],
+    },
   },
   {
     timestamps: true,
@@ -185,6 +190,7 @@ branchSchema.index({ "location.pincode": 1 });
 branchSchema.index({ status: 1 });
 branchSchema.index({ "rating.average": -1 });
 branchSchema.index({ "location.coordinates": "2dsphere" }); // For geospatial queries
+branchSchema.index({ createdBy: 1 }); // Index for admin-specific queries
 
 export const Branch = mongoose.model("Branch", branchSchema);
 

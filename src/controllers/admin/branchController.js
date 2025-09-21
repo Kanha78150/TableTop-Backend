@@ -12,7 +12,7 @@ import {
   addBranchServiceStatus,
 } from "../../utils/hotelStatusHelper.js";
 
-// Create a new branch
+// Create a new branch (admin-specific)
 export const createBranch = async (req, res, next) => {
   try {
     const { error } = validateBranch(req.body);
@@ -20,40 +20,54 @@ export const createBranch = async (req, res, next) => {
       return next(new APIError(400, error.details[0].message));
     }
 
-    // Check if hotel exists - support both auto-generated hotelId and MongoDB _id
+    // Check if hotel exists and belongs to current admin
     let hotel;
     const hotelIdentifier = req.body.hotel;
 
     // Try to find by MongoDB ObjectId first
     if (hotelIdentifier.match(/^[0-9a-fA-F]{24}$/)) {
-      hotel = await Hotel.findById(hotelIdentifier);
+      const hotelQuery = { _id: hotelIdentifier };
+      if (req.admin.role !== "super_admin") {
+        hotelQuery.createdBy = req.admin._id;
+      }
+      hotel = await Hotel.findOne(hotelQuery);
     }
 
     // If not found by ObjectId, try to find by auto-generated hotelId
     if (!hotel) {
-      hotel = await Hotel.findOne({ hotelId: hotelIdentifier });
+      const hotelQuery = { hotelId: hotelIdentifier };
+      if (req.admin.role !== "super_admin") {
+        hotelQuery.createdBy = req.admin._id;
+      }
+      hotel = await Hotel.findOne(hotelQuery);
     }
 
     if (!hotel) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
-    // Check if branch with same email already exists
-    const existingEmail = await Branch.findOne({
-      "contactInfo.email": req.body.contactInfo.email,
-    });
+    // Check if branch with same email already exists (within admin's scope)
+    const emailQuery = { "contactInfo.email": req.body.contactInfo.email };
+    if (req.admin.role !== "super_admin") {
+      emailQuery.createdBy = req.admin._id;
+    }
+
+    const existingEmail = await Branch.findOne(emailQuery);
     if (existingEmail) {
       return next(new APIError(400, "Branch with this email already exists"));
     }
 
+    // Create branch with admin association
     const branch = new Branch({
       ...req.body,
       hotel: hotel._id, // Always use the MongoDB ObjectId for the reference
+      createdBy: req.admin._id, // Associate with current admin
     });
     await branch.save();
 
     // Populate hotel information
     await branch.populate("hotel", "name hotelId");
+    await branch.populate("createdBy", "name email");
 
     res
       .status(201)
@@ -63,7 +77,7 @@ export const createBranch = async (req, res, next) => {
   }
 };
 
-// Get all branches with optional filtering
+// Get all branches with optional filtering (admin-specific)
 export const getAllBranches = async (req, res, next) => {
   try {
     const {
@@ -76,12 +90,41 @@ export const getAllBranches = async (req, res, next) => {
       sortOrder = "desc",
     } = req.query;
 
+    // Base query with admin restriction
     const query = {};
 
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     if (hotelId) {
-      const hotel = await Hotel.findOne({ hotelId });
+      // Verify the hotel belongs to the admin
+      const hotelQuery = { hotelId };
+      if (req.admin.role !== "super_admin") {
+        hotelQuery.createdBy = req.admin._id;
+      }
+
+      const hotel = await Hotel.findOne(hotelQuery);
       if (hotel) {
         query.hotel = hotel._id;
+      } else {
+        // If hotel not found or doesn't belong to admin, return empty result
+        return res.status(200).json(
+          new APIResponse(
+            200,
+            {
+              branches: [],
+              pagination: {
+                currentPage: parseInt(page),
+                totalPages: 0,
+                totalBranches: 0,
+                hasNextPage: false,
+                hasPrevPage: false,
+              },
+            },
+            "Branches retrieved successfully"
+          )
+        );
       }
     }
 
@@ -100,7 +143,8 @@ export const getAllBranches = async (req, res, next) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
-      .populate("hotel", "name hotelId mainLocation status");
+      .populate("hotel", "name hotelId mainLocation status")
+      .populate("createdBy", "name email");
 
     const totalBranches = await Branch.countDocuments(query);
 
@@ -129,17 +173,24 @@ export const getAllBranches = async (req, res, next) => {
 };
 
 // Get branch by ID
+// Get branch by ID (admin-specific)
 export const getBranchById = async (req, res, next) => {
   try {
     const { branchId } = req.params;
 
-    const branch = await Branch.findOne({ branchId }).populate(
-      "hotel",
-      "name hotelId mainLocation contactInfo status"
-    );
+    // Base query with admin restriction
+    const query = { branchId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    const branch = await Branch.findOne(query)
+      .populate("hotel", "name hotelId mainLocation contactInfo status")
+      .populate("createdBy", "name email");
 
     if (!branch) {
-      return next(new APIError(404, "Branch not found"));
+      return next(new APIError(404, "Branch not found or access denied"));
     }
 
     // Add service status to branch
@@ -155,7 +206,7 @@ export const getBranchById = async (req, res, next) => {
   }
 };
 
-// Update branch
+// Update branch (admin-specific)
 export const updateBranch = async (req, res, next) => {
   try {
     const { branchId } = req.params;
@@ -165,13 +216,22 @@ export const updateBranch = async (req, res, next) => {
       return next(new APIError(400, error.details[0].message));
     }
 
-    const branch = await Branch.findOneAndUpdate({ branchId }, req.body, {
+    // Base query with admin restriction
+    const query = { branchId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    const branch = await Branch.findOneAndUpdate(query, req.body, {
       new: true,
       runValidators: true,
-    }).populate("hotel", "name hotelId");
+    })
+      .populate("hotel", "name hotelId")
+      .populate("createdBy", "name email");
 
     if (!branch) {
-      return next(new APIError(404, "Branch not found"));
+      return next(new APIError(404, "Branch not found or access denied"));
     }
 
     res
@@ -182,15 +242,22 @@ export const updateBranch = async (req, res, next) => {
   }
 };
 
-// Delete branch (soft delete by changing status)
+// Delete branch (soft delete by changing status) (admin-specific)
 export const deleteBranch = async (req, res, next) => {
   try {
     const { branchId } = req.params;
 
-    // Find the branch first to check if it exists
-    const branch = await Branch.findOne({ branchId });
+    // Base query with admin restriction
+    const query = { branchId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    // Find the branch first to check if it exists and belongs to admin
+    const branch = await Branch.findOne(query);
     if (!branch) {
-      return next(new APIError(404, "Branch not found"));
+      return next(new APIError(404, "Branch not found or access denied"));
     }
 
     // Check if there are any active managers, staff, or bookings associated with this branch
@@ -238,7 +305,7 @@ export const deleteBranch = async (req, res, next) => {
     }
 
     // Completely delete the branch from database
-    await Branch.findOneAndDelete({ branchId });
+    await Branch.findOneAndDelete(query);
 
     res
       .status(200)
@@ -250,14 +317,21 @@ export const deleteBranch = async (req, res, next) => {
   }
 };
 
-// Deactivate branch (set status to inactive)
+// Deactivate branch (set status to inactive) (admin-specific)
 export const deactivateBranch = async (req, res, next) => {
   try {
     const { branchId } = req.params;
 
-    const branch = await Branch.findOne({ branchId });
+    // Base query with admin restriction
+    const query = { branchId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    const branch = await Branch.findOne(query);
     if (!branch) {
-      return next(new APIError(404, "Branch not found"));
+      return next(new APIError(404, "Branch not found or access denied"));
     }
 
     if (branch.status === "inactive") {
@@ -270,7 +344,7 @@ export const deactivateBranch = async (req, res, next) => {
     await branch.save();
 
     // Populate hotel data for service status
-    const populatedBranch = await Branch.findOne({ branchId }).populate(
+    const populatedBranch = await Branch.findOne(query).populate(
       "hotel",
       "name hotelId status"
     );
@@ -292,14 +366,21 @@ export const deactivateBranch = async (req, res, next) => {
   }
 };
 
-// Reactivate branch (set status to active)
+// Reactivate branch (set status to active) (admin-specific)
 export const reactivateBranch = async (req, res, next) => {
   try {
     const { branchId } = req.params;
 
-    const branch = await Branch.findOne({ branchId });
+    // Base query with admin restriction
+    const query = { branchId };
+
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    const branch = await Branch.findOne(query);
     if (!branch) {
-      return next(new APIError(404, "Branch not found"));
+      return next(new APIError(404, "Branch not found or access denied"));
     }
 
     if (branch.status === "active") {
@@ -312,7 +393,7 @@ export const reactivateBranch = async (req, res, next) => {
     await branch.save();
 
     // Populate hotel data for service status
-    const populatedBranch = await Branch.findOne({ branchId }).populate(
+    const populatedBranch = await Branch.findOne(query).populate(
       "hotel",
       "name hotelId status"
     );
@@ -334,7 +415,7 @@ export const reactivateBranch = async (req, res, next) => {
   }
 };
 
-// Search branches by location
+// Search branches by location (admin-specific)
 export const searchBranchesByLocation = async (req, res, next) => {
   try {
     const { error } = validateBranchLocationSearch(req.query);
@@ -356,13 +437,24 @@ export const searchBranchesByLocation = async (req, res, next) => {
 
     let query = { status: "active" };
 
+    // Add admin restriction (super admin can see all)
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     // Filter by hotel if provided
     if (hotelId) {
-      const hotel = await Hotel.findOne({ hotelId });
+      const hotelQuery = { hotelId };
+      // Also apply admin restriction to hotel query
+      if (req.admin.role !== "super_admin") {
+        hotelQuery.createdBy = req.admin._id;
+      }
+
+      const hotel = await Hotel.findOne(hotelQuery);
       if (hotel) {
         query.hotel = hotel._id;
       } else {
-        return next(new APIError(404, "Hotel not found"));
+        return next(new APIError(404, "Hotel not found or access denied"));
       }
     }
 
