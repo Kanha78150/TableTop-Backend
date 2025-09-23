@@ -1,6 +1,11 @@
 import mongoose from "mongoose";
 import Joi from "joi";
 import { generateFoodItemId, getNextCounter } from "../utils/idGenerator.js";
+import {
+  resolveHotelId,
+  resolveBranchId,
+  resolveCategoryId,
+} from "../utils/idResolver.js";
 
 const foodItemSchema = new mongoose.Schema(
   {
@@ -56,7 +61,6 @@ const foodItemSchema = new mongoose.Schema(
         values: ["mild", "medium", "hot", "extra-hot", "none"],
         message: "Spice level must be mild, medium, hot, extra-hot, or none",
       },
-      default: "medium",
     },
     // Dietary information
     dietaryInfo: {
@@ -79,10 +83,7 @@ const foodItemSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    isNew: {
-      type: Boolean,
-      default: false,
-    },
+    // Removed isNew field to avoid Mongoose reserved key warning
     // Menu timing availability
     availableTimings: {
       breakfast: { type: Boolean, default: false },
@@ -92,17 +93,17 @@ const foodItemSchema = new mongoose.Schema(
     },
     // Relationships
     category: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed, // Allow both ObjectId and String
       ref: "FoodCategory",
       required: [true, "Category is required"],
     },
     branch: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed, // Allow both ObjectId and String
       ref: "Branch",
       required: [true, "Branch is required"],
     },
     hotel: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed, // Allow both ObjectId and String
       ref: "Hotel",
       required: [true, "Hotel is required"],
     },
@@ -214,14 +215,86 @@ const foodItemSchema = new mongoose.Schema(
   }
 );
 
-// Auto-generate itemId before saving
-foodItemSchema.pre("save", async function (next) {
+// Auto-generate itemId and resolve IDs before validation
+foodItemSchema.pre("validate", async function (next) {
   if (!this.itemId && this.isNew) {
     try {
       const year = new Date().getFullYear();
       const prefix = `ITEM-${year}`;
-      const counter = await getNextCounter(this.constructor, "itemId", prefix);
-      this.itemId = generateFoodItemId(counter);
+
+      // Retry logic for duplicate IDs
+      let attempts = 0;
+      const maxAttempts = 5;
+
+      while (attempts < maxAttempts) {
+        const counter = await getNextCounter(
+          this.constructor,
+          "itemId",
+          prefix
+        );
+        const potentialId = generateFoodItemId(counter + attempts);
+
+        // Check if this ID already exists
+        const existingItem = await this.constructor.findOne({
+          itemId: potentialId,
+        });
+
+        if (!existingItem) {
+          this.itemId = potentialId;
+          break;
+        }
+
+        attempts++;
+      }
+
+      if (!this.itemId) {
+        return next(
+          new Error("Unable to generate unique item ID after multiple attempts")
+        );
+      }
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  // Resolve hotel, branch, and category IDs if they are auto-generated IDs
+  if (this.hotel && typeof this.hotel === "string") {
+    try {
+      const resolvedHotelId = await resolveHotelId(this.hotel);
+      if (!resolvedHotelId) {
+        return next(
+          new Error(`Hotel not found with identifier: ${this.hotel}`)
+        );
+      }
+      this.hotel = new mongoose.Types.ObjectId(resolvedHotelId);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  if (this.branch && typeof this.branch === "string") {
+    try {
+      const resolvedBranchId = await resolveBranchId(this.branch, this.hotel);
+      if (!resolvedBranchId) {
+        return next(
+          new Error(`Branch not found with identifier: ${this.branch}`)
+        );
+      }
+      this.branch = new mongoose.Types.ObjectId(resolvedBranchId);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  if (this.category && typeof this.category === "string") {
+    try {
+      const resolvedCategoryId = await resolveCategoryId(this.category);
+      if (!resolvedCategoryId) {
+        return next(
+          new Error(`Category not found with identifier: ${this.category}`)
+        );
+      }
+      this.category = new mongoose.Types.ObjectId(resolvedCategoryId);
     } catch (error) {
       return next(error);
     }
@@ -261,7 +334,7 @@ foodItemSchema.index({ foodType: 1 });
 foodItemSchema.index({ price: 1 });
 foodItemSchema.index({ isRecommended: 1 });
 foodItemSchema.index({ isBestSeller: 1 });
-foodItemSchema.index({ slug: 1 });
+// Removed duplicate slug index to avoid Mongoose warning
 foodItemSchema.index({ displayOrder: 1 });
 foodItemSchema.index({ averageRating: -1 });
 
@@ -322,15 +395,55 @@ export const foodItemValidationSchemas = {
       dinner: Joi.boolean().default(true),
       snacks: Joi.boolean().default(false),
     }).optional(),
-    category: Joi.string().required().messages({
-      "string.empty": "Category is required",
-    }),
-    branch: Joi.string().required().messages({
-      "string.empty": "Branch is required",
-    }),
-    hotel: Joi.string().required().messages({
-      "string.empty": "Hotel is required",
-    }),
+    category: Joi.alternatives()
+      .try(
+        Joi.string().length(24).hex().messages({
+          "string.length": "Category MongoDB ID must be 24 characters",
+          "string.hex": "Category MongoDB ID must be hexadecimal",
+        }),
+        Joi.string()
+          .pattern(/^CAT-\d{4}-\d{5}$/)
+          .messages({
+            "string.pattern.base":
+              "Category ID must be in format CAT-YYYY-00000",
+          })
+      )
+      .required()
+      .messages({
+        "any.required": "Category is required",
+      }),
+    branch: Joi.alternatives()
+      .try(
+        Joi.string().length(24).hex().messages({
+          "string.length": "Branch MongoDB ID must be 24 characters",
+          "string.hex": "Branch MongoDB ID must be hexadecimal",
+        }),
+        Joi.string()
+          .pattern(/^BRN-[A-Z0-9]+-\d{5}$/)
+          .messages({
+            "string.pattern.base": "Branch ID must be in format BRN-XXX-00000",
+          })
+      )
+      .required()
+      .messages({
+        "any.required": "Branch is required",
+      }),
+    hotel: Joi.alternatives()
+      .try(
+        Joi.string().length(24).hex().messages({
+          "string.length": "Hotel MongoDB ID must be 24 characters",
+          "string.hex": "Hotel MongoDB ID must be hexadecimal",
+        }),
+        Joi.string()
+          .pattern(/^HTL-\d{4}-\d{5}$/)
+          .messages({
+            "string.pattern.base": "Hotel ID must be in format HTL-YYYY-00000",
+          })
+      )
+      .required()
+      .messages({
+        "any.required": "Hotel is required",
+      }),
     image: Joi.string().uri().optional().allow(null, ""),
     images: Joi.array().items(Joi.string().uri()).optional(),
     nutritionalInfo: Joi.object({
@@ -392,7 +505,20 @@ export const foodItemValidationSchemas = {
       dinner: Joi.boolean(),
       snacks: Joi.boolean(),
     }).optional(),
-    category: Joi.string().optional(),
+    category: Joi.alternatives()
+      .try(
+        Joi.string().length(24).hex().messages({
+          "string.length": "Category MongoDB ID must be 24 characters",
+          "string.hex": "Category MongoDB ID must be hexadecimal",
+        }),
+        Joi.string()
+          .pattern(/^CAT-\d{4}-\d{5}$/)
+          .messages({
+            "string.pattern.base":
+              "Category ID must be in format CAT-YYYY-00000",
+          })
+      )
+      .optional(),
     image: Joi.string().uri().optional().allow(null, ""),
     images: Joi.array().items(Joi.string().uri()).optional(),
     nutritionalInfo: Joi.object({

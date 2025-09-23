@@ -36,11 +36,15 @@ import {
 
 import {
   getMenuItems,
+  getMenuItem,
+  updateMenuItemAvailability,
+  updateBulkMenuItemAvailability,
+  getFoodCategories,
+  getFoodCategory,
+  // Deprecated functions (will return 403 errors)
   addMenuItem,
   updateMenuItem,
   deleteMenuItem,
-  updateMenuItemAvailability,
-  getFoodCategories,
   addFoodCategory,
   updateFoodCategory,
   deleteFoodCategory,
@@ -184,35 +188,40 @@ router.put(
   updateStaffSchedule
 );
 
-// Menu Management Routes
+// Menu Management Routes - READ ONLY FOR MANAGERS
+// Only administrators can create, update, or delete categories and items
+
+// Food Categories - Read Only
+router.get(
+  "/menu/categories",
+  requireManagerOrHigher,
+  requirePermission("viewMenu"),
+  getFoodCategories
+);
+
+router.get(
+  "/menu/categories/:categoryId",
+  requireManagerOrHigher,
+  requirePermission("viewMenu"),
+  getFoodCategory
+);
+
+// Food Items - Read Only + Availability Updates
 router.get(
   "/menu/items",
   requireManagerOrHigher,
-  requirePermission("manageMenu"),
+  requirePermission("viewMenu"),
   getMenuItems
 );
 
-router.post(
-  "/menu/items",
-  requireRole(["branch_manager"]),
-  requirePermission("manageMenu"),
-  addMenuItem
-);
-
-router.put(
+router.get(
   "/menu/items/:itemId",
-  requireRole(["branch_manager"]),
-  requirePermission("updateMenuItems"),
-  updateMenuItem
+  requireManagerOrHigher,
+  requirePermission("viewMenu"),
+  getMenuItem
 );
 
-router.delete(
-  "/menu/items/:itemId",
-  requireRole(["branch_manager"]),
-  requirePermission("manageMenu"),
-  deleteMenuItem
-);
-
+// Managers can only update availability of menu items
 router.put(
   "/menu/items/:itemId/availability",
   requireRole(["branch_manager"]),
@@ -220,32 +229,12 @@ router.put(
   updateMenuItemAvailability
 );
 
-router.get(
-  "/menu/categories",
-  requireManagerOrHigher,
-  requirePermission("manageMenu"),
-  getFoodCategories
-);
-
-router.post(
-  "/menu/categories",
+// Bulk availability update
+router.patch(
+  "/menu/items/bulk-availability",
   requireRole(["branch_manager"]),
-  requirePermission("manageMenu"),
-  addFoodCategory
-);
-
-router.put(
-  "/menu/categories/:categoryId",
-  requireRole(["branch_manager"]),
-  requirePermission("manageMenu"),
-  updateFoodCategory
-);
-
-router.delete(
-  "/menu/categories/:categoryId",
-  requireRole(["branch_manager"]),
-  requirePermission("manageMenu"),
-  deleteFoodCategory
+  requirePermission("updateMenuItems"),
+  updateBulkMenuItemAvailability
 );
 
 // Order Management Routes

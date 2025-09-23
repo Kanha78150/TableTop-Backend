@@ -94,12 +94,31 @@ export const generateUniqueCode = (prefix = "CODE", length = 8) => {
  */
 export const getNextCounter = async (Model, fieldName, prefix) => {
   try {
-    const count = await Model.countDocuments({
+    // Find all documents with the given prefix
+    const documents = await Model.find({
       [fieldName]: new RegExp(
         `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`
       ),
-    });
-    return count + 1;
+    }).select(fieldName);
+
+    if (documents.length === 0) {
+      return 1; // No existing documents, start with 1
+    }
+
+    // Extract counter numbers from existing IDs
+    const existingCounters = documents
+      .map((doc) => {
+        const id = doc[fieldName];
+        // Extract the last part after the last hyphen
+        const parts = id.split("-");
+        const counterStr = parts[parts.length - 1];
+        return parseInt(counterStr, 10);
+      })
+      .filter((num) => !isNaN(num))
+      .sort((a, b) => b - a); // Sort in descending order
+
+    // Return the highest counter + 1
+    return existingCounters[0] + 1;
   } catch (error) {
     console.error(`Error getting next counter for ${fieldName}:`, error);
     return 1; // Fallback to 1 if error occurs

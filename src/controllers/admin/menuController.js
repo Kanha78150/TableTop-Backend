@@ -3,6 +3,11 @@ import { FoodItem } from "../../models/FoodItem.model.js";
 import { Offer } from "../../models/Offer.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import {
+  resolveHotelId,
+  resolveBranchId,
+  resolveCategoryId,
+} from "../../utils/idResolver.js";
 
 // Food Category Management
 export const getAllCategories = async (req, res, next) => {
@@ -65,7 +70,55 @@ export const getAllCategories = async (req, res, next) => {
 
 export const createCategory = async (req, res, next) => {
   try {
-    const { name, description, branchId, isActive = true } = req.body;
+    const {
+      name,
+      description,
+      hotelId,
+      branchId,
+      isActive = true,
+      ...otherFields
+    } = req.body;
+
+    // Validate required fields
+    if (!hotelId) {
+      return next(new APIError(400, "Hotel ID is required"));
+    }
+
+    if (!branchId) {
+      return next(new APIError(400, "Branch ID is required"));
+    }
+
+    // Resolve the hotel and branch IDs to ObjectIds for database queries
+    let resolvedHotelId, resolvedBranchId;
+
+    try {
+      // Resolve hotel ID
+      if (typeof hotelId === "string" && !hotelId.match(/^[0-9a-fA-F]{24}$/)) {
+        resolvedHotelId = await resolveHotelId(hotelId);
+        if (!resolvedHotelId) {
+          return next(new APIError(400, `Hotel not found with ID: ${hotelId}`));
+        }
+      } else {
+        resolvedHotelId = hotelId;
+      }
+
+      // Resolve branch ID
+      if (
+        typeof branchId === "string" &&
+        !branchId.match(/^[0-9a-fA-F]{24}$/)
+      ) {
+        resolvedBranchId = await resolveBranchId(branchId, resolvedHotelId);
+        if (!resolvedBranchId) {
+          return next(
+            new APIError(400, `Branch not found with ID: ${branchId}`)
+          );
+        }
+      } else {
+        resolvedBranchId = branchId;
+      }
+    } catch (error) {
+      return next(new APIError(400, `Error resolving IDs: ${error.message}`));
+    }
 
     // Check if admin has access to this branch
     if (
@@ -75,10 +128,10 @@ export const createCategory = async (req, res, next) => {
       return next(new APIError(403, "You don't have access to this branch"));
     }
 
-    // Check if category with same name exists in this branch
+    // Check if category with same name exists in this branch using resolved branch ID
     const existingCategory = await FoodCategory.findOne({
       name,
-      branch: branchId,
+      branch: resolvedBranchId,
     });
     if (existingCategory) {
       return next(
@@ -89,18 +142,23 @@ export const createCategory = async (req, res, next) => {
       );
     }
 
-    const category = new FoodCategory({
+    console.log("About to create FoodCategory with data:");
+    const categoryData = {
       name,
       description,
-      branch: branchId,
+      hotel: hotelId, // Map hotelId to hotel field
+      branch: branchId, // Map branchId to branch field
       isActive,
-    });
+      ...otherFields,
+    };
+
+    const category = new FoodCategory(categoryData);
 
     await category.save();
 
-    const populatedCategory = await FoodCategory.findById(
-      category._id
-    ).populate("branch", "name branchId location");
+    const populatedCategory = await FoodCategory.findById(category._id)
+      .populate("hotel", "name hotelId location")
+      .populate("branch", "name branchId location");
 
     res
       .status(201)
@@ -268,7 +326,9 @@ export const createFoodItem = async (req, res, next) => {
       name,
       description,
       price,
+      foodType,
       categoryId,
+      hotelId,
       branchId,
       isAvailable = true,
       preparationTime,
@@ -276,7 +336,21 @@ export const createFoodItem = async (req, res, next) => {
       allergens,
       nutritionalInfo,
       images,
+      ...otherFields
     } = req.body;
+
+    // Validate required fields
+    if (!hotelId) {
+      return next(new APIError(400, "Hotel ID is required"));
+    }
+
+    if (!branchId) {
+      return next(new APIError(400, "Branch ID is required"));
+    }
+
+    if (!categoryId) {
+      return next(new APIError(400, "Category ID is required"));
+    }
 
     // Check if admin has access to this branch
     if (
@@ -287,7 +361,33 @@ export const createFoodItem = async (req, res, next) => {
     }
 
     // Check if food item with same name exists in this branch
-    const existingItem = await FoodItem.findOne({ name, branch: branchId });
+    // Resolve branch ID for database query
+    let resolvedBranchId;
+    if (typeof branchId === "string" && !branchId.match(/^[0-9a-fA-F]{24}$/)) {
+      try {
+        const resolvedHotelId =
+          typeof hotelId === "string" && !hotelId.match(/^[0-9a-fA-F]{24}$/)
+            ? await resolveHotelId(hotelId)
+            : hotelId;
+        resolvedBranchId = await resolveBranchId(branchId, resolvedHotelId);
+        if (!resolvedBranchId) {
+          return next(
+            new APIError(400, `Branch not found with ID: ${branchId}`)
+          );
+        }
+      } catch (error) {
+        return next(
+          new APIError(400, `Error resolving branch ID: ${error.message}`)
+        );
+      }
+    } else {
+      resolvedBranchId = branchId;
+    }
+
+    const existingItem = await FoodItem.findOne({
+      name,
+      branch: resolvedBranchId,
+    });
     if (existingItem) {
       return next(
         new APIError(
@@ -301,7 +401,9 @@ export const createFoodItem = async (req, res, next) => {
       name,
       description,
       price,
+      foodType,
       category: categoryId,
+      hotel: hotelId,
       branch: branchId,
       isAvailable,
       preparationTime,
@@ -309,11 +411,13 @@ export const createFoodItem = async (req, res, next) => {
       allergens,
       nutritionalInfo,
       images,
+      ...otherFields,
     });
 
     await foodItem.save();
 
     const populatedFoodItem = await FoodItem.findById(foodItem._id)
+      .populate("hotel", "name hotelId location")
       .populate("branch", "name branchId location")
       .populate("category", "name");
 

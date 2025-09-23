@@ -289,6 +289,8 @@ export const managerValidationSchemas = {
       "string.base": "Branch ID must be a string",
     }),
 
+    profileImage: Joi.string().uri().allow(null, ""),
+
     department: Joi.string()
       .valid("operations", "kitchen", "service", "management")
       .default("operations"),
@@ -310,6 +312,7 @@ export const managerValidationSchemas = {
       viewBranchAnalytics: Joi.boolean().default(true),
       internalChat: Joi.boolean().default(true),
     }).optional(),
+    profileImage: Joi.string().uri().allow(null, ""),
 
     emergencyContact: Joi.object({
       name: Joi.string().trim().max(100),

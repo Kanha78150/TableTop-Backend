@@ -366,6 +366,7 @@ export const getManagerById = async (req, res, next) => {
   }
 };
 
+// create manger
 export const createManager = async (req, res, next) => {
   try {
     // Validate request body using Joi schema
