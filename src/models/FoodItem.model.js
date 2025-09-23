@@ -77,7 +77,6 @@ const foodItemSchema = new mongoose.Schema(
     },
     isRecommended: {
       type: Boolean,
-      default: false,
     },
     isBestSeller: {
       type: Boolean,
@@ -134,7 +133,6 @@ const foodItemSchema = new mongoose.Schema(
     },
     servingSize: {
       type: String,
-      default: "1 portion",
     },
     ingredients: [
       {
@@ -386,7 +384,7 @@ export const foodItemValidationSchemas = {
       organic: Joi.boolean().default(false),
     }).optional(),
     isAvailable: Joi.boolean().default(true),
-    isRecommended: Joi.boolean().default(false),
+    isRecommended: Joi.boolean().optional(),
     isBestSeller: Joi.boolean().default(false),
     isNew: Joi.boolean().default(false),
     availableTimings: Joi.object({

@@ -48,7 +48,7 @@ export const getAllHotels = async (req, res, next) => {
     const {
       city,
       state,
-      status = "active",
+      status, // Remove default value to show all hotels
       page = 1,
       limit = 10,
       sortBy = "createdAt",
@@ -57,11 +57,17 @@ export const getAllHotels = async (req, res, next) => {
 
     // Base query: only show hotels created by the current admin
     // Exception: Super admin can see all hotels
-    const query = { status };
+    const query = {};
 
     if (req.admin.role !== "super_admin") {
       query.createdBy = req.admin._id;
     }
+
+    // Only filter by status if explicitly provided
+    if (status) {
+      query.status = status;
+    }
+    // If no status filter provided, show all hotels (active, inactive, maintenance)
 
     if (city) {
       query["mainLocation.city"] = new RegExp(city, "i");
@@ -87,11 +93,13 @@ export const getAllHotels = async (req, res, next) => {
 
     const totalHotels = await Hotel.countDocuments(query);
 
+    const hotelsWithServiceStatus = addServiceStatusToHotels(hotels);
+
     res.status(200).json(
       new APIResponse(
         200,
         {
-          hotels,
+          hotels: hotelsWithServiceStatus,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(totalHotels / limit),

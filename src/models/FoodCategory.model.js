@@ -34,7 +34,6 @@ const foodCategorySchema = new mongoose.Schema(
     },
     displayOrder: {
       type: Number,
-      default: 0,
     },
     branch: {
       type: mongoose.Schema.Types.Mixed, // Allow both ObjectId and String
@@ -57,10 +56,10 @@ const foodCategorySchema = new mongoose.Schema(
       },
     ],
     availableTimings: {
-      breakfast: { type: Boolean, default: true },
-      lunch: { type: Boolean, default: true },
-      dinner: { type: Boolean, default: true },
-      snacks: { type: Boolean, default: true },
+      breakfast: { type: Boolean },
+      lunch: { type: Boolean },
+      dinner: { type: Boolean },
+      snacks: { type: Boolean },
     },
     slug: {
       type: String,
@@ -218,7 +217,7 @@ export const foodCategoryValidationSchemas = {
     description: Joi.string().max(500).allow("").optional(),
     type: Joi.string().valid("veg", "non-veg", "both").default("both"),
     isActive: Joi.boolean().default(true),
-    displayOrder: Joi.number().integer().min(0).default(0),
+    displayOrder: Joi.number().integer().min(0).optional(),
     branch: Joi.alternatives()
       .try(
         Joi.string().length(24).hex().messages({
@@ -254,10 +253,10 @@ export const foodCategoryValidationSchemas = {
     image: Joi.string().uri().optional().allow(null, ""),
     tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
     availableTimings: Joi.object({
-      breakfast: Joi.boolean().default(true),
-      lunch: Joi.boolean().default(true),
-      dinner: Joi.boolean().default(true),
-      snacks: Joi.boolean().default(true),
+      breakfast: Joi.boolean(),
+      lunch: Joi.boolean(),
+      dinner: Joi.boolean(),
+      snacks: Joi.boolean(),
     }).optional(),
     slug: Joi.string().lowercase().trim().optional(),
   }),
