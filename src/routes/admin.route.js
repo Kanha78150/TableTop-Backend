@@ -64,11 +64,10 @@ import {
   updateFoodItem,
   deleteFoodItem,
   updateFoodItemAvailability,
-  getAllOffers,
-  createOffer,
-  updateOffer,
-  deleteOffer,
 } from "../controllers/admin/menuController.js";
+
+// Offer Management Controllers
+import offerController from "../controllers/admin/offerController.js";
 
 // Analytics Controllers
 import {
@@ -410,20 +409,70 @@ router.patch(
 );
 
 // Offers Management
-router.get("/offers", rbac({ permissions: ["manageOffers"] }), getAllOffers);
+router.get(
+  "/offers",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.getAllOffers
+);
 
-router.post("/offers", rbac({ permissions: ["manageOffers"] }), createOffer);
+router.get(
+  "/offers/stats",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.getOfferStats
+);
+
+router.get(
+  "/offers/active",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.getActiveOffersFor
+);
+
+router.post(
+  "/offers",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.createOffer
+);
+
+router.get(
+  "/offers/code/:code",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.getOfferByCode
+);
+
+router.get(
+  "/offers/:offerId",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.getOfferById
+);
 
 router.put(
   "/offers/:offerId",
   rbac({ permissions: ["manageOffers"] }),
-  updateOffer
+  offerController.updateOffer
+);
+
+router.patch(
+  "/offers/:offerId/toggle",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.toggleOfferStatus
 );
 
 router.delete(
   "/offers/:offerId",
   rbac({ permissions: ["manageOffers"] }),
-  deleteOffer
+  offerController.deleteOffer
+);
+
+router.post(
+  "/offers/:code/apply",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.applyOffer
+);
+
+router.post(
+  "/offers/apply-multiple",
+  rbac({ permissions: ["manageOffers"] }),
+  offerController.applyOffers
 );
 
 // ======================
