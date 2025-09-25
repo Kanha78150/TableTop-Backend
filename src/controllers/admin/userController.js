@@ -914,6 +914,79 @@ export const getAllStaff = async (req, res, next) => {
   }
 };
 
+export const getStaffById = async (req, res, next) => {
+  try {
+    const { staffId } = req.params;
+
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
+    let staff;
+
+    // Check if staffId is MongoDB ObjectId or auto-generated staffId
+    if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
+      // MongoDB ObjectId format
+      query._id = staffId;
+      staff = await Staff.findOne(query);
+    } else {
+      // Auto-generated staffId format (e.g., STF-2025-00001)
+      query.staffId = staffId;
+      staff = await Staff.findOne(query);
+    }
+
+    if (!staff) {
+      return next(new APIError(404, "Staff not found or access denied"));
+    }
+
+    // Check if admin has access to this staff's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      req.admin.canAccessBranch &&
+      !req.admin.canAccessBranch(staff.branch._id)
+    ) {
+      return next(new APIError(403, "You don't have access to this staff"));
+    }
+
+    // Populate related data
+    const populatedStaff = await Staff.findById(staff._id)
+      .populate({
+        path: "hotel",
+        select: "name hotelId email status",
+      })
+      .populate({
+        path: "branch",
+        select: "name branchId location status",
+      })
+      .populate({
+        path: "manager",
+        select: "name employeeId email",
+      })
+      .populate({
+        path: "createdBy",
+        select: "name email role",
+      })
+      .select("-password -refreshToken");
+
+    // Add service status
+    const staffWithStatus = addServiceStatusToStaff([populatedStaff]);
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { staff: staffWithStatus[0] },
+          "Staff retrieved successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const createStaff = async (req, res, next) => {
   try {
     // Validate request body using Joi schema
@@ -1119,7 +1192,66 @@ export const createStaff = async (req, res, next) => {
       createdBy: req.admin ? req.admin._id : req.manager?.createdBy, // Associate staff with creating admin
     });
 
-    await staff.save();
+    console.log("Staff object before save:", {
+      name: staff.name,
+      email: staff.email,
+      role: staff.role,
+      staffId: staff.staffId,
+      hotel: staff.hotel,
+      branch: staff.branch,
+    });
+
+    try {
+      await staff.save();
+
+      console.log("Staff saved successfully with staffId:", staff.staffId);
+    } catch (saveError) {
+      console.error("Save error details:", {
+        code: saveError.code,
+        message: saveError.message,
+        keyPattern: saveError.keyPattern,
+        keyValue: saveError.keyValue,
+        name: saveError.name,
+      });
+
+      // Handle MongoDB duplicate key errors
+      if (saveError.code === 11000) {
+        // Check what actually exists in database
+        if (saveError.keyPattern && saveError.keyPattern.staffId) {
+          const existingStaff = await Staff.findOne({
+            staffId: saveError.keyValue.staffId,
+          });
+          console.log(
+            "Existing staff found:",
+            existingStaff
+              ? {
+                  id: existingStaff._id,
+                  name: existingStaff.name,
+                  email: existingStaff.email,
+                  staffId: existingStaff.staffId,
+                  createdAt: existingStaff.createdAt,
+                }
+              : "No staff found with this ID"
+          );
+
+          return next(
+            new APIError(
+              409,
+              `Staff ID ${saveError.keyValue.staffId} already exists. Please try again.`
+            )
+          );
+        }
+        if (saveError.keyPattern && saveError.keyPattern.email) {
+          return next(
+            new APIError(409, "Staff with this email already exists")
+          );
+        }
+        return next(
+          new APIError(409, "Duplicate entry found. Please check your input.")
+        );
+      }
+      throw saveError; // Re-throw other errors
+    }
 
     const populatedStaff = await Staff.findById(staff._id)
       .populate("hotel", "name hotelId email")

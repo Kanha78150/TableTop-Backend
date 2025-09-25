@@ -2,7 +2,8 @@
 import mongoose from "mongoose";
 import Joi from "joi";
 import bcrypt from "bcryptjs";
-import { generateStaffId, getNextCounter } from "../utils/idGenerator.js";
+import { generateStaffId } from "../utils/idGenerator.js";
+import { getNextSequence } from "./Counter.model.js";
 
 const staffSchema = new mongoose.Schema(
   {
@@ -217,9 +218,21 @@ staffSchema.pre("save", async function (next) {
   if (!this.staffId && this.isNew) {
     try {
       const year = new Date().getFullYear();
-      const prefix = `STF-${year}`;
-      const counter = await getNextCounter(this.constructor, "staffId", prefix);
-      this.staffId = generateStaffId(counter);
+      const roleAbbreviations = {
+        waiter: "WTR",
+        kitchen_staff: "KTN",
+        cleaning_staff: "CLN",
+        cashier: "CSH",
+        receptionist: "RCP",
+        security: "SEC",
+      };
+
+      const roleCode = roleAbbreviations[this.role] || "STF";
+      const sequenceName = `STF-${roleCode}-${year}`;
+
+      // Use atomic counter to prevent race conditions
+      const counter = await getNextSequence(sequenceName);
+      this.staffId = generateStaffId(this.role, counter);
     } catch (error) {
       return next(error);
     }
@@ -476,6 +489,8 @@ export const staffValidationSchemas = {
       phone: Joi.string().pattern(/^[0-9]{10}$/),
       relationship: Joi.string().trim().max(50),
     }).optional(),
+
+    profileImage: Joi.string().uri().allow(null, "").optional(),
   }),
 
   // Login validation

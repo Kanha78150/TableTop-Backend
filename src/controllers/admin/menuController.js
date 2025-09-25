@@ -174,6 +174,36 @@ export const createCategory = async (req, res, next) => {
   }
 };
 
+export const getCategoryById = async (req, res, next) => {
+  try {
+    const { categoryId } = req.params;
+
+    const category = await FoodCategory.findById(categoryId)
+      .populate("hotel", "name hotelId location")
+      .populate("branch", "name branchId location");
+
+    if (!category) {
+      return next(new APIError(404, "Category not found"));
+    }
+
+    // Check if admin has access to this category's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(category.branch._id)
+    ) {
+      return next(new APIError(403, "You don't have access to this category"));
+    }
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(200, { category }, "Category retrieved successfully")
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const updateCategory = async (req, res, next) => {
   try {
     const { categoryId } = req.params;
@@ -429,6 +459,37 @@ export const createFoodItem = async (req, res, next) => {
           { foodItem: populatedFoodItem },
           "Food item created successfully"
         )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getFoodItemById = async (req, res, next) => {
+  try {
+    const { itemId } = req.params;
+
+    const foodItem = await FoodItem.findById(itemId)
+      .populate("hotel", "name hotelId location")
+      .populate("branch", "name branchId location")
+      .populate("category", "name");
+
+    if (!foodItem) {
+      return next(new APIError(404, "Food item not found"));
+    }
+
+    // Check if admin has access to this food item's branch
+    if (
+      req.admin.role === "branch_admin" &&
+      !req.admin.canAccessBranch(foodItem.branch._id)
+    ) {
+      return next(new APIError(403, "You don't have access to this food item"));
+    }
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(200, { foodItem }, "Food item retrieved successfully")
       );
   } catch (error) {
     next(error);

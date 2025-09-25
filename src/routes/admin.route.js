@@ -43,6 +43,7 @@ import {
   deactivateManager,
   reactivateManager,
   getAllStaff,
+  getStaffById,
   createStaff,
   updateStaff,
   updateStaffPermissions,
@@ -57,10 +58,12 @@ import {
 import {
   getAllCategories,
   createCategory,
+  getCategoryById,
   updateCategory,
   deleteCategory,
   getAllFoodItems,
   createFoodItem,
+  getFoodItemById,
   updateFoodItem,
   deleteFoodItem,
   updateFoodItemAvailability,
@@ -301,6 +304,12 @@ router.put(
 // Staff Management
 router.get("/staff", rbac({ permissions: ["manageStaff"] }), getAllStaff);
 
+router.get(
+  "/staff/:staffId",
+  rbac({ permissions: ["manageStaff"] }),
+  getStaffById
+);
+
 router.post("/staff", rbac({ permissions: ["manageStaff"] }), createStaff);
 
 router.put(
@@ -365,6 +374,12 @@ router.post(
   createCategory
 );
 
+router.get(
+  "/menu/categories/:categoryId",
+  rbac({ permissions: ["manageMenu"] }),
+  getCategoryById
+);
+
 router.put(
   "/menu/categories/:categoryId",
   rbac({ permissions: ["manageMenu"] }),
@@ -388,6 +403,12 @@ router.post(
   "/menu/items",
   rbac({ permissions: ["manageMenu"] }),
   createFoodItem
+);
+
+router.get(
+  "/menu/items/:itemId",
+  rbac({ permissions: ["manageMenu"] }),
+  getFoodItemById
 );
 
 router.put(
