@@ -878,10 +878,6 @@ export const getAllStaff = async (req, res, next) => {
       .populate({
         path: "branch",
         select: "name branchId location status",
-        populate: {
-          path: "hotel",
-          select: "name hotelId status",
-        },
       })
       .populate({
         path: "manager",
@@ -890,6 +886,10 @@ export const getAllStaff = async (req, res, next) => {
       .populate({
         path: "createdBy",
         select: "name email role",
+      })
+      .populate({
+        path: "hotel",
+        select: "name hotelId email status",
       })
       .select("-password -refreshToken")
       .sort(sort)
