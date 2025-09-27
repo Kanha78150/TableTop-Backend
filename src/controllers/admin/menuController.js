@@ -41,6 +41,7 @@ export const getAllCategories = async (req, res, next) => {
 
     const categories = await FoodCategory.find(query)
       .populate("branch", "name branchId location")
+      .populate("hotel", "name hotelId location")
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));

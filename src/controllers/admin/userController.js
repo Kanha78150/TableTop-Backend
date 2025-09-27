@@ -883,6 +883,14 @@ export const getAllStaff = async (req, res, next) => {
           select: "name hotelId status",
         },
       })
+      .populate({
+        path: "manager",
+        select: "name employeeId email",
+      })
+      .populate({
+        path: "createdBy",
+        select: "name email role",
+      })
       .select("-password -refreshToken")
       .sort(sort)
       .skip(skip)
@@ -1474,21 +1482,30 @@ export const deactivateStaff = async (req, res, next) => {
   try {
     const { staffId } = req.params;
 
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     // Find staff by MongoDB ObjectId or staffId - support both formats
     let staff;
     if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
-      staff = await Staff.findById(staffId);
+      query._id = staffId;
+      staff = await Staff.findOne(query);
     } else {
-      staff = await Staff.findOne({ staffId: staffId });
+      query.staffId = staffId;
+      staff = await Staff.findOne(query);
     }
 
     if (!staff) {
-      return next(new APIError(404, "Staff not found"));
+      return next(new APIError(404, "Staff not found or access denied"));
     }
 
     // Check if admin has access to this staff's branch
     if (
       req.admin.role === "branch_admin" &&
+      req.admin.canAccessBranch &&
       !req.admin.canAccessBranch(staff.branch)
     ) {
       return next(
@@ -1539,21 +1556,30 @@ export const reactivateStaff = async (req, res, next) => {
   try {
     const { staffId } = req.params;
 
+    // Base query with admin restriction
+    const query = {};
+    if (req.admin.role !== "super_admin") {
+      query.createdBy = req.admin._id;
+    }
+
     // Find staff by MongoDB ObjectId or staffId - support both formats
     let staff;
     if (staffId.match(/^[0-9a-fA-F]{24}$/)) {
-      staff = await Staff.findById(staffId);
+      query._id = staffId;
+      staff = await Staff.findOne(query);
     } else {
-      staff = await Staff.findOne({ staffId: staffId });
+      query.staffId = staffId;
+      staff = await Staff.findOne(query);
     }
 
     if (!staff) {
-      return next(new APIError(404, "Staff not found"));
+      return next(new APIError(404, "Staff not found or access denied"));
     }
 
     // Check if admin has access to this staff's branch
     if (
       req.admin.role === "branch_admin" &&
+      req.admin.canAccessBranch &&
       !req.admin.canAccessBranch(staff.branch)
     ) {
       return next(

@@ -117,6 +117,8 @@ Authorization: Bearer <your-jwt-token>
 | `POST`   | `/admin/managers`                        | Create new manager         |
 | `PUT`    | `/admin/managers/:managerId`             | Update manager             |
 | `DELETE` | `/admin/managers/:managerId`             | Delete manager             |
+| `PATCH`  | `/admin/managers/:managerId/deactivate`  | Deactivate manager         |
+| `PATCH`  | `/admin/managers/:managerId/reactivate`  | Reactivate manager         |
 | `PUT`    | `/admin/managers/:managerId/permissions` | Update manager permissions |
 
 ### Staff Management
@@ -124,9 +126,12 @@ Authorization: Bearer <your-jwt-token>
 | Method   | Endpoint                               | Description             |
 | -------- | -------------------------------------- | ----------------------- |
 | `GET`    | `/admin/staff`                         | Get all staff           |
+| `GET`    | `/admin/staff/:staffId`                | Get staff by ID         |
 | `POST`   | `/admin/staff`                         | Create new staff        |
 | `PUT`    | `/admin/staff/:staffId`                | Update staff            |
 | `DELETE` | `/admin/staff/:staffId`                | Delete staff            |
+| `PATCH`  | `/admin/staff/:staffId/deactivate`     | Deactivate staff        |
+| `PATCH`  | `/admin/staff/:staffId/reactivate`     | Reactivate staff        |
 | `PUT`    | `/admin/staff/:staffId/assign-manager` | Assign staff to manager |
 | `GET`    | `/admin/managers/:managerId/staff`     | Get staff by manager    |
 
