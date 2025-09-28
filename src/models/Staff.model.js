@@ -1,7 +1,7 @@
 // src/models/Staff.js - Staff Model for Hotel Management
 import mongoose from "mongoose";
 import Joi from "joi";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import { generateStaffId } from "../utils/idGenerator.js";
 import { getNextSequence } from "./Counter.model.js";
 

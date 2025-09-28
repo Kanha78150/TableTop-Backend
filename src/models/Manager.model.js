@@ -1,7 +1,7 @@
 // src/models/Manager.js - Branch Manager Model
 import mongoose from "mongoose";
 import Joi from "joi";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import { generateManagerId, getNextCounter } from "../utils/idGenerator.js";
 
 const managerSchema = new mongoose.Schema(

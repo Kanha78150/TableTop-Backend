@@ -65,7 +65,7 @@ import { sendEmail } from "../../utils/emailService.js";
 import { generateOtp } from "../../utils/otpGenerator.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 
 // Helper function to generate password reset token
 const generateResetToken = () => {
