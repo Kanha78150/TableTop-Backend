@@ -72,7 +72,8 @@ const cartSchema = new mongoose.Schema(
     branch: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",
-      required: [true, "Branch is required"],
+      required: false, // Branch is optional for hotels without branches
+      default: null,
     },
     subtotal: {
       type: Number,
@@ -175,10 +176,13 @@ cartSchema.statics.findOrCreateCart = async function (
   hotelId,
   branchId
 ) {
+  // Normalize branchId - convert empty string or null to null
+  const normalizedBranchId = branchId && branchId !== "" ? branchId : null;
+
   let cart = await this.findOne({
     user: userId,
     hotel: hotelId,
-    branch: branchId,
+    branch: normalizedBranchId,
     status: "active",
   }).populate({
     path: "items.foodItem",
@@ -190,7 +194,7 @@ cartSchema.statics.findOrCreateCart = async function (
     cart = new this({
       user: userId,
       hotel: hotelId,
-      branch: branchId,
+      branch: normalizedBranchId,
       items: [],
     });
     await cart.save();
@@ -303,9 +307,10 @@ cartSchema.methods.clearCart = function () {
 cartSchema.methods.validateItems = async function () {
   const validationErrors = [];
 
-  for (const item of this.items) {
-    await item.populate("foodItem");
+  // Populate all food items at once instead of individually
+  await this.populate("items.foodItem");
 
+  for (const item of this.items) {
     if (!item.foodItem) {
       validationErrors.push({
         itemId: item._id,
@@ -369,8 +374,9 @@ export const cartValidationSchemas = {
     hotel: Joi.string().length(24).hex().required().messages({
       "any.required": "Hotel is required",
     }),
-    branch: Joi.string().length(24).hex().required().messages({
-      "any.required": "Branch is required",
+    branch: Joi.string().length(24).hex().optional().allow(null, "").messages({
+      "string.length": "Branch ID must be 24 characters",
+      "string.hex": "Branch ID must be valid",
     }),
     customizations: Joi.object({
       spiceLevel: Joi.string().valid("mild", "medium", "hot", "extra-hot"),

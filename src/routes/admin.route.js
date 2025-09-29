@@ -69,6 +69,19 @@ import {
   updateFoodItemAvailability,
 } from "../controllers/admin/menuController.js";
 
+// Table Management Controllers
+import {
+  generateTableQRCodes,
+  getTables,
+  getTableById,
+  updateTable,
+  deleteTable,
+  regenerateTableQR,
+  getAvailableTables,
+  bulkUpdateTableStatus,
+  getTableStats,
+} from "../controllers/admin/tableController.js";
+
 // Offer Management Controllers
 import offerController from "../controllers/admin/offerController.js";
 
@@ -427,6 +440,69 @@ router.patch(
   "/menu/items/availability",
   rbac({ permissions: ["manageMenu"] }),
   updateFoodItemAvailability
+);
+
+// ======================
+// TABLE MANAGEMENT ROUTES
+// ======================
+
+// Generate QR codes for tables
+router.post(
+  "/tables/generate-qr",
+  rbac({ permissions: ["manageTables"] }),
+  generateTableQRCodes
+);
+
+// Get all tables
+router.get("/tables", rbac({ permissions: ["manageTables"] }), getTables);
+
+// Get available tables
+router.get(
+  "/tables/available",
+  rbac({ permissions: ["manageTables"] }),
+  getAvailableTables
+);
+
+// Get table statistics
+router.get(
+  "/tables/stats",
+  rbac({ permissions: ["manageTables"] }),
+  getTableStats
+);
+
+// Bulk update table status (must be before :tableId routes)
+router.put(
+  "/tables/bulk-status",
+  rbac({ permissions: ["manageTables"] }),
+  bulkUpdateTableStatus
+);
+
+// Get table by ID
+router.get(
+  "/tables/:tableId",
+  rbac({ permissions: ["manageTables"] }),
+  getTableById
+);
+
+// Update table
+router.put(
+  "/tables/:tableId",
+  rbac({ permissions: ["manageTables"] }),
+  updateTable
+);
+
+// Delete table
+router.delete(
+  "/tables/:tableId",
+  rbac({ permissions: ["manageTables"] }),
+  deleteTable
+);
+
+// Regenerate QR code for table
+router.post(
+  "/tables/:tableId/regenerate-qr",
+  rbac({ permissions: ["manageTables"] }),
+  regenerateTableQR
 );
 
 // Offers Management

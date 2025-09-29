@@ -62,6 +62,9 @@ const adminSchema = new mongoose.Schema(
       managePricing: { type: Boolean, default: true },
       manageOffers: { type: Boolean, default: true },
 
+      // Table Management
+      manageTables: { type: Boolean, default: true },
+
       // Reports & Analytics
       viewReports: { type: Boolean, default: true },
       viewAnalytics: { type: Boolean, default: true },
@@ -276,6 +279,7 @@ export const validateAdmin = (data) => {
       manageMenu: Joi.boolean().optional(),
       managePricing: Joi.boolean().optional(),
       manageOffers: Joi.boolean().optional(),
+      manageTables: Joi.boolean().optional(),
       viewReports: Joi.boolean().optional(),
       viewAnalytics: Joi.boolean().optional(),
       viewFinancials: Joi.boolean().optional(),
@@ -320,6 +324,7 @@ export const validateAdminUpdate = (data) => {
       manageMenu: Joi.boolean().optional(),
       managePricing: Joi.boolean().optional(),
       manageOffers: Joi.boolean().optional(),
+      manageTables: Joi.boolean().optional(),
       viewReports: Joi.boolean().optional(),
       viewAnalytics: Joi.boolean().optional(),
       viewFinancials: Joi.boolean().optional(),

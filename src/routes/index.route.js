@@ -7,6 +7,7 @@ import adminRoutes from "./admin.route.js";
 // import managerRoutes from "./manager.route.js";
 // import staffRoutes from "./staff.route.js";
 import userRoutes from "./user.route.js";
+import scanRoutes from "./scan.route.js";
 
 const router = Router();
 
@@ -27,6 +28,9 @@ router.use("/admin", adminRoutes);
 
 // User routes (you might want to add authentication middleware here)
 router.use("/user", userRoutes);
+
+// Public QR scan routes (no authentication required)
+router.use("/scan", scanRoutes);
 
 // Health check
 router.get("/", (req, res) => {

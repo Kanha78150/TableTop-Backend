@@ -45,11 +45,12 @@ export const getCart = asyncHandler(async (req, res) => {
   const { hotelId, branchId } = req.params;
   const userId = req.user._id;
 
-  if (!hotelId || !branchId) {
-    throw new APIError(400, "Hotel ID and Branch ID are required");
+  if (!hotelId) {
+    throw new APIError(400, "Hotel ID is required");
   }
 
-  const result = await cartService.getCart(userId, hotelId, branchId);
+  // branchId is optional - can be null/undefined for hotels without branches
+  const result = await cartService.getCart(userId, hotelId, branchId || null);
 
   res.status(result.statusCode).json(result);
 });
@@ -158,11 +159,16 @@ export const getCartSummary = asyncHandler(async (req, res) => {
   const { hotelId, branchId } = req.params;
   const userId = req.user._id;
 
-  if (!hotelId || !branchId) {
-    throw new APIError(400, "Hotel ID and Branch ID are required");
+  if (!hotelId) {
+    throw new APIError(400, "Hotel ID is required");
   }
 
-  const result = await cartService.getCartSummary(userId, hotelId, branchId);
+  // branchId is optional - can be null/undefined for hotels without branches
+  const result = await cartService.getCartSummary(
+    userId,
+    hotelId,
+    branchId || null
+  );
 
   res.status(result.statusCode).json(result);
 });
@@ -286,11 +292,16 @@ export const getCartItemCount = asyncHandler(async (req, res) => {
   const { hotelId, branchId } = req.params;
   const userId = req.user._id;
 
-  if (!hotelId || !branchId) {
-    throw new APIError(400, "Hotel ID and Branch ID are required");
+  if (!hotelId) {
+    throw new APIError(400, "Hotel ID is required");
   }
 
-  const result = await cartService.getCartSummary(userId, hotelId, branchId);
+  // branchId is optional - can be null/undefined for hotels without branches
+  const result = await cartService.getCartSummary(
+    userId,
+    hotelId,
+    branchId || null
+  );
 
   // Return just the count for UI badge
   res.status(200).json(

@@ -23,6 +23,17 @@ import {
   getCartItemCount,
   bulkUpdateCart,
 } from "../controllers/user/cartController.js";
+import {
+  placeOrder,
+  getMyOrders,
+  getOrderDetails,
+  cancelOrder,
+  reorder,
+  getOrderStatus,
+  getActiveOrders,
+  getOrderHistory,
+  getTableOrderHistory,
+} from "../controllers/user/orderController.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
@@ -76,17 +87,52 @@ router.post("/cart/validate", authenticateUser, validateCart);
 // Checkout
 router.post("/cart/checkout", authenticateUser, transferToCheckout);
 
-// Cart retrieval routes (less specific routes last)
-router.get("/cart/:hotelId/:branchId", authenticateUser, getCart);
+// Cart retrieval routes (SPECIFIC routes FIRST, parameterized routes LAST)
 router.get(
   "/cart/summary/:hotelId/:branchId",
   authenticateUser,
   getCartSummary
 );
+router.get("/cart/summary/:hotelId", authenticateUser, getCartSummary); // For hotels without branches
 router.get(
   "/cart/count/:hotelId/:branchId",
   authenticateUser,
   getCartItemCount
 );
+router.get("/cart/count/:hotelId", authenticateUser, getCartItemCount); // For hotels without branches
+// Parameterized routes MUST come after specific routes
+router.get("/cart/:hotelId/:branchId", authenticateUser, getCart);
+router.get("/cart/:hotelId", authenticateUser, getCart); // For hotels without branches
+
+// ======================
+// ORDER ROUTES (PROTECTED)
+// ======================
+
+// Place order from cart
+router.post("/orders/place", authenticateUser, placeOrder);
+
+// Get user's orders with filters
+router.get("/orders", authenticateUser, getMyOrders);
+
+// Get active orders
+router.get("/orders/active", authenticateUser, getActiveOrders);
+
+// Get order history
+router.get("/orders/history", authenticateUser, getOrderHistory);
+
+// Get table order history
+router.get("/orders/table-history", authenticateUser, getTableOrderHistory);
+
+// Get specific order details
+router.get("/orders/:orderId", authenticateUser, getOrderDetails);
+
+// Get order status/tracking info
+router.get("/orders/:orderId/status", authenticateUser, getOrderStatus);
+
+// Cancel order
+router.put("/orders/:orderId/cancel", authenticateUser, cancelOrder);
+
+// Reorder from previous order
+router.post("/orders/:orderId/reorder", authenticateUser, reorder);
 
 export default router;

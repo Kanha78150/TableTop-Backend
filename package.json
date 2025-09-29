@@ -42,6 +42,7 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pg-sdk-node": "https://phonepe.mycloudrepo.io/public/repositories/phonepe-pg-sdk-node/releases/v2/phonepe-pg-sdk-node.tgz",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.8.1",
     "twilio": "^5.9.0",
     "uuid": "^13.0.0",
