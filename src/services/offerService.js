@@ -82,7 +82,7 @@ class OfferService {
    * @param {Object} pagination - Pagination options
    * @returns {Promise<Object>} Offers with pagination info
    */
-  async getAllOffers(filters = {}, pagination = {}) {
+  async getAllOffers(filters = {}, pagination = {}, adminId = null) {
     try {
       const {
         page = 1,
@@ -102,6 +102,11 @@ class OfferService {
 
       // Build query
       const query = {};
+
+      // Filter by admin who created the offers (admin isolation)
+      if (adminId) {
+        query.createdBy = adminId;
+      }
 
       if (isActive !== undefined) {
         query.isActive = isActive;
@@ -169,13 +174,18 @@ class OfferService {
    * @param {String} offerId - Offer ID
    * @returns {Promise<Object>} Offer details
    */
-  async getOfferById(offerId) {
+  async getOfferById(offerId, adminId = null) {
     try {
       if (!mongoose.Types.ObjectId.isValid(offerId)) {
         throw new APIError("Invalid offer ID", 400);
       }
 
-      const offer = await Offer.findById(offerId)
+      const query = { _id: offerId };
+      if (adminId) {
+        query.createdBy = adminId;
+      }
+
+      const offer = await Offer.findOne(query)
         .populate("foodCategory", "name categoryId description")
         .populate("foodItem", "name itemId price description")
         .populate("createdBy", "name email")
@@ -245,7 +255,12 @@ class OfferService {
         throw new APIError("Invalid offer ID", 400);
       }
 
-      const existingOffer = await Offer.findById(offerId);
+      const query = { _id: offerId };
+      if (adminId) {
+        query.createdBy = adminId;
+      }
+
+      const existingOffer = await Offer.findOne(query);
       if (!existingOffer) {
         throw new APIError("Offer not found", 404);
       }
@@ -325,13 +340,18 @@ class OfferService {
    * @param {String} offerId - Offer ID
    * @returns {Promise<Object>} Deletion result
    */
-  async deleteOffer(offerId) {
+  async deleteOffer(offerId, adminId = null) {
     try {
       if (!mongoose.Types.ObjectId.isValid(offerId)) {
         throw new APIError("Invalid offer ID", 400);
       }
 
-      const offer = await Offer.findById(offerId);
+      const query = { _id: offerId };
+      if (adminId) {
+        query.createdBy = adminId;
+      }
+
+      const offer = await Offer.findOne(query);
       if (!offer) {
         throw new APIError("Offer not found", 404);
       }
@@ -359,7 +379,12 @@ class OfferService {
         throw new APIError("Invalid offer ID", 400);
       }
 
-      const offer = await Offer.findById(offerId);
+      const query = { _id: offerId };
+      if (adminId) {
+        query.createdBy = adminId;
+      }
+
+      const offer = await Offer.findOne(query);
       if (!offer) {
         throw new APIError("Offer not found", 404);
       }

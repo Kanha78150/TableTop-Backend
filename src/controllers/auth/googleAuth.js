@@ -5,8 +5,40 @@ import { generateOtp } from "../../utils/otpGenerator.js";
 import { sendEmailOtp } from "../../utils/emailService.js";
 import { CookieOptions } from "../../config/jwtOptions.js";
 
+/**
+ * Google OAuth Authentication Controller
+ *
+ * This controller handles Google OAuth authentication for both login and signup scenarios.
+ *
+ * Available endpoints:
+ *
+ * 1. GET /api/v1/auth/user/google - Initiates Google OAuth for signup
+ * 2. GET /api/v1/auth/user/google/login - Initiates Google OAuth for login
+ * 3. GET /api/v1/auth/user/google/callback - Handles OAuth callback from Google
+ *
+ * OAuth Flow Logic:
+ * - If user exists with googleId: Login (returning user)
+ * - If user exists with email but no googleId: Link Google account
+ * - If user doesn't exist: Create new user (signup)
+ *
+ * After successful authentication, users are redirected to:
+ * - /complete-profile if username/phone missing
+ * - /dashboard if profile is complete
+ *
+ * URL parameters indicate the authentication result:
+ * - newUser=true: New user signup
+ * - linked=true: Account linking
+ * - returning=true: Returning user login
+ * - message: success/error message
+ */
+
 export const googleAuth = (req, res, next) => {
-  // This will redirect to Google OAuth
+  // This will redirect to Google OAuth for signup
+  // Handled by passport middleware
+};
+
+export const googleLogin = (req, res, next) => {
+  // This will redirect to Google OAuth for login
   // Handled by passport middleware
 };
 
@@ -21,7 +53,16 @@ export const googleCallback = async (req, res) => {
     // Generate tokens
     const { accessToken, refreshToken } = generateTokens(user);
 
-    // Save refresh token to user
+    // Save refresh token to user (remove temporary flags)
+    const isNewUser = user.isNewUser;
+    const isReturningUser = user.isReturningUser;
+    const isAccountLinked = user.isAccountLinked;
+
+    // Clean up temporary flags
+    delete user.isNewUser;
+    delete user.isReturningUser;
+    delete user.isAccountLinked;
+
     user.refreshToken = refreshToken;
     await user.save();
 
@@ -31,18 +72,49 @@ export const googleCallback = async (req, res) => {
 
     // Check if user needs to complete profile
     const needsCompletion = !user.username || !user.phone;
-
-    // Redirect based on completion status
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
 
-    if (needsCompletion) {
-      // Redirect to profile completion page
-      res.redirect(
-        `${frontendUrl}/complete-profile?token=${accessToken}&newUser=true`
-      );
+    // Determine redirect based on user scenario
+    if (isNewUser) {
+      // New user signup via Google
+      if (needsCompletion) {
+        res.redirect(
+          `${frontendUrl}/complete-profile?token=${accessToken}&newUser=true&message=signup_success`
+        );
+      } else {
+        res.redirect(
+          `${frontendUrl}/dashboard?token=${accessToken}&message=signup_success&welcome=true`
+        );
+      }
+    } else if (isAccountLinked) {
+      // Existing user linked Google account
+      if (needsCompletion) {
+        res.redirect(
+          `${frontendUrl}/complete-profile?token=${accessToken}&linked=true&message=account_linked`
+        );
+      } else {
+        res.redirect(
+          `${frontendUrl}/dashboard?token=${accessToken}&message=account_linked`
+        );
+      }
+    } else if (isReturningUser) {
+      // Returning Google user (login)
+      if (needsCompletion) {
+        res.redirect(
+          `${frontendUrl}/complete-profile?token=${accessToken}&returning=true&message=login_success`
+        );
+      } else {
+        res.redirect(
+          `${frontendUrl}/dashboard?token=${accessToken}&message=login_success`
+        );
+      }
     } else {
-      // Redirect to dashboard
-      res.redirect(`${frontendUrl}/dashboard?token=${accessToken}`);
+      // Default case (shouldn't happen but fallback)
+      if (needsCompletion) {
+        res.redirect(`${frontendUrl}/complete-profile?token=${accessToken}`);
+      } else {
+        res.redirect(`${frontendUrl}/dashboard?token=${accessToken}`);
+      }
     }
   } catch (error) {
     console.error("Google OAuth callback error:", error);

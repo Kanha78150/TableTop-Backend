@@ -13,6 +13,8 @@ import {
   logoutAll,
 } from "../../controllers/auth/userAuth.js";
 import {
+  googleAuth,
+  googleLogin,
   googleCallback,
   completeOAuthProfile,
   sendOAuthEmailVerification,
@@ -37,10 +39,21 @@ router.post("/forgot-password", asyncHandler(forgotPassword));
 router.post("/reset-password", asyncHandler(resetPassword));
 
 // Google OAuth routes
+// For signup flow
 router.get(
   "/google",
+  googleAuth,
   passport.authenticate("google", { scope: ["profile", "email"] })
 );
+
+// For login flow
+router.get(
+  "/google/login",
+  googleLogin,
+  passport.authenticate("google", { scope: ["profile", "email"] })
+);
+
+// Common callback for both login and signup
 router.get(
   "/google/callback",
   passport.authenticate("google", { session: false }),

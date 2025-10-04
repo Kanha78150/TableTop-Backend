@@ -99,7 +99,12 @@ class OfferController {
         filters.expired = expired === "true";
       }
 
-      const result = await offerService.getAllOffers(filters, pagination);
+      const adminId = req.user.id;
+      const result = await offerService.getAllOffers(
+        filters,
+        pagination,
+        adminId
+      );
 
       return res
         .status(200)
@@ -120,7 +125,8 @@ class OfferController {
         return next(new APIError("Offer ID is required", 400));
       }
 
-      const offer = await offerService.getOfferById(offerId);
+      const adminId = req.user.id;
+      const offer = await offerService.getOfferById(offerId, adminId);
 
       return res
         .status(200)
@@ -194,7 +200,8 @@ class OfferController {
         return next(new APIError("Offer ID is required", 400));
       }
 
-      await offerService.deleteOffer(offerId);
+      const adminId = req.user.id;
+      await offerService.deleteOffer(offerId, adminId);
 
       return res
         .status(200)
@@ -350,19 +357,26 @@ class OfferController {
   async getOfferStats(req, res, next) {
     try {
       const now = new Date();
+      const adminId = req.user.id;
 
       // Get basic stats using aggregation
-      const stats = await offerService.getAllOffers({}, { page: 1, limit: 1 });
+      const stats = await offerService.getAllOffers(
+        {},
+        { page: 1, limit: 1 },
+        adminId
+      );
 
       // Additional stats can be calculated here
       const activeOffersResult = await offerService.getAllOffers(
         { isActive: true, expired: false },
-        { page: 1, limit: 1 }
+        { page: 1, limit: 1 },
+        adminId
       );
 
       const expiredOffersResult = await offerService.getAllOffers(
         { expired: true },
-        { page: 1, limit: 1 }
+        { page: 1, limit: 1 },
+        adminId
       );
 
       const statisticsData = {

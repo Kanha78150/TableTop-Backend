@@ -31,6 +31,9 @@ export const getAllCategories = async (req, res, next) => {
       query.branch = branchId;
     }
 
+    // Filter by admin who created the categories (admin isolation)
+    query.createdBy = req.admin._id;
+
     // Filter by assigned branches if admin has limited access
     if (req.admin.role === "branch_admin") {
       query.branch = { $in: req.admin.assignedBranches };
@@ -150,6 +153,7 @@ export const createCategory = async (req, res, next) => {
       hotel: hotelId, // Map hotelId to hotel field
       branch: branchId, // Map branchId to branch field
       isActive,
+      createdBy: req.admin._id, // Set the creating admin
       ...otherFields,
     };
 
@@ -179,7 +183,10 @@ export const getCategoryById = async (req, res, next) => {
   try {
     const { categoryId } = req.params;
 
-    const category = await FoodCategory.findById(categoryId)
+    const category = await FoodCategory.findOne({
+      _id: categoryId,
+      createdBy: req.admin._id,
+    })
       .populate("hotel", "name hotelId location")
       .populate("branch", "name branchId location");
 
@@ -210,7 +217,10 @@ export const updateCategory = async (req, res, next) => {
     const { categoryId } = req.params;
     const updates = req.body;
 
-    const category = await FoodCategory.findById(categoryId).populate("branch");
+    const category = await FoodCategory.findOne({
+      _id: categoryId,
+      createdBy: req.admin._id,
+    }).populate("branch");
     if (!category) {
       return next(new APIError(404, "Category not found"));
     }
@@ -247,7 +257,10 @@ export const deleteCategory = async (req, res, next) => {
   try {
     const { categoryId } = req.params;
 
-    const category = await FoodCategory.findById(categoryId).populate("branch");
+    const category = await FoodCategory.findOne({
+      _id: categoryId,
+      createdBy: req.admin._id,
+    }).populate("branch");
     if (!category) {
       return next(new APIError(404, "Category not found"));
     }
@@ -312,6 +325,9 @@ export const getAllFoodItems = async (req, res, next) => {
     if (isAvailable !== undefined) {
       query.isAvailable = isAvailable === "true";
     }
+
+    // Filter by admin who created the food items (admin isolation)
+    query.createdBy = req.admin._id;
 
     // Filter by assigned branches if admin has limited access
     if (req.admin.role === "branch_admin") {
@@ -442,6 +458,8 @@ export const createFoodItem = async (req, res, next) => {
       allergens,
       nutritionalInfo,
       images,
+      createdBy: req.admin._id,
+      lastModifiedBy: req.admin._id,
       ...otherFields,
     });
 
@@ -470,7 +488,10 @@ export const getFoodItemById = async (req, res, next) => {
   try {
     const { itemId } = req.params;
 
-    const foodItem = await FoodItem.findById(itemId)
+    const foodItem = await FoodItem.findOne({
+      _id: itemId,
+      createdBy: req.admin._id,
+    })
       .populate("hotel", "name hotelId location")
       .populate("branch", "name branchId location")
       .populate("category", "name");
@@ -502,7 +523,10 @@ export const updateFoodItem = async (req, res, next) => {
     const { itemId } = req.params;
     const updates = req.body;
 
-    const foodItem = await FoodItem.findById(itemId).populate("branch");
+    const foodItem = await FoodItem.findOne({
+      _id: itemId,
+      createdBy: req.admin._id,
+    }).populate("branch");
     if (!foodItem) {
       return next(new APIError(404, "Food item not found"));
     }
@@ -524,6 +548,9 @@ export const updateFoodItem = async (req, res, next) => {
         new APIError(403, "You don't have permission to update pricing")
       );
     }
+
+    // Set lastModifiedBy field
+    updates.lastModifiedBy = req.admin._id;
 
     const updatedFoodItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
       new: true,
@@ -550,7 +577,10 @@ export const deleteFoodItem = async (req, res, next) => {
   try {
     const { itemId } = req.params;
 
-    const foodItem = await FoodItem.findById(itemId).populate("branch");
+    const foodItem = await FoodItem.findOne({
+      _id: itemId,
+      createdBy: req.admin._id,
+    }).populate("branch");
     if (!foodItem) {
       return next(new APIError(404, "Food item not found"));
     }
@@ -582,8 +612,11 @@ export const updateFoodItemAvailability = async (req, res, next) => {
       return next(new APIError(400, "Item IDs array is required"));
     }
 
-    // Filter items based on admin's branch access
-    let query = { _id: { $in: itemIds } };
+    // Filter items based on admin's ownership and branch access
+    let query = {
+      _id: { $in: itemIds },
+      createdBy: req.admin._id,
+    };
     if (req.admin.role === "branch_admin") {
       query.branch = { $in: req.admin.assignedBranches };
     }
@@ -643,6 +676,9 @@ export const getAllOffers = async (req, res, next) => {
     if (type) {
       query.type = type;
     }
+
+    // Filter by admin who created the offers (admin isolation)
+    query.createdBy = req.admin._id;
 
     // Filter by assigned branches if admin has limited access
     if (req.admin.role === "branch_admin") {
@@ -767,7 +803,10 @@ export const updateOffer = async (req, res, next) => {
     const { offerId } = req.params;
     const updates = req.body;
 
-    const offer = await Offer.findById(offerId);
+    const offer = await Offer.findOne({
+      _id: offerId,
+      createdBy: req.admin._id,
+    });
     if (!offer) {
       return next(new APIError(404, "Offer not found"));
     }
@@ -781,6 +820,9 @@ export const updateOffer = async (req, res, next) => {
         return next(new APIError(403, "You don't have access to this offer"));
       }
     }
+
+    // Set updatedBy field
+    updates.updatedBy = req.admin._id;
 
     const updatedOffer = await Offer.findByIdAndUpdate(offerId, updates, {
       new: true,
@@ -807,7 +849,10 @@ export const deleteOffer = async (req, res, next) => {
   try {
     const { offerId } = req.params;
 
-    const offer = await Offer.findById(offerId);
+    const offer = await Offer.findOne({
+      _id: offerId,
+      createdBy: req.admin._id,
+    });
     if (!offer) {
       return next(new APIError(404, "Offer not found"));
     }

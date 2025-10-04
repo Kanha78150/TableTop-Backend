@@ -27,10 +27,13 @@ export const generateTableQRCodes = async (req, res, next) => {
       return next(new APIError(400, "Validation failed", error.details));
     }
 
-    // Verify hotel exists and is active
-    const hotelDoc = await Hotel.findById(hotel);
+    // Verify hotel exists, is active, and belongs to current admin
+    const hotelDoc = await Hotel.findOne({
+      _id: hotel,
+      createdBy: req.admin._id,
+    });
     if (!hotelDoc) {
-      return next(new APIError(404, "Hotel not found"));
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
     if (hotelDoc.status !== "active") {
       return next(new APIError(400, "Hotel is not active"));
@@ -174,6 +177,15 @@ export const getTables = async (req, res, next) => {
       return next(new APIError(400, "Hotel ID is required"));
     }
 
+    // Verify hotel belongs to current admin
+    const hotelDoc = await Hotel.findOne({
+      _id: hotel,
+      createdBy: req.admin._id,
+    });
+    if (!hotelDoc) {
+      return next(new APIError(404, "Hotel not found or access denied"));
+    }
+
     // Build query
     const query = { hotel };
     if (branch) query.branch = branch;
@@ -226,13 +238,17 @@ export const getTableById = async (req, res, next) => {
     const { tableId } = req.params;
 
     const table = await Table.findById(tableId)
-      .populate("hotel", "name hotelId location contact")
+      .populate({
+        path: "hotel",
+        select: "name hotelId location contact createdBy",
+        match: { createdBy: req.admin._id },
+      })
       .populate("branch", "name branchId location contact")
       .populate("currentOrder", "status totalPrice items createdAt")
       .populate("currentCustomer", "name email phone");
 
-    if (!table) {
-      return next(new APIError(404, "Table not found"));
+    if (!table || !table.hotel) {
+      return next(new APIError(404, "Table not found or access denied"));
     }
 
     res
@@ -254,9 +270,13 @@ export const updateTable = async (req, res, next) => {
     const { tableId } = req.params;
     const { capacity, location, features, notes, status } = req.body;
 
-    const table = await Table.findById(tableId);
-    if (!table) {
-      return next(new APIError(404, "Table not found"));
+    const table = await Table.findById(tableId).populate({
+      path: "hotel",
+      select: "createdBy",
+      match: { createdBy: req.admin._id },
+    });
+    if (!table || !table.hotel) {
+      return next(new APIError(404, "Table not found or access denied"));
     }
 
     // Update allowed fields
@@ -294,9 +314,13 @@ export const deleteTable = async (req, res, next) => {
   try {
     const { tableId } = req.params;
 
-    const table = await Table.findById(tableId);
-    if (!table) {
-      return next(new APIError(404, "Table not found"));
+    const table = await Table.findById(tableId).populate({
+      path: "hotel",
+      select: "createdBy",
+      match: { createdBy: req.admin._id },
+    });
+    if (!table || !table.hotel) {
+      return next(new APIError(404, "Table not found or access denied"));
     }
 
     // Check if table is currently in use
@@ -325,10 +349,13 @@ export const regenerateTableQR = async (req, res, next) => {
     const { tableId } = req.params;
 
     const table = await Table.findById(tableId)
-      .populate("hotel")
+      .populate({
+        path: "hotel",
+        match: { createdBy: req.admin._id },
+      })
       .populate("branch");
-    if (!table) {
-      return next(new APIError(404, "Table not found"));
+    if (!table || !table.hotel) {
+      return next(new APIError(404, "Table not found or access denied"));
     }
 
     // Generate new QR code
@@ -381,6 +408,15 @@ export const getAvailableTables = async (req, res, next) => {
       return next(new APIError(400, "Hotel ID is required"));
     }
 
+    // Verify hotel belongs to current admin
+    const hotelDoc = await Hotel.findOne({
+      _id: hotel,
+      createdBy: req.admin._id,
+    });
+    if (!hotelDoc) {
+      return next(new APIError(404, "Hotel not found or access denied"));
+    }
+
     const tables = await Table.findAvailable(hotel, branch, capacity);
 
     res.status(200).json(
@@ -419,8 +455,24 @@ export const bulkUpdateTableStatus = async (req, res, next) => {
       );
     }
 
+    // Find tables that belong to hotels owned by the current admin
+    const tables = await Table.find({ _id: { $in: tableIds } }).populate({
+      path: "hotel",
+      select: "createdBy",
+      match: { createdBy: req.admin._id },
+    });
+
+    // Filter out tables that don't belong to admin's hotels
+    const validTableIds = tables
+      .filter((table) => table.hotel)
+      .map((table) => table._id);
+
+    if (validTableIds.length === 0) {
+      return next(new APIError(404, "No accessible tables found"));
+    }
+
     const result = await Table.updateMany(
-      { _id: { $in: tableIds } },
+      { _id: { $in: validTableIds } },
       {
         status,
         ...(status === "available" && {
@@ -455,6 +507,15 @@ export const getTableStats = async (req, res, next) => {
 
     if (!hotel) {
       return next(new APIError(400, "Hotel ID is required"));
+    }
+
+    // Verify hotel belongs to current admin
+    const hotelDoc = await Hotel.findOne({
+      _id: hotel,
+      createdBy: req.admin._id,
+    });
+    if (!hotelDoc) {
+      return next(new APIError(404, "Hotel not found or access denied"));
     }
 
     const query = { hotel };
