@@ -17,8 +17,6 @@ export const generateTableQRCodes = async (req, res, next) => {
       totalTables,
       startingNumber = 1,
       capacity = 4,
-      location,
-      features,
     } = req.body;
 
     // Validate request
@@ -107,8 +105,7 @@ export const generateTableQRCodes = async (req, res, next) => {
           hotel,
           branch: branch || undefined,
           capacity,
-          location,
-          features: features || [],
+
           qrCode: {
             data: qrCode.data,
             image: qrCode.image,
@@ -268,7 +265,7 @@ export const getTableById = async (req, res, next) => {
 export const updateTable = async (req, res, next) => {
   try {
     const { tableId } = req.params;
-    const { capacity, location, features, notes, status } = req.body;
+    const { capacity, notes, status } = req.body;
 
     const table = await Table.findById(tableId).populate({
       path: "hotel",
@@ -281,8 +278,6 @@ export const updateTable = async (req, res, next) => {
 
     // Update allowed fields
     if (capacity !== undefined) table.capacity = capacity;
-    if (location !== undefined) table.location = location;
-    if (features !== undefined) table.features = features;
     if (notes !== undefined) table.notes = notes;
     if (status !== undefined) table.status = status;
 

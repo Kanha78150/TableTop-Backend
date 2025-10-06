@@ -54,11 +54,7 @@ const tableSchema = new mongoose.Schema(
       min: [1, "Capacity must be at least 1"],
       max: [20, "Capacity cannot exceed 20"],
     },
-    location: {
-      type: String,
-      trim: true,
-      maxlength: [100, "Location description cannot exceed 100 characters"],
-    },
+
     // Current booking/order information
     currentOrder: {
       type: mongoose.Schema.Types.ObjectId,
@@ -70,20 +66,6 @@ const tableSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
-    // Table features
-    features: [
-      {
-        type: String,
-        enum: [
-          "wifi",
-          "charging",
-          "window_view",
-          "private",
-          "outdoor",
-          "wheelchair_accessible",
-        ],
-      },
-    ],
     // Booking and usage tracking
     lastUsed: { type: Date },
     totalOrders: { type: Number, default: 0 },
@@ -231,21 +213,6 @@ export const tableValidationSchemas = {
       "number.min": "Capacity must be at least 1",
       "number.max": "Capacity cannot exceed 20",
     }),
-    location: Joi.string().max(100).optional().messages({
-      "string.max": "Location description cannot exceed 100 characters",
-    }),
-    features: Joi.array()
-      .items(
-        Joi.string().valid(
-          "wifi",
-          "charging",
-          "window_view",
-          "private",
-          "outdoor",
-          "wheelchair_accessible"
-        )
-      )
-      .optional(),
     notes: Joi.string().max(500).optional().messages({
       "string.max": "Notes cannot exceed 500 characters",
     }),
@@ -273,19 +240,6 @@ export const tableValidationSchemas = {
       "number.min": "Capacity must be at least 1",
       "number.max": "Capacity cannot exceed 20",
     }),
-    location: Joi.string().max(100).optional(),
-    features: Joi.array()
-      .items(
-        Joi.string().valid(
-          "wifi",
-          "charging",
-          "window_view",
-          "private",
-          "outdoor",
-          "wheelchair_accessible"
-        )
-      )
-      .optional(),
   }),
 
   qrScan: Joi.object({

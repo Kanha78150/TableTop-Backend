@@ -212,9 +212,12 @@ class OfferService {
    * @param {String} code - Offer code
    * @returns {Promise<Object>} Offer details
    */
-  async getOfferByCode(code) {
+  async getOfferByCode(code, adminId) {
     try {
-      const offer = await Offer.findOne({ code: code.toUpperCase() })
+      const offer = await Offer.findOne({
+        code: code.toUpperCase(),
+        createdBy: adminId,
+      })
         .populate("foodCategory", "name categoryId")
         .populate("foodItem", "name itemId price")
         .lean();
@@ -419,7 +422,7 @@ class OfferService {
    * @param {Array} specificOfferCodes - Optional array of specific offer codes to apply
    * @returns {Promise<Object>} Complete discount calculation with all applicable offers
    */
-  async applyOffers(orderData, specificOfferCodes = []) {
+  async applyOffers(orderData, specificOfferCodes = [], adminId) {
     try {
       const { items = [], orderValue = 0, hotel, branch } = orderData;
 
@@ -436,7 +439,7 @@ class OfferService {
         // Apply specific offers
         for (const code of specificOfferCodes) {
           try {
-            const offer = await this.getOfferByCode(code);
+            const offer = await this.getOfferByCode(code, adminId);
             offers.push(offer);
           } catch (error) {
             // Skip invalid offer codes but continue with others
@@ -455,7 +458,8 @@ class OfferService {
             hotel: hotel || null,
             branch: branch || null,
           },
-          { page: 1, limit: 100 } // Get first 100 active offers
+          { page: 1, limit: 100 }, // Get first 100 active offers
+          adminId
         );
         offers = activeOffersResult.offers;
       }
@@ -679,9 +683,9 @@ class OfferService {
    * @param {Object} orderData - Order data for validation
    * @returns {Promise<Object>} Discount calculation
    */
-  async applyOffer(offerCode, orderData) {
+  async applyOffer(offerCode, orderData, adminId) {
     try {
-      const result = await this.applyOffers(orderData, [offerCode]);
+      const result = await this.applyOffers(orderData, [offerCode], adminId);
 
       if (result.appliedOffers.length === 0) {
         throw new APIError(
@@ -717,7 +721,7 @@ class OfferService {
    * @param {Object} filters - Category or item filters
    * @returns {Promise<Array>} Active offers
    */
-  async getActiveOffersFor(filters = {}) {
+  async getActiveOffersFor(filters = {}, adminId) {
     try {
       const { foodCategory, foodItem } = filters;
       const now = new Date();
@@ -725,6 +729,7 @@ class OfferService {
       const query = {
         isActive: true,
         expiryDate: { $gte: now },
+        createdBy: adminId,
       };
 
       if (foodCategory) {

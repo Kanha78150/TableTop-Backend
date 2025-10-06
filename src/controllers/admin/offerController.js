@@ -16,7 +16,7 @@ class OfferController {
         return next(new APIError(error.details[0].message, 400));
       }
 
-      const adminId = req.user.id;
+      const adminId = req.admin._id;
       const offer = await offerService.createOffer(value, adminId);
 
       return res
@@ -99,7 +99,7 @@ class OfferController {
         filters.expired = expired === "true";
       }
 
-      const adminId = req.user.id;
+      const adminId = req.admin._id;
       const result = await offerService.getAllOffers(
         filters,
         pagination,
@@ -125,7 +125,7 @@ class OfferController {
         return next(new APIError("Offer ID is required", 400));
       }
 
-      const adminId = req.user.id;
+      const adminId = req.admin._id;
       const offer = await offerService.getOfferById(offerId, adminId);
 
       return res
@@ -147,7 +147,7 @@ class OfferController {
         return next(new APIError("Offer code is required", 400));
       }
 
-      const offer = await offerService.getOfferByCode(code);
+      const offer = await offerService.getOfferByCode(code, req.admin._id);
 
       return res
         .status(200)
@@ -174,7 +174,7 @@ class OfferController {
         return next(new APIError(error.details[0].message, 400));
       }
 
-      const adminId = req.user.id;
+      const adminId = req.admin._id;
       const updatedOffer = await offerService.updateOffer(
         offerId,
         value,
@@ -200,7 +200,7 @@ class OfferController {
         return next(new APIError("Offer ID is required", 400));
       }
 
-      const adminId = req.user.id;
+      const adminId = req.admin._id;
       await offerService.deleteOffer(offerId, adminId);
 
       return res
@@ -222,7 +222,7 @@ class OfferController {
         return next(new APIError("Offer ID is required", 400));
       }
 
-      const adminId = req.user.id;
+      const adminId = req.admin._id;
       const updatedOffer = await offerService.toggleOfferStatus(
         offerId,
         adminId
@@ -276,7 +276,11 @@ class OfferController {
       }
 
       // Apply offers (with or without specific codes)
-      const result = await offerService.applyOffers(value, value.codes || []);
+      const result = await offerService.applyOffers(
+        value,
+        value.codes || [],
+        req.admin._id
+      );
 
       return res
         .status(200)
@@ -318,7 +322,7 @@ class OfferController {
         return next(new APIError(error.details[0].message, 400));
       }
 
-      const result = await offerService.applyOffer(code, value);
+      const result = await offerService.applyOffer(code, value, req.admin._id);
 
       return res
         .status(200)
@@ -339,7 +343,10 @@ class OfferController {
       if (foodCategory) filters.foodCategory = foodCategory;
       if (foodItem) filters.foodItem = foodItem;
 
-      const offers = await offerService.getActiveOffersFor(filters);
+      const offers = await offerService.getActiveOffersFor(
+        filters,
+        req.admin._id
+      );
 
       return res
         .status(200)
@@ -357,7 +364,7 @@ class OfferController {
   async getOfferStats(req, res, next) {
     try {
       const now = new Date();
-      const adminId = req.user.id;
+      const adminId = req.admin._id;
 
       // Get basic stats using aggregation
       const stats = await offerService.getAllOffers(
