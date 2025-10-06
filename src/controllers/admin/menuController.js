@@ -549,13 +549,30 @@ export const updateFoodItem = async (req, res, next) => {
       );
     }
 
+    // Validate discount price logic
+    if (updates.discountPrice !== undefined && updates.discountPrice > 0) {
+      const currentPrice =
+        updates.price !== undefined ? updates.price : foodItem.price;
+      if (updates.discountPrice >= currentPrice) {
+        return next(
+          new APIError(400, "Discount price must be less than Original price")
+        );
+      }
+    }
+
     // Set lastModifiedBy field
     updates.lastModifiedBy = req.admin._id;
 
-    const updatedFoodItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
-      new: true,
-      runValidators: true,
-    })
+    // Update the food item fields
+    Object.keys(updates).forEach((key) => {
+      foodItem[key] = updates[key];
+    });
+
+    // Save with validation
+    await foodItem.save();
+
+    // Populate the updated document
+    const updatedFoodItem = await FoodItem.findById(itemId)
       .populate("branch", "name branchId location")
       .populate("category", "name");
 

@@ -40,7 +40,12 @@ const foodItemSchema = new mongoose.Schema(
       min: [0, "Discount price cannot be negative"],
       validate: {
         validator: function (value) {
-          return !value || value < this.price;
+          if (!value) return true;
+          if (this.price === undefined || this.price === null) {
+            return true; // Let controller handle validation
+          }
+
+          return value < this.price;
         },
         message: "Discount price must be less than regular price",
       },
