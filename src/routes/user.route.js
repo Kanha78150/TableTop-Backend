@@ -34,6 +34,10 @@ import {
   getOrderHistory,
   getTableOrderHistory,
 } from "../controllers/user/orderController.js";
+import {
+  getOrderRefundStatus,
+  getUserRefunds,
+} from "../controllers/user/refundStatusController.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
@@ -134,5 +138,19 @@ router.put("/orders/:orderId/cancel", authenticateUser, cancelOrder);
 
 // Reorder from previous order
 router.post("/orders/:orderId/reorder", authenticateUser, reorder);
+
+// ======================
+// REFUND STATUS ROUTES (PROTECTED)
+// ======================
+
+// Get refund status for a specific order
+router.get(
+  "/orders/:orderId/refund-status",
+  authenticateUser,
+  getOrderRefundStatus
+);
+
+// Get all user's refunds
+router.get("/refunds", authenticateUser, getUserRefunds);
 
 export default router;

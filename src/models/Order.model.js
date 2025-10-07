@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import mongoosePaginate from "mongoose-paginate-v2";
 import Joi from "joi";
 
 const orderSchema = new mongoose.Schema(
@@ -74,22 +75,46 @@ const orderSchema = new mongoose.Schema(
     totalPrice: { type: Number, required: true, min: 0 },
 
     // Payment details
-    paymentMethod: {
-      type: String,
-      enum: ["cash", "card", "upi", "wallet"],
-      default: "cash",
-    },
-    paymentStatus: {
-      type: String,
-      enum: [
-        "pending",
-        "paid",
-        "failed",
-        "refund_pending",
-        "refunded",
-        "cancelled",
-      ],
-      default: "pending",
+    payment: {
+      paymentMethod: {
+        type: String,
+        enum: ["cash", "card", "upi", "wallet", "phonepe"],
+        default: "cash",
+      },
+      paymentStatus: {
+        type: String,
+        enum: [
+          "pending",
+          "paid",
+          "failed",
+          "refund_pending",
+          "refunded",
+          "cancelled",
+        ],
+        default: "pending",
+      },
+      transactionId: {
+        type: String,
+        sparse: true, // Allow null values but ensure uniqueness when present
+      },
+      gatewayTransactionId: {
+        type: String,
+        sparse: true,
+      },
+      paidAt: {
+        type: Date,
+      },
+      gatewayResponse: {
+        type: Object, // Store raw gateway response
+      },
+      refund: {
+        transactionId: String,
+        amount: Number,
+        reason: String,
+        initiatedAt: Date,
+        completedAt: Date,
+        gatewayResponse: Object,
+      },
     },
 
     // Order timing
@@ -154,6 +179,9 @@ orderSchema.virtual("orderDuration").get(function () {
 
 // Virtual for total items count
 orderSchema.virtual("totalItems").get(function () {
+  if (!this.items || !Array.isArray(this.items)) {
+    return 0;
+  }
   return this.items.reduce((total, item) => total + item.quantity, 0);
 });
 
@@ -178,6 +206,9 @@ orderSchema.pre("save", function (next) {
 
   next();
 });
+
+// Add pagination plugin
+orderSchema.plugin(mongoosePaginate);
 
 export const Order = mongoose.model("Order", orderSchema);
 
@@ -222,9 +253,33 @@ export const validateOrder = (data) => {
     taxes: Joi.number().min(0).optional(),
     serviceCharge: Joi.number().min(0).optional(),
     totalPrice: Joi.number().min(0).required(),
-    paymentMethod: Joi.string()
-      .valid("cash", "card", "upi", "wallet")
-      .optional(),
+    payment: Joi.object({
+      paymentMethod: Joi.string()
+        .valid("cash", "card", "upi", "wallet", "phonepe")
+        .optional(),
+      paymentStatus: Joi.string()
+        .valid(
+          "pending",
+          "paid",
+          "failed",
+          "refund_pending",
+          "refunded",
+          "cancelled"
+        )
+        .optional(),
+      transactionId: Joi.string().optional(),
+      gatewayTransactionId: Joi.string().optional(),
+      paidAt: Joi.date().optional(),
+      gatewayResponse: Joi.object().optional(),
+      refund: Joi.object({
+        transactionId: Joi.string().optional(),
+        amount: Joi.number().min(0).optional(),
+        reason: Joi.string().optional(),
+        initiatedAt: Joi.date().optional(),
+        completedAt: Joi.date().optional(),
+        gatewayResponse: Joi.object().optional(),
+      }).optional(),
+    }).optional(),
     specialInstructions: Joi.string().max(500).optional(),
     estimatedTime: Joi.number().min(1).optional(),
   });

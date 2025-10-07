@@ -232,8 +232,8 @@ export const transferToCheckout = asyncHandler(async (req, res) => {
   const { hotelId, branchId } = req.body;
   const userId = req.user._id;
 
-  if (!hotelId || !branchId) {
-    throw new APIError(400, "Hotel ID and Branch ID are required");
+  if (!hotelId) {
+    throw new APIError(400, "Hotel ID is required");
   }
 
   const result = await cartService.transferToCheckout(

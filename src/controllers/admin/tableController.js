@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Table, tableValidationSchemas } from "../../models/Table.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
 import { Branch } from "../../models/Branch.model.js";
@@ -513,8 +514,15 @@ export const getTableStats = async (req, res, next) => {
       return next(new APIError(404, "Hotel not found or access denied"));
     }
 
-    const query = { hotel };
-    if (branch) query.branch = branch;
+    // Normalize branchId - convert empty string or null to null
+    const normalizedBranchId = branch && branch !== "" ? branch : null;
+
+    // Convert string IDs to ObjectIds for MongoDB matching
+    const query = { hotel: new mongoose.Types.ObjectId(hotel) };
+    if (normalizedBranchId) {
+      query.branch = new mongoose.Types.ObjectId(normalizedBranchId);
+    }
+    // If no branch specified, show all tables for the hotel (don't add branch filter)
 
     const stats = await Table.aggregate([
       { $match: query },
@@ -545,7 +553,7 @@ export const getTableStats = async (req, res, next) => {
       },
     ]);
 
-    const result = stats[0] || {
+    const rawResult = stats[0] || {
       totalTables: 0,
       available: 0,
       occupied: 0,
@@ -557,6 +565,9 @@ export const getTableStats = async (req, res, next) => {
       totalRevenue: 0,
       averageCapacity: 0,
     };
+
+    // Remove the _id field from aggregation result
+    const { _id, ...result } = rawResult;
 
     // Calculate occupancy rate
     const occupancyRate =

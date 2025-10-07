@@ -155,10 +155,13 @@ class CartService {
    */
   async getCart(userId, hotelId, branchId) {
     try {
+      // Normalize branchId - convert empty string or null to null
+      const normalizedBranchId = branchId && branchId !== "" ? branchId : null;
+
       const cart = await Cart.findOne({
         user: userId,
         hotel: hotelId,
-        branch: branchId,
+        branch: normalizedBranchId,
         status: "active",
       }).populate([
         {
@@ -587,12 +590,32 @@ class CartService {
    */
   async transferToCheckout(userId, hotelId, branchId) {
     try {
-      const cart = await Cart.findOne({
+      // Normalize branchId - convert empty string or null to null
+      const normalizedBranchId = branchId && branchId !== "" ? branchId : null;
+
+      // Try to find cart with exact branch match first
+      let cart = await Cart.findOne({
         user: userId,
         hotel: hotelId,
-        branch: branchId,
+        branch: normalizedBranchId,
         status: "active",
       });
+
+      // If no cart found with specific branch, try to find cart with null branch for the same hotel
+      if (!cart && normalizedBranchId !== null) {
+        cart = await Cart.findOne({
+          user: userId,
+          hotel: hotelId,
+          branch: null,
+          status: "active",
+        });
+
+        // If found a cart with null branch, update it to use the provided branch
+        if (cart) {
+          cart.branch = normalizedBranchId;
+          await cart.save();
+        }
+      }
 
       if (!cart) {
         throw new APIError(404, "Cart not found");

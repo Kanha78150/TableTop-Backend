@@ -29,12 +29,15 @@ export const placeOrderFromCart = async (
       estimatedDeliveryTime,
     } = orderDetails;
 
-    // 1. Get user's active cart
+    // 1. Get user's checkout cart
+    // Normalize branchId - convert empty string or null to null
+    const normalizedBranchId = branchId && branchId !== "" ? branchId : null;
+
     const cart = await Cart.findOne({
       user: userId,
       hotel: hotelId,
-      branch: branchId,
-      status: "active",
+      branch: normalizedBranchId,
+      status: "checkout",
     }).populate({
       path: "items.foodItem",
       select:

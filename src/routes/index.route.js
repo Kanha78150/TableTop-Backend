@@ -8,6 +8,7 @@ import adminRoutes from "./admin.route.js";
 // import staffRoutes from "./staff.route.js";
 import userRoutes from "./user.route.js";
 import scanRoutes from "./scan.route.js";
+import paymentRoutes from "./payment.route.js";
 
 const router = Router();
 
@@ -31,6 +32,9 @@ router.use("/user", userRoutes);
 
 // Public QR scan routes (no authentication required)
 router.use("/scan", scanRoutes);
+
+// Payment routes (PhonePe integration)
+router.use("/payment", paymentRoutes);
 
 // Health check
 router.get("/", (req, res) => {
