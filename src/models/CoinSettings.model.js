@@ -22,7 +22,7 @@ const coinSettingsSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
-      max: 1,
+      max: 50,
     },
 
     // Maximum coins that can be earned per order (Admin configurable)
@@ -176,7 +176,7 @@ export const coinSettingsValidationSchemas = {
   create: Joi.object({
     minimumOrderValue: Joi.number().min(0).required(),
     coinValue: Joi.number().min(0.01).required(),
-    coinsPerRupee: Joi.number().min(0).max(1).required(),
+    coinsPerRupee: Joi.number().min(0).max(50).required(),
     maxCoinsPerOrder: Joi.number().min(0).required(),
     maxCoinUsagePercent: Joi.number().min(0).max(100).required(),
     coinExpiryDays: Joi.number().min(0).required(),
@@ -187,7 +187,7 @@ export const coinSettingsValidationSchemas = {
   update: Joi.object({
     minimumOrderValue: Joi.number().min(0).optional(),
     coinValue: Joi.number().min(0.01).optional(),
-    coinsPerRupee: Joi.number().min(0).max(1).optional(),
+    coinsPerRupee: Joi.number().min(0).max(50).optional(),
     maxCoinsPerOrder: Joi.number().min(0).optional(),
     maxCoinUsagePercent: Joi.number().min(0).max(100).optional(),
     coinExpiryDays: Joi.number().min(0).optional(),
