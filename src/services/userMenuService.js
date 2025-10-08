@@ -562,27 +562,37 @@ class UserMenuService {
         bestSellerItems: foodItems.filter((item) => item.isBestSeller).length,
       };
 
-      // If specific category requested, return only that category
+      // If specific category requested, return only food items from that category
       if (filters.category) {
-        const requestedCategory = categorizedMenu.find(
-          (cat) => cat.id.toString() === filters.category
+        // Filter food items to only include items from the requested category
+        const categoryFilteredItems = foodItems.filter(
+          (item) =>
+            item.category && item.category._id.toString() === filters.category
         );
 
+        // Calculate stats for filtered items
+        const categoryStats = {
+          totalItems: categoryFilteredItems.length,
+          vegItems: categoryFilteredItems.filter(
+            (item) => item.foodType === "veg"
+          ).length,
+          nonVegItems: categoryFilteredItems.filter(
+            (item) => item.foodType === "non-veg"
+          ).length,
+          veganItems: categoryFilteredItems.filter(
+            (item) => item.foodType === "vegan"
+          ).length,
+          recommendedItems: categoryFilteredItems.filter(
+            (item) => item.isRecommended
+          ).length,
+          bestSellerItems: categoryFilteredItems.filter(
+            (item) => item.isBestSeller
+          ).length,
+        };
+
         return {
-          category: requestedCategory || null,
-          stats: {
-            totalItems: requestedCategory ? requestedCategory.items.length : 0,
-            vegItems: requestedCategory
-              ? requestedCategory.items.filter(
-                  (item) => item.foodType === "veg"
-                ).length
-              : 0,
-            nonVegItems: requestedCategory
-              ? requestedCategory.items.filter(
-                  (item) => item.foodType === "non-veg"
-                ).length
-              : 0,
-          },
+          foodItems: categoryFilteredItems,
+          stats: categoryStats,
           lastUpdated: new Date().toISOString(),
         };
       }

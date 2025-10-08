@@ -2,6 +2,7 @@ import { CoinSettings } from "../models/CoinSettings.model.js";
 import { CoinTransaction } from "../models/CoinTransaction.model.js";
 import { User } from "../models/User.model.js";
 import { Order } from "../models/Order.model.js";
+import { Hotel } from "../models/Hotel.model.js";
 import { APIError } from "../utils/APIError.js";
 import { logger } from "../utils/logger.js";
 
@@ -158,7 +159,6 @@ class CoinService {
       }
 
       // Get hotel to find the admin
-      const Hotel = require("../models/Hotel.model");
       const hotel = await Hotel.findById(hotelId).select("createdBy");
       if (!hotel) {
         throw new APIError(404, "Hotel not found");
@@ -467,14 +467,33 @@ class CoinService {
   }
 
   /**
-   * Get coin analytics for admin
+   * Get coin analytics for admin (ISOLATED)
+   * @param {string} adminId - Admin ID
    * @param {Object} filters - Analytics filters
    * @returns {Object} Analytics data
    */
-  async getCoinAnalytics(filters = {}) {
+  async getCoinAnalytics(adminId, filters = {}) {
     try {
       const { startDate, endDate } = filters;
-      const matchConditions = {};
+
+      // Get hotels owned by this admin
+      const adminHotels = await Hotel.find({ createdBy: adminId }).select(
+        "_id"
+      );
+      const hotelIds = adminHotels.map((hotel) => hotel._id);
+
+      if (hotelIds.length === 0) {
+        return {
+          totalCoinsInCirculation: 0,
+          transactionStats: [],
+          dailyTrends: [],
+          topUsers: [],
+        };
+      }
+
+      const matchConditions = {
+        hotel: { $in: hotelIds },
+      };
 
       if (startDate || endDate) {
         matchConditions.createdAt = {};
@@ -482,8 +501,28 @@ class CoinService {
         if (endDate) matchConditions.createdAt.$lte = new Date(endDate);
       }
 
-      // Total coins in circulation
-      const totalCoinsInCirculation = await User.getTotalCoinsInCirculation();
+      // Total coins in circulation for this admin's hotels
+      const totalCoinsInCirculation = await User.aggregate([
+        {
+          $lookup: {
+            from: "cointransactions",
+            localField: "_id",
+            foreignField: "user",
+            as: "transactions",
+          },
+        },
+        {
+          $match: {
+            "transactions.hotel": { $in: hotelIds },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalCoins: { $sum: "$coins" },
+          },
+        },
+      ]);
 
       // Transaction analytics
       const transactionStats = await CoinTransaction.aggregate([
@@ -545,7 +584,7 @@ class CoinService {
       ]);
 
       return {
-        totalCoinsInCirculation,
+        totalCoinsInCirculation: totalCoinsInCirculation[0]?.totalCoins || 0,
         transactionStats,
         dailyTrends,
         topUsers,

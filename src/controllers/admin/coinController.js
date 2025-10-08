@@ -1,9 +1,13 @@
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { coinService } from "../../services/rewardService.js";
-import { coinSettingsValidationSchemas } from "../../models/CoinSettings.model.js";
+import {
+  CoinSettings,
+  coinSettingsValidationSchemas,
+} from "../../models/CoinSettings.model.js";
 import { CoinTransaction } from "../../models/CoinTransaction.model.js";
 import { User } from "../../models/User.model.js";
+import { Hotel } from "../../models/Hotel.model.js";
 import Joi from "joi";
 
 /**
@@ -167,6 +171,7 @@ export const updateCoinSettings = async (req, res, next) => {
  */
 export const getCoinAnalytics = async (req, res, next) => {
   try {
+    const adminId = req.admin._id;
     const { startDate, endDate } = req.query;
 
     // Validate date parameters
@@ -178,7 +183,7 @@ export const getCoinAnalytics = async (req, res, next) => {
       return next(new APIError(400, "Invalid end date format"));
     }
 
-    const analytics = await coinService.getCoinAnalytics({
+    const analytics = await coinService.getCoinAnalytics(adminId, {
       startDate,
       endDate,
     });
@@ -239,12 +244,13 @@ export const makeManualCoinAdjustment = async (req, res, next) => {
 };
 
 /**
- * @desc    Get all users with coin balances
+ * @desc    Get all users with coin balances (filtered by admin's hotels)
  * @route   GET /api/v1/admin/coins/users
  * @access  Private (Admin)
  */
 export const getUsersWithCoins = async (req, res, next) => {
   try {
+    const adminId = req.admin._id;
     const {
       page = 1,
       limit = 20,
@@ -254,8 +260,39 @@ export const getUsersWithCoins = async (req, res, next) => {
       sortOrder = "desc",
     } = req.query;
 
-    // Build query
-    const query = { coins: { $gte: parseInt(minBalance) } };
+    // Get hotels owned by this admin
+    const adminHotels = await Hotel.find({ createdBy: adminId }).select("_id");
+    const hotelIds = adminHotels.map((hotel) => hotel._id);
+
+    if (hotelIds.length === 0) {
+      return res.status(200).json(
+        new APIResponse(
+          200,
+          {
+            users: [],
+            pagination: {
+              currentPage: parseInt(page),
+              totalPages: 0,
+              totalUsers: 0,
+              hasNextPage: false,
+              hasPrevPage: false,
+            },
+          },
+          "No hotels found for your account"
+        )
+      );
+    }
+
+    // Find users who have had coin transactions in this admin's hotels
+    const usersWithTransactions = await CoinTransaction.distinct("user", {
+      hotel: { $in: hotelIds },
+    });
+
+    // Build query for users with coin transactions in admin's hotels
+    const query = {
+      _id: { $in: usersWithTransactions },
+      coins: { $gte: parseInt(minBalance) },
+    };
 
     if (search) {
       query.$or = [
@@ -279,27 +316,59 @@ export const getUsersWithCoins = async (req, res, next) => {
 
     const totalUsers = await User.countDocuments(query);
 
-    // Calculate additional stats for each user
+    // Calculate additional stats for each user (only for this admin's hotels)
     const usersWithStats = await Promise.all(
       users.map(async (user) => {
         const userObj = user.toObject();
 
-        // Get recent transaction count
+        // Get recent transaction count for this admin's hotels only
         const recentTransactionCount = await CoinTransaction.countDocuments({
           user: user._id,
+          hotel: { $in: hotelIds },
           createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
         });
+
+        // Calculate coin efficiency based on transactions in this admin's hotels
+        const userEarned = await CoinTransaction.aggregate([
+          {
+            $match: {
+              user: user._id,
+              hotel: { $in: hotelIds },
+              type: "earned",
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$amount" },
+            },
+          },
+        ]);
+
+        const userUsed = await CoinTransaction.aggregate([
+          {
+            $match: {
+              user: user._id,
+              hotel: { $in: hotelIds },
+              type: "used",
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: { $abs: "$amount" } },
+            },
+          },
+        ]);
+
+        const totalEarned = userEarned[0]?.total || 0;
+        const totalUsed = userUsed[0]?.total || 0;
 
         return {
           ...userObj,
           recentTransactionCount,
           coinEfficiency:
-            userObj.totalCoinsUsed > 0
-              ? (
-                  (userObj.totalCoinsUsed / userObj.totalCoinsEarned) *
-                  100
-                ).toFixed(2)
-              : 0,
+            totalEarned > 0 ? ((totalUsed / totalEarned) * 100).toFixed(2) : 0,
         };
       })
     );
@@ -326,12 +395,13 @@ export const getUsersWithCoins = async (req, res, next) => {
 };
 
 /**
- * @desc    Get detailed coin transaction history
+ * @desc    Get detailed coin transaction history (filtered by admin's hotels)
  * @route   GET /api/v1/admin/coins/transactions
  * @access  Private (Admin)
  */
 export const getCoinTransactionHistory = async (req, res, next) => {
   try {
+    const adminId = req.admin._id;
     const {
       page = 1,
       limit = 20,
@@ -343,8 +413,33 @@ export const getCoinTransactionHistory = async (req, res, next) => {
       sortOrder = "desc",
     } = req.query;
 
-    // Build query
-    const query = {};
+    // Get hotels owned by this admin
+    const adminHotels = await Hotel.find({ createdBy: adminId }).select("_id");
+    const hotelIds = adminHotels.map((hotel) => hotel._id);
+
+    if (hotelIds.length === 0) {
+      return res.status(200).json(
+        new APIResponse(
+          200,
+          {
+            transactions: [],
+            pagination: {
+              currentPage: parseInt(page),
+              totalPages: 0,
+              totalTransactions: 0,
+              hasNextPage: false,
+              hasPrevPage: false,
+            },
+          },
+          "No hotels found for your account"
+        )
+      );
+    }
+
+    // Build query - filter by admin's hotels
+    const query = {
+      hotel: { $in: hotelIds },
+    };
 
     if (userId) {
       // Validate userId format
@@ -386,6 +481,7 @@ export const getCoinTransactionHistory = async (req, res, next) => {
       .populate("user", "name email phone")
       .populate("order", "orderNumber totalPrice createdAt")
       .populate("adjustedBy", "name email")
+      .populate("hotel", "name")
       .sort(sort)
       .limit(parseInt(limit))
       .skip((parseInt(page) - 1) * parseInt(limit));
@@ -420,7 +516,17 @@ export const getCoinTransactionHistory = async (req, res, next) => {
  */
 export const getCoinSettingsHistory = async (req, res, next) => {
   try {
-    const settings = await coinService.getCoinSettings();
+    const adminId = req.admin._id;
+    const settings = await coinService.getCoinSettings(adminId);
+
+    if (!settings) {
+      return next(
+        new APIError(
+          404,
+          "No coin settings found. Please create initial settings first."
+        )
+      );
+    }
 
     // Sort history by most recent first
     const sortedHistory = settings.history.sort(
@@ -453,12 +559,13 @@ export const getCoinSettingsHistory = async (req, res, next) => {
 };
 
 /**
- * @desc    Reverse/cancel a coin transaction
+ * @desc    Reverse/cancel a coin transaction (only from admin's hotels)
  * @route   POST /api/v1/admin/coins/transactions/:transactionId/reverse
  * @access  Private (Admin)
  */
 export const reverseCoinTransaction = async (req, res, next) => {
   try {
+    const adminId = req.admin._id;
     const { transactionId } = req.params;
     const { reason } = req.body;
 
@@ -473,10 +580,22 @@ export const reverseCoinTransaction = async (req, res, next) => {
       );
     }
 
-    // Find the transaction
-    const transaction = await CoinTransaction.findById(transactionId);
+    // Get hotels owned by this admin
+    const adminHotels = await Hotel.find({ createdBy: adminId }).select("_id");
+    const hotelIds = adminHotels.map((hotel) => hotel._id);
+
+    if (hotelIds.length === 0) {
+      return next(new APIError(403, "No hotels found for your account"));
+    }
+
+    // Find the transaction and ensure it's from admin's hotel
+    const transaction = await CoinTransaction.findOne({
+      _id: transactionId,
+      hotel: { $in: hotelIds },
+    });
+
     if (!transaction) {
-      return next(new APIError(404, "Transaction not found"));
+      return next(new APIError(404, "Transaction not found or not accessible"));
     }
 
     if (transaction.status !== "completed") {
