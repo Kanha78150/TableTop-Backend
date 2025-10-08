@@ -503,11 +503,53 @@ export const reverseCoinTransaction = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Debug: Check coin settings directly from database
+ * @route   GET /api/v1/admin/coins/debug
+ * @access  Private (Admin)
+ */
+export const debugCoinSettings = async (req, res, next) => {
+  try {
+    const adminId = req.admin._id;
+
+    // Check raw database query
+    const rawSettings = await CoinSettings.findOne({ adminId });
+    console.log("Debug - Admin ID:", adminId);
+    console.log("Debug - Raw settings found:", rawSettings);
+
+    // Check using the service method
+    const serviceSettings = await coinService.getCoinSettings(adminId);
+    console.log("Debug - Service settings:", serviceSettings);
+
+    // Count total settings for this admin
+    const count = await CoinSettings.countDocuments({ adminId });
+    console.log("Debug - Settings count for admin:", count);
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          adminId,
+          rawSettings,
+          serviceSettings,
+          settingsCount: count,
+          message: "Check server console for debug info",
+        },
+        "Debug info retrieved"
+      )
+    );
+  } catch (error) {
+    console.error("Debug error:", error);
+    next(error);
+  }
+};
+
 export default {
   getCoinSettings,
   createCoinSettings,
   updateCoinSettings,
   getCoinAnalytics,
+  debugCoinSettings,
   makeManualCoinAdjustment,
   getUsersWithCoins,
   getCoinTransactionHistory,

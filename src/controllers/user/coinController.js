@@ -3,6 +3,8 @@ import { APIError } from "../../utils/APIError.js";
 import { coinService } from "../../services/rewardService.js";
 import { coinTransactionValidationSchemas } from "../../models/CoinTransaction.model.js";
 import { User } from "../../models/User.model.js";
+import { Hotel } from "../../models/Hotel.model.js";
+import { Branch } from "../../models/Branch.model.js";
 import Joi from "joi";
 
 /**
@@ -171,15 +173,22 @@ export const getExpiringCoins = async (req, res, next) => {
 export const calculateCoinDiscount = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { coinsToUse, orderValue } = req.body;
+    const { coinsToUse, orderValue, hotelId, branchId } = req.body;
 
     // Validate input
     const schema = Joi.object({
       coinsToUse: Joi.number().integer().min(1).required(),
       orderValue: Joi.number().min(1).required(),
+      hotelId: Joi.string().length(24).hex().required(),
+      branchId: Joi.string().length(24).hex().optional(),
     });
 
-    const { error } = schema.validate({ coinsToUse, orderValue });
+    const { error } = schema.validate({
+      coinsToUse,
+      orderValue,
+      hotelId,
+      branchId,
+    });
     if (error) {
       return next(new APIError(400, "Invalid input", error.details));
     }
@@ -198,7 +207,8 @@ export const calculateCoinDiscount = async (req, res, next) => {
     const discountCalculation = await coinService.applyCoinsToOrder(
       userId,
       coinsToUse,
-      orderValue
+      orderValue,
+      hotelId
     );
 
     res.status(200).json(
@@ -228,7 +238,7 @@ export const calculateCoinDiscount = async (req, res, next) => {
 export const getMaxCoinsUsable = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { orderValue } = req.query;
+    const { orderValue, hotelId, branchId } = req.query;
 
     // Validate input
     if (
@@ -239,14 +249,54 @@ export const getMaxCoinsUsable = async (req, res, next) => {
       return next(new APIError(400, "Valid order value is required"));
     }
 
+    if (!hotelId) {
+      return next(new APIError(400, "Hotel ID is required"));
+    }
+
+    // Get admin ID from hotel or branch
+    let adminId;
+    let contextName;
+
+    if (branchId) {
+      // If branchId provided, get admin through branch -> hotel
+      const branch = await Branch.findById(branchId)
+        .populate("hotel", "createdBy name")
+        .select("name hotel");
+
+      if (!branch) {
+        return next(new APIError(404, "Branch not found"));
+      }
+
+      adminId = branch.hotel.createdBy;
+      contextName = `${branch.hotel.name} - ${branch.name}`;
+    } else {
+      // If only hotelId provided, get admin directly from hotel
+      const hotel = await Hotel.findById(hotelId).select("createdBy name");
+      if (!hotel) {
+        return next(new APIError(404, "Hotel not found"));
+      }
+
+      adminId = hotel.createdBy;
+      contextName = hotel.name;
+    }
+
     const orderValueNum = parseFloat(orderValue);
 
     // Get current settings and user balance
-    const settings = await coinService.getCoinSettings();
+    const settings = await coinService.getCoinSettings(adminId);
     const user = await User.findById(userId);
 
     if (!user) {
       return next(new APIError(404, "User not found"));
+    }
+
+    if (!settings) {
+      return next(
+        new APIError(
+          404,
+          `Coin system not configured for ${contextName}. Please contact the restaurant to set up their coin system.`
+        )
+      );
     }
 
     const maxCoinsUsable = settings.getMaxCoinsUsable(orderValueNum);
@@ -274,13 +324,13 @@ export const getMaxCoinsUsable = async (req, res, next) => {
 };
 
 /**
- * @desc    Get coins that would be earned for an order
- * @route   GET /api/v1/user/coins/calculate-earning
+ * @desc    Get coins that would be earned for an order at a specific hotel/branch
+ * @route   GET /api/v1/user/coins/calculate-earning?orderValue=100&hotelId=123&branchId=456
  * @access  Private (User)
  */
 export const calculateCoinsEarning = async (req, res, next) => {
   try {
-    const { orderValue } = req.query;
+    const { orderValue, hotelId, branchId } = req.query;
 
     // Validate input
     if (
@@ -291,11 +341,54 @@ export const calculateCoinsEarning = async (req, res, next) => {
       return next(new APIError(400, "Valid order value is required"));
     }
 
+    if (!hotelId) {
+      return next(new APIError(400, "Hotel ID is required"));
+    }
+
+    // Get admin ID from hotel or branch
+    let adminId;
+    let contextName;
+
+    if (branchId) {
+      // If branchId provided, get admin through branch -> hotel
+      const branch = await Branch.findById(branchId)
+        .populate("hotel", "createdBy name")
+        .select("name hotel");
+
+      if (!branch) {
+        return next(new APIError(404, "Branch not found"));
+      }
+
+      adminId = branch.hotel.createdBy;
+      contextName = `${branch.hotel.name} - ${branch.name}`;
+    } else {
+      // If only hotelId provided, get admin directly from hotel
+      const hotel = await Hotel.findById(hotelId).select("createdBy name");
+      if (!hotel) {
+        return next(new APIError(404, "Hotel not found"));
+      }
+
+      adminId = hotel.createdBy;
+      contextName = hotel.name;
+    }
+
     const orderValueNum = parseFloat(orderValue);
-    const coinsEarned = await coinService.calculateCoinsEarned(orderValueNum);
+    const coinsEarned = await coinService.calculateCoinsEarned(
+      orderValueNum,
+      adminId
+    );
 
     // Get current settings for context
-    const settings = await coinService.getCoinSettings();
+    const settings = await coinService.getCoinSettings(adminId);
+
+    if (!settings) {
+      return next(
+        new APIError(
+          404,
+          `Coin system not configured for ${contextName}. Please contact the restaurant to set up their coin system.`
+        )
+      );
+    }
 
     res.status(200).json(
       new APIResponse(
@@ -312,6 +405,11 @@ export const calculateCoinsEarning = async (req, res, next) => {
             settings.coinExpiryDays > 0
               ? `${settings.coinExpiryDays} days`
               : "No expiry",
+          context: {
+            location: contextName,
+            hotelId,
+            branchId: branchId || null,
+          },
         },
         "Coin earning calculation completed successfully"
       )
@@ -322,13 +420,51 @@ export const calculateCoinsEarning = async (req, res, next) => {
 };
 
 /**
- * @desc    Get coin system information and rules
- * @route   GET /api/v1/user/coins/info
+ * @desc    Get coin system information and rules for a specific hotel/branch
+ * @route   GET /api/v1/user/coins/info?hotelId=123&branchId=456
  * @access  Private (User)
  */
 export const getCoinSystemInfo = async (req, res, next) => {
   try {
-    const settings = await coinService.getCoinSettings();
+    const { hotelId, branchId } = req.query;
+
+    if (!hotelId) {
+      return next(new APIError(400, "Hotel ID is required"));
+    }
+
+    // Get admin ID from hotel or branch
+    let adminId;
+    let contextName;
+
+    if (branchId) {
+      // If branchId provided, get admin through branch -> hotel
+      const branch = await Branch.findById(branchId)
+        .populate("hotel", "createdBy name")
+        .select("name hotel");
+
+      if (!branch) {
+        return next(new APIError(404, "Branch not found"));
+      }
+
+      adminId = branch.hotel.createdBy;
+      contextName = `${branch.hotel.name} - ${branch.name}`;
+    } else {
+      // If only hotelId provided, get admin directly from hotel
+      const hotel = await Hotel.findById(hotelId).select("createdBy name");
+      if (!hotel) {
+        return next(new APIError(404, "Hotel not found"));
+      }
+
+      adminId = hotel.createdBy;
+      contextName = hotel.name;
+    }
+
+    const settings = await coinService.getCoinSettings(adminId);
+    if (!settings) {
+      return next(
+        new APIError(404, "Coin system not configured for this hotel")
+      );
+    }
 
     res.status(200).json(
       new APIResponse(

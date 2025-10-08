@@ -105,6 +105,7 @@ import {
   getCoinTransactionHistory,
   getCoinSettingsHistory,
   reverseCoinTransaction,
+  debugCoinSettings,
 } from "../controllers/admin/coinController.js";
 
 // Middleware
@@ -647,6 +648,13 @@ router.put(
   "/coins/settings",
   rbac({ permissions: ["managePricing"] }),
   updateCoinSettings
+);
+
+// Debug coin settings (temporary for troubleshooting)
+router.get(
+  "/coins/debug",
+  rbac({ permissions: ["managePricing"] }),
+  debugCoinSettings
 );
 
 // Get coin settings history
