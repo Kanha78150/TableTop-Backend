@@ -587,9 +587,8 @@ class UserMenuService {
         };
       }
 
-      // Return all categories with items
+      // Return only food items (categories removed as requested)
       return {
-        categories: categorizedMenu,
         foodItems: foodItems,
         stats,
         lastUpdated: new Date().toISOString(),
