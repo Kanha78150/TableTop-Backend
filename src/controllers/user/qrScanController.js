@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Table, tableValidationSchemas } from "../../models/Table.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
 import { Branch } from "../../models/Branch.model.js";
@@ -309,10 +310,14 @@ export const recordScanEvent = async (req, res, next) => {
  */
 const getMenuData = async (hotelId, branchId) => {
   try {
-    // Build query for categories and items
-    const query = { hotel: hotelId, isActive: true };
+    // Convert string IDs to ObjectIds for MongoDB matching
+    const query = {
+      hotel: new mongoose.Types.ObjectId(hotelId),
+      isActive: true,
+    };
+
     if (branchId && branchId !== "null" && branchId !== "undefined") {
-      query.branch = branchId;
+      query.branch = new mongoose.Types.ObjectId(branchId);
     }
 
     // Get categories
@@ -320,11 +325,17 @@ const getMenuData = async (hotelId, branchId) => {
       .select("name description image")
       .sort({ name: 1 });
 
-    // Get food items
-    const foodItems = await FoodItem.find({
-      ...query,
+    // Get food items (separate query without isActive filter)
+    const foodItemQuery = {
+      hotel: new mongoose.Types.ObjectId(hotelId),
       isAvailable: true,
-    })
+    };
+
+    if (branchId && branchId !== "null" && branchId !== "undefined") {
+      foodItemQuery.branch = new mongoose.Types.ObjectId(branchId);
+    }
+
+    const foodItems = await FoodItem.find(foodItemQuery)
       .populate("category", "name")
       .select(
         "name description price discountPrice image foodType spiceLevel preparationTime category allergens"

@@ -8,6 +8,7 @@ import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
 import paymentService from "../../services/paymentService.js";
+import { coinService } from "../../services/rewardService.js";
 
 /**
  * @desc    Create refund request (User)
@@ -305,7 +306,29 @@ export const updateRefundRequestStatus = asyncHandler(async (req, res) => {
 
   // If approved, automatically process the refund
   if (status === "approved") {
+    let coinRefundDetails = null;
+
     try {
+      // Process coin refund first
+      try {
+        coinRefundDetails = await coinService.handleCoinRefund(
+          refundRequest.user,
+          refundRequest.order._id,
+          refundRequest._id
+        );
+
+        logger.info("Coin refund processed", {
+          refundRequestId: requestId,
+          coinRefundDetails,
+        });
+      } catch (coinError) {
+        logger.warn("Coin refund processing failed", {
+          refundRequestId: requestId,
+          error: coinError.message,
+        });
+      }
+
+      // Process payment refund
       const refundResponse = await paymentService.initiateRefund({
         orderId: refundRequest.order._id.toString(),
         merchantTransactionId: refundRequest.order.payment.transactionId,
@@ -316,11 +339,18 @@ export const updateRefundRequestStatus = asyncHandler(async (req, res) => {
       // Update refund request with transaction ID
       refundRequest.refundTransactionId = refundResponse.refundTransactionId;
       refundRequest.status = "processed";
+
+      // Store coin refund details if available
+      if (coinRefundDetails) {
+        refundRequest.coinRefundDetails = coinRefundDetails;
+      }
+
       await refundRequest.save();
 
       logger.info("Refund automatically processed", {
         refundRequestId: requestId,
         refundTransactionId: refundResponse.refundTransactionId,
+        coinRefund: coinRefundDetails,
       });
     } catch (error) {
       logger.error("Auto refund processing failed", {

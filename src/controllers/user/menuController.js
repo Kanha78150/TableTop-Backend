@@ -402,6 +402,217 @@ class UserMenuController {
       next(error);
     }
   }
+
+  /**
+   * Get menu for a specific location (hotel/branch)
+   * Used for users browsing menu after QR scan
+   */
+  async getMenuForLocation(req, res, next) {
+    try {
+      const { hotelId, branchId } = req.params;
+      const {
+        categoryFilter,
+        foodType,
+        minPrice,
+        maxPrice,
+        isRecommended,
+        isBestSeller,
+        spiceLevel,
+        search,
+        sortBy = "displayOrder",
+        sortOrder = "asc",
+      } = req.query;
+
+      // Validate required parameters
+      if (!hotelId) {
+        return next(new APIError("Hotel ID is required", 400));
+      }
+
+      // Validate query parameters
+      const querySchema = Joi.object({
+        categoryFilter: Joi.string().optional(),
+        foodType: Joi.string()
+          .valid("veg", "non-veg", "vegan", "jain")
+          .optional(),
+        minPrice: Joi.number().min(0).optional(),
+        maxPrice: Joi.number().min(0).optional(),
+        isRecommended: Joi.boolean().optional(),
+        isBestSeller: Joi.boolean().optional(),
+        spiceLevel: Joi.string()
+          .valid("mild", "medium", "hot", "extra-hot", "none")
+          .optional(),
+        search: Joi.string().optional(),
+        sortBy: Joi.string()
+          .valid("name", "price", "displayOrder", "averageRating", "createdAt")
+          .default("displayOrder"),
+        sortOrder: Joi.string().valid("asc", "desc").default("asc"),
+      });
+
+      const { error, value } = querySchema.validate({
+        categoryFilter,
+        foodType,
+        minPrice: minPrice ? parseFloat(minPrice) : undefined,
+        maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        isRecommended:
+          isRecommended !== undefined ? isRecommended === "true" : undefined,
+        isBestSeller:
+          isBestSeller !== undefined ? isBestSeller === "true" : undefined,
+        spiceLevel,
+        search,
+        sortBy,
+        sortOrder,
+      });
+
+      if (error) {
+        return next(new APIError(error.details[0].message, 400));
+      }
+
+      const { minPrice: min, maxPrice: max, ...otherParams } = value;
+      const filters = {};
+
+      // Add filters
+      Object.keys(otherParams).forEach((key) => {
+        if (otherParams[key] !== undefined) {
+          filters[key] = otherParams[key];
+        }
+      });
+
+      // Add price range filter
+      if (min !== undefined || max !== undefined) {
+        filters.priceRange = {};
+        if (min !== undefined) filters.priceRange.min = min;
+        if (max !== undefined) filters.priceRange.max = max;
+      }
+
+      const result = await userMenuService.getMenuForLocation(
+        hotelId,
+        branchId,
+        filters
+      );
+
+      return res
+        .status(200)
+        .json(
+          new APIResponse(200, result, "Location menu fetched successfully")
+        );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Get food categories for a specific scanned hotel/branch
+   * Optimized for QR code scanning scenarios
+   */
+  async getCategoriesForScannedHotel(req, res, next) {
+    try {
+      const { hotelId, branchId } = req.params;
+      const {
+        foodType,
+        search,
+        sortBy = "displayOrder",
+        sortOrder = "asc",
+      } = req.query;
+
+      // Validate required parameters
+      if (!hotelId) {
+        return next(new APIError("Hotel ID is required", 400));
+      }
+
+      // Validate query parameters
+      const querySchema = Joi.object({
+        foodType: Joi.string()
+          .valid("veg", "non-veg", "vegan", "jain")
+          .optional(),
+        search: Joi.string().optional(),
+        sortBy: Joi.string()
+          .valid("name", "displayOrder", "createdAt")
+          .default("displayOrder"),
+        sortOrder: Joi.string().valid("asc", "desc").default("asc"),
+      });
+
+      const { error, value } = querySchema.validate({
+        foodType,
+        search,
+        sortBy,
+        sortOrder,
+      });
+
+      if (error) {
+        return next(new APIError(error.details[0].message, 400));
+      }
+
+      // Build filters for the service
+      const filters = {
+        hotel: hotelId,
+        isActive: true,
+      };
+
+      if (branchId && branchId !== "null" && branchId !== "undefined") {
+        filters.branch = branchId;
+      }
+
+      if (value.search) {
+        filters.search = value.search;
+      }
+
+      // If foodType filter is provided, we need to get categories that have items of that food type
+      if (value.foodType) {
+        // Get categories that have food items of the specified type
+        const categoriesWithItems =
+          await userMenuService.getCategoriesWithFoodType(
+            hotelId,
+            branchId,
+            value.foodType,
+            {
+              search: value.search,
+              sortBy: value.sortBy,
+              sortOrder: value.sortOrder,
+            }
+          );
+
+        return res
+          .status(200)
+          .json(
+            new APIResponse(
+              200,
+              categoriesWithItems,
+              "Hotel categories fetched successfully"
+            )
+          );
+      }
+
+      // Get all categories for the hotel/branch
+      const pagination = {
+        page: 1,
+        limit: 50, // Get more categories for scanned hotel view
+        sortBy: value.sortBy,
+        sortOrder: value.sortOrder,
+      };
+
+      const result = await userMenuService.getCategories(filters, pagination);
+
+      // Add additional info for scanned hotel context
+      const enhancedResult = {
+        ...result,
+        hotelId,
+        branchId: branchId || null,
+        scannedAt: new Date().toISOString(),
+      };
+
+      return res
+        .status(200)
+        .json(
+          new APIResponse(
+            200,
+            enhancedResult,
+            "Hotel categories fetched successfully"
+          )
+        );
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new UserMenuController();

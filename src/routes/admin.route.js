@@ -94,6 +94,19 @@ import {
   getBestSellingItems,
 } from "../controllers/admin/analyticsController.js";
 
+// Coin Management Controllers
+import {
+  getCoinSettings,
+  createCoinSettings,
+  updateCoinSettings,
+  getCoinAnalytics,
+  makeManualCoinAdjustment,
+  getUsersWithCoins,
+  getCoinTransactionHistory,
+  getCoinSettingsHistory,
+  reverseCoinTransaction,
+} from "../controllers/admin/coinController.js";
+
 // Middleware
 import {
   authenticateAdmin,
@@ -609,6 +622,73 @@ router.get(
   "/reports/best-sellers",
   rbac({ permissions: ["viewReports"] }),
   getBestSellingItems
+);
+
+// ======================
+// COIN MANAGEMENT ROUTES
+// ======================
+
+// Get current coin settings
+router.get(
+  "/coins/settings",
+  rbac({ permissions: ["managePricing"] }),
+  getCoinSettings
+);
+
+// Create initial coin settings (First-time setup by admin)
+router.post(
+  "/coins/settings",
+  rbac({ permissions: ["managePricing"] }),
+  createCoinSettings
+);
+
+// Update coin settings (48-hour restriction applies)
+router.put(
+  "/coins/settings",
+  rbac({ permissions: ["managePricing"] }),
+  updateCoinSettings
+);
+
+// Get coin settings history
+router.get(
+  "/coins/settings/history",
+  rbac({ permissions: ["managePricing"] }),
+  getCoinSettingsHistory
+);
+
+// Get coin analytics and statistics
+router.get(
+  "/coins/analytics",
+  rbac({ permissions: ["viewAnalytics"] }),
+  getCoinAnalytics
+);
+
+// Make manual coin adjustment for a user
+router.post(
+  "/coins/adjust",
+  rbac({ permissions: ["manageUsers"] }),
+  makeManualCoinAdjustment
+);
+
+// Get users with coin balances
+router.get(
+  "/coins/users",
+  rbac({ permissions: ["manageUsers"] }),
+  getUsersWithCoins
+);
+
+// Get detailed coin transaction history
+router.get(
+  "/coins/transactions",
+  rbac({ permissions: ["viewAnalytics"] }),
+  getCoinTransactionHistory
+);
+
+// Reverse/cancel a coin transaction
+router.post(
+  "/coins/transactions/:transactionId/reverse",
+  rbac({ permissions: ["manageUsers"] }),
+  reverseCoinTransaction
 );
 
 export default router;

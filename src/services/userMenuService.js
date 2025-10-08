@@ -423,6 +423,297 @@ class UserMenuService {
       throw new APIError(`Failed to search menu: ${error.message}`, 500);
     }
   }
+
+  /**
+   * Get menu for specific hotel/branch (after QR scan)
+   * @param {string} hotelId - Hotel ID
+   * @param {string} branchId - Branch ID (optional)
+   * @param {Object} filters - Additional filters (category, foodType, etc.)
+   * @returns {Promise<Object>} Menu data with categories and items
+   */
+  async getMenuForLocation(hotelId, branchId = null, filters = {}) {
+    try {
+      // Build base query for the specific hotel/branch
+      const baseQuery = {
+        hotel: new mongoose.Types.ObjectId(hotelId),
+        isActive: true,
+      };
+
+      if (branchId && branchId !== "null" && branchId !== "undefined") {
+        baseQuery.branch = new mongoose.Types.ObjectId(branchId);
+      }
+
+      // Get food items for this hotel/branch first
+      let foodItemQuery = {
+        hotel: new mongoose.Types.ObjectId(hotelId),
+        isAvailable: true,
+      };
+
+      if (branchId && branchId !== "null" && branchId !== "undefined") {
+        foodItemQuery.branch = new mongoose.Types.ObjectId(branchId);
+      }
+
+      // Apply additional filters
+      if (filters.category) {
+        foodItemQuery.category = new mongoose.Types.ObjectId(filters.category);
+      }
+
+      if (filters.foodType) {
+        foodItemQuery.foodType = filters.foodType;
+      }
+
+      if (filters.spiceLevel) {
+        foodItemQuery.spiceLevel = filters.spiceLevel;
+      }
+
+      if (filters.priceRange) {
+        const { min, max } = filters.priceRange;
+        if (min !== undefined) foodItemQuery.price = { $gte: min };
+        if (max !== undefined) {
+          foodItemQuery.price = { ...foodItemQuery.price, $lte: max };
+        }
+      }
+
+      // Add search functionality
+      if (filters.search) {
+        foodItemQuery.$or = [
+          { name: { $regex: filters.search, $options: "i" } },
+          { description: { $regex: filters.search, $options: "i" } },
+        ];
+      }
+
+      // Add recommendation filters
+      if (filters.isRecommended !== undefined) {
+        foodItemQuery.isRecommended = filters.isRecommended;
+      }
+
+      if (filters.isBestSeller !== undefined) {
+        foodItemQuery.isBestSeller = filters.isBestSeller;
+      }
+
+      const foodItems = await FoodItem.find(foodItemQuery)
+        .populate("category", "name description image")
+        .select(
+          "name description price discountPrice image images foodType spiceLevel preparationTime category allergens isAvailable isRecommended isBestSeller averageRating displayOrder createdAt"
+        )
+        .sort({ displayOrder: 1, name: 1 });
+
+      // Get unique category IDs from filtered food items
+      const categoryIds = [
+        ...new Set(
+          foodItems
+            .map((item) => item.category?._id?.toString())
+            .filter(Boolean)
+        ),
+      ];
+
+      // Get categories for this hotel/branch that have matching items
+      let categoryQuery = {
+        ...baseQuery,
+        _id: { $in: categoryIds.map((id) => new mongoose.Types.ObjectId(id)) },
+      };
+
+      // Apply category filter if specified
+      if (filters.category) {
+        categoryQuery._id = new mongoose.Types.ObjectId(filters.category);
+      }
+
+      const categories = await FoodCategory.find(categoryQuery)
+        .select("name description image displayOrder createdAt")
+        .sort({ displayOrder: 1, name: 1 });
+
+      // Group items by category and only include categories that have items
+      const categorizedMenu = categories
+        .map((category) => ({
+          id: category._id,
+          name: category.name,
+          description: category.description,
+          image: category.image,
+          displayOrder: category.displayOrder,
+          createdAt: category.createdAt,
+          items: foodItems.filter(
+            (item) =>
+              item.category &&
+              item.category._id.toString() === category._id.toString()
+          ),
+        }))
+        .filter((category) => category.items.length > 0); // Only return categories with items
+
+      // Calculate statistics
+      const stats = {
+        totalCategories: categorizedMenu.length,
+        totalItems: foodItems.length,
+        vegItems: foodItems.filter((item) => item.foodType === "veg").length,
+        nonVegItems: foodItems.filter((item) => item.foodType === "non-veg")
+          .length,
+        veganItems: foodItems.filter((item) => item.foodType === "vegan")
+          .length,
+        recommendedItems: foodItems.filter((item) => item.isRecommended).length,
+        bestSellerItems: foodItems.filter((item) => item.isBestSeller).length,
+      };
+
+      // If specific category requested, return only that category
+      if (filters.category) {
+        const requestedCategory = categorizedMenu.find(
+          (cat) => cat.id.toString() === filters.category
+        );
+
+        return {
+          category: requestedCategory || null,
+          stats: {
+            totalItems: requestedCategory ? requestedCategory.items.length : 0,
+            vegItems: requestedCategory
+              ? requestedCategory.items.filter(
+                  (item) => item.foodType === "veg"
+                ).length
+              : 0,
+            nonVegItems: requestedCategory
+              ? requestedCategory.items.filter(
+                  (item) => item.foodType === "non-veg"
+                ).length
+              : 0,
+          },
+          lastUpdated: new Date().toISOString(),
+        };
+      }
+
+      // Return all categories with items
+      return {
+        categories: categorizedMenu,
+        foodItems: foodItems,
+        stats,
+        lastUpdated: new Date().toISOString(),
+      };
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+      throw new APIError(
+        `Failed to get menu for location: ${error.message}`,
+        500
+      );
+    }
+  }
+
+  /**
+   * Get categories that have food items of a specific food type for a hotel/branch
+   * @param {string} hotelId - Hotel ID
+   * @param {string} branchId - Branch ID (optional)
+   * @param {string} foodType - Food type to filter by
+   * @param {Object} options - Additional options (search, sort)
+   * @returns {Promise<Object>} Categories with items of specified food type
+   */
+  async getCategoriesWithFoodType(
+    hotelId,
+    branchId = null,
+    foodType,
+    options = {}
+  ) {
+    try {
+      const { search, sortBy = "displayOrder", sortOrder = "asc" } = options;
+
+      // Build query for food items
+      let foodItemQuery = {
+        hotel: new mongoose.Types.ObjectId(hotelId),
+        isAvailable: true,
+        foodType: foodType,
+      };
+
+      if (branchId && branchId !== "null" && branchId !== "undefined") {
+        foodItemQuery.branch = new mongoose.Types.ObjectId(branchId);
+      }
+
+      // Add search functionality
+      if (search) {
+        foodItemQuery.$or = [
+          { name: { $regex: search, $options: "i" } },
+          { description: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      // Get food items that match the criteria
+      const foodItems = await FoodItem.find(foodItemQuery)
+        .populate("category", "name description image displayOrder")
+        .select("name category")
+        .lean();
+
+      // Get unique category IDs from the food items
+      const categoryIds = [
+        ...new Set(
+          foodItems
+            .map((item) => item.category?._id?.toString())
+            .filter(Boolean)
+        ),
+      ];
+
+      if (categoryIds.length === 0) {
+        return {
+          categories: [],
+          totalCategories: 0,
+          foodType: foodType,
+          hotelId,
+          branchId: branchId || null,
+        };
+      }
+
+      // Get the categories
+      let categoryQuery = {
+        _id: { $in: categoryIds.map((id) => new mongoose.Types.ObjectId(id)) },
+        hotel: new mongoose.Types.ObjectId(hotelId),
+        isActive: true,
+      };
+
+      if (branchId && branchId !== "null" && branchId !== "undefined") {
+        categoryQuery.branch = new mongoose.Types.ObjectId(branchId);
+      }
+
+      // Add category-level search if provided
+      if (search) {
+        categoryQuery.$or = [
+          { name: { $regex: search, $options: "i" } },
+          { description: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
+      const categories = await FoodCategory.find(categoryQuery)
+        .select("name categoryId description image displayOrder tags")
+        .sort(sortOptions)
+        .lean();
+
+      // Count items per category for the specific food type
+      const categoriesWithCounts = categories.map((category) => {
+        const itemCount = foodItems.filter(
+          (item) =>
+            item.category &&
+            item.category._id.toString() === category._id.toString()
+        ).length;
+
+        return {
+          ...category,
+          itemCount,
+        };
+      });
+
+      return {
+        categories: categoriesWithCounts,
+        totalCategories: categories.length,
+        foodType: foodType,
+        hotelId,
+        branchId: branchId || null,
+        filteredAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+      throw new APIError(
+        `Failed to get categories with food type: ${error.message}`,
+        500
+      );
+    }
+  }
 }
 
 export default new UserMenuService();

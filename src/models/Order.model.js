@@ -72,6 +72,9 @@ const orderSchema = new mongoose.Schema(
     subtotal: { type: Number, required: true, min: 0 },
     taxes: { type: Number, default: 0, min: 0 },
     serviceCharge: { type: Number, default: 0, min: 0 },
+    originalPrice: { type: Number, min: 0 }, // Price before coin discount
+    coinDiscount: { type: Number, default: 0, min: 0 }, // Discount from coins
+    coinsUsed: { type: Number, default: 0, min: 0 }, // Number of coins used
     totalPrice: { type: Number, required: true, min: 0 },
 
     // Payment details

@@ -1,5 +1,6 @@
 import orderService from "../../services/orderService.js";
 import { validateOrder } from "../../models/Order.model.js";
+import { User } from "../../models/User.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import Joi from "joi";
@@ -18,12 +19,26 @@ export const placeOrder = async (req, res, next) => {
       paymentMethod,
       specialInstructions,
       customerNote,
+      coinsToUse = 0,
     } = req.body;
 
     // Validate request body
     const { error } = validatePlaceOrder(req.body);
     if (error) {
       return next(new APIError(400, "Validation failed", error.details));
+    }
+
+    // Additional validation for coins
+    if (coinsToUse < 0) {
+      return next(new APIError(400, "Coins to use cannot be negative"));
+    }
+
+    if (coinsToUse > 0) {
+      // Check if user has sufficient coins (basic check, detailed check in service)
+      const user = await User.findById(userId);
+      if (!user || !user.hasSufficientCoins(coinsToUse)) {
+        return next(new APIError(400, "Insufficient coin balance"));
+      }
     }
 
     // Place order from cart only
@@ -36,6 +51,7 @@ export const placeOrder = async (req, res, next) => {
         paymentMethod,
         specialInstructions,
         customerNote,
+        coinsToUse,
       }
     );
 
@@ -422,6 +438,11 @@ const validatePlaceOrder = (data) => {
     }),
     customerNote: Joi.string().max(300).optional().messages({
       "string.max": "Customer note cannot exceed 300 characters",
+    }),
+    coinsToUse: Joi.number().integer().min(0).optional().default(0).messages({
+      "number.base": "Coins to use must be a number",
+      "number.integer": "Coins to use must be an integer",
+      "number.min": "Coins to use cannot be negative",
     }),
   });
   return schema.validate(data);

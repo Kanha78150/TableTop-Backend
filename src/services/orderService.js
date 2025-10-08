@@ -6,6 +6,7 @@ import { Branch } from "../models/Branch.model.js";
 import { Table } from "../models/Table.model.js";
 import { User } from "../models/User.model.js";
 import { APIError } from "../utils/APIError.js";
+import coinService from "./rewardService.js";
 
 /**
  * Place order from user's cart
@@ -27,6 +28,7 @@ export const placeOrderFromCart = async (
       paymentMethod,
       specialInstructions,
       estimatedDeliveryTime,
+      coinsToUse = 0,
     } = orderDetails;
 
     // 1. Get user's checkout cart
@@ -107,7 +109,30 @@ export const placeOrderFromCart = async (
     // 5. Calculate order totals
     const orderCalculation = calculateOrderTotals(cart);
 
-    // 6. Calculate estimated preparation time
+    // 6. Apply coins if specified
+    let coinDiscount = 0;
+    let coinTransaction = null;
+    let finalTotal = orderCalculation.total;
+
+    if (coinsToUse > 0) {
+      const coinApplication = await coinService.applyCoinsToOrder(
+        userId,
+        coinsToUse,
+        orderCalculation.total
+      );
+      coinDiscount = coinApplication.discount;
+      finalTotal = orderCalculation.total - coinDiscount;
+
+      // Validate final total is not negative
+      if (finalTotal < 0) {
+        throw new APIError(
+          400,
+          "Invalid coin usage: discount cannot exceed order total"
+        );
+      }
+    }
+
+    // 7. Calculate estimated preparation time
     const estimatedTime = calculateEstimatedTime(cart.items);
 
     // 7. Transform cart items to order items format
@@ -132,7 +157,10 @@ export const placeOrderFromCart = async (
       items: orderItems,
       subtotal: orderCalculation.subtotal,
       taxes: orderCalculation.taxes,
-      totalPrice: orderCalculation.total,
+      totalPrice: finalTotal, // Use final total after coin discount
+      originalPrice: orderCalculation.total, // Store original price
+      coinDiscount: coinDiscount,
+      coinsUsed: coinsToUse,
       paymentMethod: paymentMethod || "cash",
       status: "pending",
       estimatedTime,
@@ -144,20 +172,38 @@ export const placeOrderFromCart = async (
     const order = new Order(orderData);
     await order.save();
 
-    // 9. Update cart status to converted
+    // 9. Process coin transactions
+    if (coinsToUse > 0) {
+      // Deduct coins used for payment
+      coinTransaction = await coinService.processCoinsUsage(
+        userId,
+        order._id,
+        coinsToUse,
+        orderCalculation.total
+      );
+    }
+
+    // Award coins for the order (if eligible)
+    const coinReward = await coinService.awardCoinsForOrder(
+      userId,
+      order._id,
+      orderCalculation.total
+    );
+
+    // 10. Update cart status to converted
     cart.status = "converted";
     await cart.save();
 
-    // 10. Update table status if table was selected
+    // 11. Update table status if table was selected
     if (table) {
       table.status = "occupied";
       table.currentOrder = order._id;
       await table.save();
     }
 
-    // 11. Populate order details for response
+    // 12. Populate order details for response
     const populatedOrder = await Order.findById(order._id)
-      .populate("user", "name email phone")
+      .populate("user", "name email phone coins")
       .populate("hotel", "name hotelId location")
       .populate("branch", "name branchId location address")
       .populate("table", "tableNumber capacity location")
@@ -165,6 +211,14 @@ export const placeOrderFromCart = async (
         path: "items.foodItem",
         select: "name price image foodType preparationTime",
       });
+
+    // Add coin transaction details to response
+    populatedOrder._doc.coinDetails = {
+      coinsUsed: coinsToUse,
+      coinDiscount: coinDiscount,
+      coinsEarned: coinReward.coinsEarned || 0,
+      userCoinBalance: populatedOrder.user.coins,
+    };
 
     return populatedOrder;
   } catch (error) {
@@ -301,6 +355,15 @@ export const cancelOrder = async (
       throw new APIError(400, "Order cannot be cancelled at this stage");
     }
 
+    // Handle coin refunds for cancelled order
+    let coinRefundDetails = null;
+    try {
+      coinRefundDetails = await coinService.handleCoinRefund(userId, orderId);
+    } catch (coinError) {
+      console.warn("Coin refund processing failed:", coinError.message);
+      // Continue with order cancellation even if coin refund fails
+    }
+
     // Update order status
     order.status = "cancelled";
     order.cancellationReason = reason;
@@ -316,6 +379,11 @@ export const cancelOrder = async (
         status: "available",
         currentOrder: null,
       });
+    }
+
+    // Add coin refund details to the response
+    if (coinRefundDetails) {
+      order._doc.coinRefund = coinRefundDetails;
     }
 
     return order;

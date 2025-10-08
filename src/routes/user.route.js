@@ -38,6 +38,16 @@ import {
   getOrderRefundStatus,
   getUserRefunds,
 } from "../controllers/user/refundStatusController.js";
+import {
+  getCoinBalance,
+  getCoinDetails,
+  getCoinHistory,
+  getExpiringCoins,
+  calculateCoinDiscount,
+  getMaxCoinsUsable,
+  calculateCoinsEarning,
+  getCoinSystemInfo,
+} from "../controllers/user/coinController.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
@@ -60,10 +70,27 @@ router.get(
   userMenuController.getItemsByCategory
 );
 
+// Hotel-specific categories (for QR scan scenarios)
+router.get(
+  "/menu/categories/hotel/:hotelId",
+  userMenuController.getCategoriesForScannedHotel
+);
+router.get(
+  "/menu/categories/hotel/:hotelId/:branchId",
+  userMenuController.getCategoriesForScannedHotel
+);
+
 // Food Items
 router.get("/menu/items", userMenuController.getFoodItems);
 router.get("/menu/items/featured", userMenuController.getFeaturedItems);
 router.get("/menu/items/:itemId", userMenuController.getFoodItemById);
+
+// Location-specific menu (for QR scan browsing)
+router.get("/menu/location/:hotelId", userMenuController.getMenuForLocation);
+router.get(
+  "/menu/location/:hotelId/:branchId",
+  userMenuController.getMenuForLocation
+);
 
 // Search
 router.get("/menu/search", userMenuController.searchMenu);
@@ -152,5 +179,37 @@ router.get(
 
 // Get all user's refunds
 router.get("/refunds", authenticateUser, getUserRefunds);
+
+// ======================
+// COIN SYSTEM ROUTES (PROTECTED)
+// ======================
+
+// Get user's coin balance and basic statistics
+router.get("/coins/balance", authenticateUser, getCoinBalance);
+
+// Get detailed coin information including history and expiring coins
+router.get("/coins/details", authenticateUser, getCoinDetails);
+
+// Get coin transaction history with filters
+router.get("/coins/history", authenticateUser, getCoinHistory);
+
+// Get coins that will expire soon
+router.get("/coins/expiring", authenticateUser, getExpiringCoins);
+
+// Calculate coin discount for an order (preview)
+router.post(
+  "/coins/calculate-discount",
+  authenticateUser,
+  calculateCoinDiscount
+);
+
+// Get maximum coins that can be used for an order
+router.get("/coins/max-usable", authenticateUser, getMaxCoinsUsable);
+
+// Calculate coins that would be earned for an order (preview)
+router.get("/coins/calculate-earning", authenticateUser, calculateCoinsEarning);
+
+// Get coin system information and rules
+router.get("/coins/info", authenticateUser, getCoinSystemInfo);
 
 export default router;
