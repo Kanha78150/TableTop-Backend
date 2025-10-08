@@ -184,10 +184,12 @@ export const placeOrderFromCart = async (
     }
 
     // Award coins for the order (if eligible)
+    const adminId = hotel.createdBy; // Get admin ID from hotel
     const coinReward = await coinService.awardCoinsForOrder(
       userId,
       order._id,
-      orderCalculation.total
+      orderCalculation.total,
+      adminId
     );
 
     // 10. Update cart status to converted

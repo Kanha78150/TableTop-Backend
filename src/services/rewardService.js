@@ -92,14 +92,15 @@ class CoinService {
    * @param {string} userId - User ID
    * @param {string} orderId - Order ID
    * @param {number} orderValue - Order value
+   * @param {string} adminId - Admin ID for isolated coin settings
    * @returns {Object} Transaction details
    */
-  async awardCoinsForOrder(userId, orderId, orderValue) {
+  async awardCoinsForOrder(userId, orderId, orderValue, adminId) {
     try {
-      const settings = await this.getCoinSettings();
+      const settings = await this.getCoinSettings(adminId);
       if (!settings) {
         logger.warn(
-          "Coin settings not configured - no coins awarded for order:",
+          "Coin settings not configured for admin - no coins awarded for order:",
           orderId
         );
         return { coinsEarned: 0, transaction: null };

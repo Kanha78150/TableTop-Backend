@@ -25,16 +25,14 @@ export const getCoinBalance = async (req, res, next) => {
 
     const coinStats = user.getCoinStats();
 
-    // Get current coin settings for context
-    const settings = await coinService.getCoinSettings();
-
+    // Return basic coin balance without hotel-specific settings
+    // Since coin balance is universal, we don't need specific hotel settings here
     res.status(200).json(
       new APIResponse(
         200,
         {
           ...coinStats,
-          coinValue: settings.coinValue, // Value of each coin in currency
-          systemActive: settings.isActive,
+          note: "To see coin value and rules, please check specific hotel's coin info",
         },
         "Coin balance retrieved successfully"
       )
