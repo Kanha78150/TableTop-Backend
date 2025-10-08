@@ -25,11 +25,21 @@ class UserMenuService {
       const query = { isActive };
 
       if (hotel) {
-        query.hotel = hotel;
+        // Convert to ObjectId if it's a valid ObjectId string
+        if (mongoose.Types.ObjectId.isValid(hotel)) {
+          query.hotel = new mongoose.Types.ObjectId(hotel);
+        } else {
+          query.hotel = hotel;
+        }
       }
 
       if (branch) {
-        query.branch = branch;
+        // Convert to ObjectId if it's a valid ObjectId string
+        if (mongoose.Types.ObjectId.isValid(branch)) {
+          query.branch = new mongoose.Types.ObjectId(branch);
+        } else {
+          query.branch = branch;
+        }
       }
 
       if (search) {

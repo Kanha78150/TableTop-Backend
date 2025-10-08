@@ -7,13 +7,14 @@ import { User } from "../../models/User.model.js";
 import Joi from "joi";
 
 /**
- * @desc    Get current coin settings
+ * @desc    Get current coin settings for logged-in admin (ISOLATED)
  * @route   GET /api/v1/admin/coins/settings
  * @access  Private (Admin)
  */
 export const getCoinSettings = async (req, res, next) => {
   try {
-    const settings = await coinService.getCoinSettings();
+    const adminId = req.admin._id; // Get admin ID from authentication middleware
+    const settings = await coinService.getCoinSettings(adminId);
 
     if (!settings) {
       return res
@@ -22,7 +23,7 @@ export const getCoinSettings = async (req, res, next) => {
           new APIResponse(
             200,
             null,
-            "No coin settings configured. Please configure the coin system first."
+            "No coin settings configured for your account. Please configure the coin system first."
           )
         );
     }
@@ -30,7 +31,11 @@ export const getCoinSettings = async (req, res, next) => {
     res
       .status(200)
       .json(
-        new APIResponse(200, settings, "Coin settings retrieved successfully")
+        new APIResponse(
+          200,
+          settings,
+          "Your coin settings retrieved successfully"
+        )
       );
   } catch (error) {
     next(error);
@@ -38,17 +43,22 @@ export const getCoinSettings = async (req, res, next) => {
 };
 
 /**
- * @desc    Create initial coin settings (First-time setup)
+ * @desc    Create initial coin settings for logged-in admin (ISOLATED)
  * @route   POST /api/v1/admin/coins/settings
  * @access  Private (Admin)
  */
 export const createCoinSettings = async (req, res, next) => {
   try {
-    // Check if settings already exist
-    const existingSettings = await coinService.getCoinSettings();
+    const adminId = req.admin._id;
+
+    // Check if this admin already has settings
+    const existingSettings = await coinService.getCoinSettings(adminId);
     if (existingSettings) {
       return next(
-        new APIError(400, "Coin settings already exist. Use PUT to update.")
+        new APIError(
+          400,
+          "You already have coin settings configured. Use PUT to update."
+        )
       );
     }
 
@@ -58,7 +68,6 @@ export const createCoinSettings = async (req, res, next) => {
       return next(new APIError(400, "Invalid input", error.details));
     }
 
-    const adminId = req.admin._id;
     const settingsData = req.body;
 
     const newSettings = await coinService.createInitialCoinSettings(
@@ -87,13 +96,15 @@ export const createCoinSettings = async (req, res, next) => {
  */
 export const updateCoinSettings = async (req, res, next) => {
   try {
-    // Check if settings exist
-    const existingSettings = await coinService.getCoinSettings();
+    const adminId = req.admin._id;
+
+    // Check if this admin has settings
+    const existingSettings = await coinService.getCoinSettings(adminId);
     if (!existingSettings) {
       return next(
         new APIError(
           404,
-          "No coin settings found. Please create initial settings first."
+          "No coin settings found for your account. Please create initial settings first."
         )
       );
     }
@@ -114,8 +125,6 @@ export const updateCoinSettings = async (req, res, next) => {
       isActive,
       reason = "",
     } = req.body;
-
-    const adminId = req.admin._id;
 
     // Build update object with only provided fields
     const updateData = {};

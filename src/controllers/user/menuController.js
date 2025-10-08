@@ -412,6 +412,7 @@ class UserMenuController {
       const { hotelId, branchId } = req.params;
       const {
         categoryFilter,
+        category, // Support both 'category' and 'categoryFilter'
         foodType,
         minPrice,
         maxPrice,
@@ -431,6 +432,7 @@ class UserMenuController {
       // Validate query parameters
       const querySchema = Joi.object({
         categoryFilter: Joi.string().optional(),
+        category: Joi.string().optional(), // Support both parameter names
         foodType: Joi.string()
           .valid("veg", "non-veg", "vegan", "jain")
           .optional(),
@@ -450,6 +452,7 @@ class UserMenuController {
 
       const { error, value } = querySchema.validate({
         categoryFilter,
+        category,
         foodType,
         minPrice: minPrice ? parseFloat(minPrice) : undefined,
         maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
@@ -467,7 +470,13 @@ class UserMenuController {
         return next(new APIError(error.details[0].message, 400));
       }
 
-      const { minPrice: min, maxPrice: max, ...otherParams } = value;
+      const {
+        minPrice: min,
+        maxPrice: max,
+        category: cat,
+        categoryFilter: catFilter,
+        ...otherParams
+      } = value;
       const filters = {};
 
       // Add filters
@@ -476,6 +485,13 @@ class UserMenuController {
           filters[key] = otherParams[key];
         }
       });
+
+      // Handle category filter (prefer 'category' over 'categoryFilter')
+      if (cat) {
+        filters.category = cat;
+      } else if (catFilter) {
+        filters.category = catFilter;
+      }
 
       // Add price range filter
       if (min !== undefined || max !== undefined) {

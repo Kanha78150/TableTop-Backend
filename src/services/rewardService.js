@@ -7,30 +7,48 @@ import { logger } from "../utils/logger.js";
 
 class CoinService {
   /**
-   * Get current coin settings
+   * Get current coin settings for specific admin (ISOLATED)
+   * @param {string} adminId - Admin ID to get settings for
    * @returns {Object|null} Current coin settings or null if not configured
    */
-  async getCoinSettings() {
+  async getCoinSettings(adminId) {
     try {
-      return await CoinSettings.getCurrentSettings();
+      if (!adminId) {
+        throw new APIError(
+          400,
+          "Admin ID is required for isolated coin settings"
+        );
+      }
+      return await CoinSettings.getCurrentSettings(adminId);
     } catch (error) {
       logger.error("Error fetching coin settings:", error);
+      if (error instanceof APIError) throw error;
       throw new APIError(500, "Failed to fetch coin settings");
     }
   }
 
   /**
-   * Create initial coin settings (Admin must provide all values)
+   * Create initial coin settings for specific admin (ISOLATED)
    * @param {Object} settingsData - Initial settings data
    * @param {string} adminId - Admin ID who is creating the settings
    * @returns {Object} Created settings
    */
   async createInitialCoinSettings(settingsData, adminId) {
     try {
-      // Check if settings already exist
-      const existingSettings = await CoinSettings.getCurrentSettings();
+      if (!adminId) {
+        throw new APIError(
+          400,
+          "Admin ID is required for isolated coin settings"
+        );
+      }
+
+      // Check if this admin already has settings
+      const existingSettings = await CoinSettings.getCurrentSettings(adminId);
       if (existingSettings) {
-        throw new APIError(400, "Coin settings already exist");
+        throw new APIError(
+          400,
+          "This admin already has coin settings configured"
+        );
       }
 
       return await CoinSettings.createInitialSettings(settingsData, adminId);
@@ -42,15 +60,23 @@ class CoinService {
   }
 
   /**
-   * Calculate coins earned for an order
+   * Calculate coins earned for an order (ISOLATED by admin)
    * @param {number} orderValue - Total order value
+   * @param {string} adminId - Admin ID whose settings to use
    * @returns {number} Coins to be earned
    */
-  async calculateCoinsEarned(orderValue) {
+  async calculateCoinsEarned(orderValue, adminId) {
     try {
-      const settings = await this.getCoinSettings();
+      if (!adminId) {
+        logger.warn("No admin context - no coins awarded");
+        return 0;
+      }
+
+      const settings = await CoinSettings.getSettingsForOrder(adminId);
       if (!settings) {
-        logger.warn("Coin settings not configured - no coins awarded");
+        logger.warn(
+          `Admin ${adminId} coin settings not configured - no coins awarded`
+        );
         return 0;
       }
       return settings.calculateCoinsEarned(orderValue);
@@ -122,15 +148,23 @@ class CoinService {
    * @param {string} userId - User ID
    * @param {number} coinsToUse - Number of coins to use
    * @param {number} orderValue - Total order value
+   * @param {string} hotelId - Hotel ID to get admin-specific settings
    * @returns {Object} Application details
    */
-  async applyCoinsToOrder(userId, coinsToUse, orderValue) {
+  async applyCoinsToOrder(userId, coinsToUse, orderValue, hotelId) {
     try {
       if (coinsToUse <= 0) {
         return { discount: 0, coinsUsed: 0, transaction: null };
       }
 
-      const settings = await this.getCoinSettings();
+      // Get hotel to find the admin
+      const Hotel = require("../models/Hotel.model");
+      const hotel = await Hotel.findById(hotelId).select("createdBy");
+      if (!hotel) {
+        throw new APIError(404, "Hotel not found");
+      }
+
+      const settings = await this.getCoinSettings(hotel.createdBy);
       const user = await User.findById(userId);
 
       if (!user) {
@@ -352,7 +386,7 @@ class CoinService {
    */
   async updateCoinSettings(newSettings, adminId, reason = "") {
     try {
-      const settings = await this.getCoinSettings();
+      const settings = await this.getCoinSettings(adminId);
 
       // Check if update is allowed (48-hour rule)
       if (!settings.canUpdate()) {
@@ -361,7 +395,7 @@ class CoinService {
         );
         throw new APIError(
           400,
-          `Coin settings can only be updated after 48 hours. Next update allowed at: ${nextUpdateTime.toLocaleString()}`
+          `Your coin settings can only be updated after 48 hours. Next update allowed at: ${nextUpdateTime.toLocaleString()}`
         );
       }
 

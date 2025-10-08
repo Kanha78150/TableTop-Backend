@@ -3,6 +3,13 @@ import Joi from "joi";
 
 const coinSettingsSchema = new mongoose.Schema(
   {
+    // Admin who owns this coin settings configuration (ISOLATION)
+    adminId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: true,
+    },
+
     // Minimum order value to earn coins (Admin configurable)
     minimumOrderValue: {
       type: Number,
@@ -47,12 +54,11 @@ const coinSettingsSchema = new mongoose.Schema(
       min: 0,
     },
 
-    // Admin who last updated the settings
+    // Admin who last updated the settings (same as adminId for first creation)
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
-      required: false, // Not required for initial system setup
-      default: null,
+      required: true, // Now required since we have admin isolation
     },
 
     // Last update timestamp for 48-hour restriction
@@ -93,26 +99,48 @@ const coinSettingsSchema = new mongoose.Schema(
   }
 );
 
-// Note: MongoDB automatically creates unique _id index, no need to override it
-// We rely on application logic to ensure only one settings document exists
+// Create compound index for admin isolation
+coinSettingsSchema.index({ adminId: 1 }, { unique: true });
 
-// Static method to get current settings
-coinSettingsSchema.statics.getCurrentSettings = async function () {
-  const settings = await this.findOne();
-  return settings; // Return null if no settings exist - admin must configure first
+// Static method to get settings for specific admin (ISOLATED)
+coinSettingsSchema.statics.getCurrentSettings = async function (adminId) {
+  if (!adminId) {
+    throw new Error("Admin ID is required for isolated coin settings");
+  }
+  const settings = await this.findOne({ adminId });
+  return settings; // Return null if admin hasn't configured settings yet
 };
 
-// Static method to create initial settings (admin must provide all values)
+// Static method to create initial settings for specific admin (ISOLATED)
 coinSettingsSchema.statics.createInitialSettings = async function (
   settingsData,
   adminId
 ) {
+  if (!adminId) {
+    throw new Error("Admin ID is required for isolated coin settings");
+  }
+
+  // Check if admin already has settings
+  const existingSettings = await this.findOne({ adminId });
+  if (existingSettings) {
+    throw new Error("Admin already has coin settings configured");
+  }
+
   const settings = await this.create({
     ...settingsData,
+    adminId: adminId, // Link to specific admin
     updatedBy: adminId,
     lastUpdatedAt: new Date(),
   });
   return settings;
+};
+
+// Static method to get settings for order processing (by hotel/admin context)
+coinSettingsSchema.statics.getSettingsForOrder = async function (adminId) {
+  if (!adminId) {
+    return null; // No admin context = no coin earning
+  }
+  return await this.findOne({ adminId, isActive: true });
 };
 
 // Method to check if settings can be updated (2-minute rule - TEMPORARY FOR TESTING)
