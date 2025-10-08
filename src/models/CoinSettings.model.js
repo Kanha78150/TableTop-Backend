@@ -115,13 +115,13 @@ coinSettingsSchema.statics.createInitialSettings = async function (
   return settings;
 };
 
-// Method to check if settings can be updated (48-hour rule)
+// Method to check if settings can be updated (2-minute rule - TEMPORARY FOR TESTING)
 coinSettingsSchema.methods.canUpdate = function () {
   if (!this.lastUpdatedAt) return true;
 
-  const hoursSinceLastUpdate =
-    (Date.now() - this.lastUpdatedAt.getTime()) / (1000 * 60 * 60);
-  return hoursSinceLastUpdate >= 48;
+  const minutesSinceLastUpdate =
+    (Date.now() - this.lastUpdatedAt.getTime()) / (1000 * 60);
+  return minutesSinceLastUpdate >= 2; // Changed from 48 hours to 2 minutes
 };
 
 // Method to update settings with history tracking
