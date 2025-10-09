@@ -161,12 +161,14 @@ export const placeOrderFromCart = async (
       originalPrice: orderCalculation.total, // Store original price
       coinDiscount: coinDiscount,
       coinsUsed: coinsToUse,
-      paymentMethod: paymentMethod || "cash",
+      payment: {
+        paymentMethod: paymentMethod || "cash",
+        paymentStatus: paymentMethod === "cash" ? "pending" : "paid",
+      },
       status: "pending",
       estimatedTime,
       specialInstructions: specialInstructions || "",
       orderSource: "mobile_app",
-      paymentStatus: paymentMethod === "cash" ? "pending" : "paid",
     };
 
     const order = new Order(orderData);
@@ -370,8 +372,8 @@ export const cancelOrder = async (
     order.status = "cancelled";
     order.cancellationReason = reason;
     order.cancelledAt = new Date();
-    order.paymentStatus =
-      order.paymentStatus === "paid" ? "refund_pending" : "cancelled";
+    order.payment.paymentStatus =
+      order.payment.paymentStatus === "paid" ? "refund_pending" : "cancelled";
 
     await order.save();
 
@@ -467,12 +469,15 @@ export const reorderFromPrevious = async (
       subtotal: orderCalculation.subtotal,
       taxes: orderCalculation.taxes,
       totalPrice: orderCalculation.total,
-      paymentMethod: orderDetails.paymentMethod || "cash",
+      payment: {
+        paymentMethod: orderDetails.paymentMethod || "cash",
+        paymentStatus:
+          orderDetails.paymentMethod === "cash" ? "pending" : "paid",
+      },
       status: "pending",
       estimatedTime: calculateEstimatedTime(availableItems),
       specialInstructions: orderDetails.specialInstructions || "",
       orderSource: "reorder",
-      paymentStatus: orderDetails.paymentMethod === "cash" ? "pending" : "paid",
       reorderedFrom: orderId,
     };
 
