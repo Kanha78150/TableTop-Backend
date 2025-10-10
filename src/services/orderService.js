@@ -163,7 +163,7 @@ export const placeOrderFromCart = async (
       coinsUsed: coinsToUse,
       payment: {
         paymentMethod: paymentMethod || "cash",
-        paymentStatus: paymentMethod === "cash" ? "pending" : "paid",
+        paymentStatus: "pending", // All orders start as pending until payment is confirmed
       },
       status: "pending",
       estimatedTime,
@@ -471,8 +471,7 @@ export const reorderFromPrevious = async (
       totalPrice: orderCalculation.total,
       payment: {
         paymentMethod: orderDetails.paymentMethod || "cash",
-        paymentStatus:
-          orderDetails.paymentMethod === "cash" ? "pending" : "paid",
+        paymentStatus: "pending", // All reorders start as pending until payment is confirmed
       },
       status: "pending",
       estimatedTime: calculateEstimatedTime(availableItems),
