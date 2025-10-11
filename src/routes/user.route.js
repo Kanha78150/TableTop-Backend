@@ -48,6 +48,7 @@ import {
   calculateCoinsEarning,
   getCoinSystemInfo,
 } from "../controllers/user/coinController.js";
+import userOfferController from "../controllers/user/offerController.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
@@ -139,8 +140,8 @@ router.get("/cart/:hotelId", authenticateUser, getCart); // For hotels without b
 // ORDER ROUTES (PROTECTED)
 // ======================
 
-// Place order from cart
-router.post("/orders/place", authenticateUser, placeOrder);
+// Note: Order placement is now handled through enhanced checkout
+// router.post("/orders/place", authenticateUser, placeOrder); // REMOVED
 
 // Get user's orders with filters
 router.get("/orders", authenticateUser, getMyOrders);
@@ -211,5 +212,24 @@ router.get("/coins/calculate-earning", authenticateUser, calculateCoinsEarning);
 
 // Get coin system information and rules
 router.get("/coins/info", authenticateUser, getCoinSystemInfo);
+
+// ======================
+// OFFER ROUTES (PUBLIC - no auth required for browsing offers)
+// ======================
+
+// Get available offers for a specific hotel (all branches)
+router.get(
+  "/offers/available/:hotelId",
+  userOfferController.getAvailableOffers
+);
+
+// Get available offers for a specific hotel and branch
+router.get(
+  "/offers/available/:hotelId/:branchId",
+  userOfferController.getAvailableOffers
+);
+
+// Validate offer code for a specific hotel/branch
+router.get("/offers/validate/:code", userOfferController.validateOfferCode);
 
 export default router;

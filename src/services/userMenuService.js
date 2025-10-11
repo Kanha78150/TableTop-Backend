@@ -124,7 +124,7 @@ class UserMenuService {
       }
 
       if (!category) {
-        throw new APIError("Category not found", 404);
+        throw new APIError(404, "Category not found");
       }
 
       // Populate related data
@@ -300,7 +300,7 @@ class UserMenuService {
       }
 
       if (!item) {
-        throw new APIError("Food item not found", 404);
+        throw new APIError(404, "Food item not found");
       }
 
       // Populate related data
@@ -407,7 +407,7 @@ class UserMenuService {
   async searchMenuItems(searchTerm, filters = {}, pagination = {}) {
     try {
       if (!searchTerm || searchTerm.trim().length === 0) {
-        throw new APIError("Search term is required", 400);
+        throw new APIError(400, "Search term is required");
       }
 
       const searchFilters = {

@@ -1,6 +1,8 @@
 import { Offer } from "../models/Offer.model.js";
 import { FoodCategory } from "../models/FoodCategory.model.js";
 import { FoodItem } from "../models/FoodItem.model.js";
+import { Hotel } from "../models/Hotel.model.js";
+import { Branch } from "../models/Branch.model.js";
 import { APIError } from "../utils/APIError.js";
 import mongoose from "mongoose";
 
@@ -18,12 +20,37 @@ class OfferService {
         offerData.discountType === "percent" &&
         offerData.discountValue > 100
       ) {
-        throw new APIError("Percentage discount cannot exceed 100%", 400);
+        throw new APIError(400, "Percentage discount cannot exceed 100%");
       }
 
       // Validate expiry date
       if (new Date(offerData.expiryDate) <= new Date()) {
-        throw new APIError("Expiry date must be in the future", 400);
+        throw new APIError(400, "Expiry date must be in the future");
+      }
+
+      // Validate hotel ID (required)
+      if (!offerData.hotelId) {
+        throw new APIError(400, "Hotel ID is required");
+      }
+
+      const hotel = await Hotel.findOne({ hotelId: offerData.hotelId });
+      if (!hotel) {
+        throw new APIError(404, "Hotel not found");
+      }
+
+      // Validate branch ID if provided
+      let branch = null;
+      if (offerData.branchId) {
+        branch = await Branch.findOne({
+          branchId: offerData.branchId,
+          hotel: hotel._id,
+        });
+        if (!branch) {
+          throw new APIError(
+            "Branch not found or doesn't belong to the specified hotel",
+            404
+          );
+        }
       }
 
       // Validate food category or food item if provided
@@ -32,26 +59,28 @@ class OfferService {
           offerData.foodCategory
         );
         if (!categoryExists) {
-          throw new APIError("Food category not found", 404);
+          throw new APIError(404, "Food category not found");
         }
       }
 
       if (offerData.foodItem) {
         const itemExists = await FoodItem.findById(offerData.foodItem);
         if (!itemExists) {
-          throw new APIError("Food item not found", 404);
+          throw new APIError(404, "Food item not found");
         }
       }
 
       // Check if offer code already exists
       const existingOffer = await Offer.findOne({ code: offerData.code });
       if (existingOffer) {
-        throw new APIError("Offer code already exists", 409);
+        throw new APIError(409, "Offer code already exists");
       }
 
-      // Create offer with admin reference
+      // Create offer with admin reference and hotel/branch links
       const offer = new Offer({
         ...offerData,
+        hotel: hotel._id,
+        branch: branch?._id,
         createdBy: adminId,
       });
 
@@ -59,6 +88,8 @@ class OfferService {
 
       // Populate references for response
       await savedOffer.populate([
+        { path: "hotel", select: "name hotelId location" },
+        { path: "branch", select: "name branchId location" },
         { path: "foodCategory", select: "name categoryId" },
         { path: "foodItem", select: "name itemId price" },
         { path: "createdBy", select: "name email" },
@@ -70,9 +101,54 @@ class OfferService {
         throw error;
       }
       if (error.code === 11000) {
-        throw new APIError("Offer code already exists", 409);
+        throw new APIError(409, "Offer code already exists");
       }
       throw new APIError(`Failed to create offer: ${error.message}`, 500);
+    }
+  }
+
+  /**
+   * Get available offers for users based on hotel/branch
+   * @param {String} hotelId - Hotel ID
+   * @param {String} branchId - Branch ID (optional)
+   * @returns {Promise<Array>} Available offers
+   */
+  async getAvailableOffersForUser(hotelId, branchId = null) {
+    try {
+      const now = new Date();
+      const query = {
+        isActive: true,
+        startDate: { $lte: now },
+        expiryDate: { $gte: now },
+        hotelId: hotelId,
+      };
+
+      // If branchId is provided, get both hotel-level and branch-specific offers
+      if (branchId) {
+        query.$or = [
+          { applicableFor: "hotel" }, // Hotel-level offers
+          { applicableFor: "branch", branchId: branchId }, // Branch-specific offers
+        ];
+      } else {
+        // Only hotel-level offers
+        query.applicableFor = "hotel";
+      }
+
+      const offers = await Offer.find(query)
+        .populate("hotel", "name hotelId location")
+        .populate("branch", "name branchId location")
+        .select(
+          "code title description discountType discountValue minOrderValue maxDiscountAmount validDays validTimeRange terms"
+        )
+        .sort({ createdAt: -1 })
+        .lean();
+
+      return offers;
+    } catch (error) {
+      throw new APIError(
+        `Failed to fetch available offers: ${error.message}`,
+        500
+      );
     }
   }
 
@@ -98,6 +174,8 @@ class OfferService {
         foodItem,
         search,
         expired,
+        hotelId,
+        branchId,
       } = filters;
 
       // Build query
@@ -124,6 +202,15 @@ class OfferService {
         query.foodItem = foodItem;
       }
 
+      // Filter by hotel/branch
+      if (hotelId) {
+        query.hotelId = hotelId;
+      }
+
+      if (branchId) {
+        query.branchId = branchId;
+      }
+
       if (search) {
         query.$or = [
           { code: { $regex: search, $options: "i" } },
@@ -144,6 +231,8 @@ class OfferService {
 
       const [offers, totalCount] = await Promise.all([
         Offer.find(query)
+          .populate("hotel", "name hotelId location")
+          .populate("branch", "name branchId location")
           .populate("foodCategory", "name categoryId")
           .populate("foodItem", "name itemId price")
           .populate("createdBy", "name email")
@@ -177,7 +266,7 @@ class OfferService {
   async getOfferById(offerId, adminId = null) {
     try {
       if (!mongoose.Types.ObjectId.isValid(offerId)) {
-        throw new APIError("Invalid offer ID", 400);
+        throw new APIError(400, "Invalid offer ID");
       }
 
       const query = { _id: offerId };
@@ -192,7 +281,7 @@ class OfferService {
         .lean();
 
       if (!offer) {
-        throw new APIError("Offer not found", 404);
+        throw new APIError(404, "Offer not found");
       }
 
       // Add expiry status
@@ -208,11 +297,41 @@ class OfferService {
   }
 
   /**
-   * Get offer by code
+   * Get offer by code (for users - no admin restriction)
    * @param {String} code - Offer code
    * @returns {Promise<Object>} Offer details
    */
-  async getOfferByCode(code, adminId) {
+  async getOfferByCode(code) {
+    try {
+      const offer = await Offer.findOne({
+        code: code.toUpperCase(),
+      })
+        .populate("hotel", "name hotelId location")
+        .populate("branch", "name branchId location")
+        .populate("foodCategory", "name categoryId")
+        .populate("foodItem", "name itemId price")
+        .lean();
+
+      if (!offer) {
+        throw new APIError(404, "Offer not found");
+      }
+
+      return offer;
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+      throw new APIError(`Failed to fetch offer: ${error.message}`, 500);
+    }
+  }
+
+  /**
+   * Get offer by code (for admin - with admin restriction)
+   * @param {String} code - Offer code
+   * @param {String} adminId - Admin ID
+   * @returns {Promise<Object>} Offer details
+   */
+  async getOfferByCodeForAdmin(code, adminId) {
     try {
       const offer = await Offer.findOne({
         code: code.toUpperCase(),
@@ -223,17 +342,17 @@ class OfferService {
         .lean();
 
       if (!offer) {
-        throw new APIError("Offer not found", 404);
+        throw new APIError(404, "Offer not found");
       }
 
       // Check if offer is valid
       const now = new Date();
       if (!offer.isActive) {
-        throw new APIError("Offer is not active", 400);
+        throw new APIError(400, "Offer is not active");
       }
 
       if (new Date(offer.expiryDate) < now) {
-        throw new APIError("Offer has expired", 400);
+        throw new APIError(400, "Offer has expired");
       }
 
       return offer;
@@ -255,7 +374,7 @@ class OfferService {
   async updateOffer(offerId, updateData, adminId) {
     try {
       if (!mongoose.Types.ObjectId.isValid(offerId)) {
-        throw new APIError("Invalid offer ID", 400);
+        throw new APIError(400, "Invalid offer ID");
       }
 
       const query = { _id: offerId };
@@ -265,7 +384,7 @@ class OfferService {
 
       const existingOffer = await Offer.findOne(query);
       if (!existingOffer) {
-        throw new APIError("Offer not found", 404);
+        throw new APIError(404, "Offer not found");
       }
 
       // Validate discount value if being updated
@@ -273,7 +392,7 @@ class OfferService {
         updateData.discountType === "percent" &&
         updateData.discountValue > 100
       ) {
-        throw new APIError("Percentage discount cannot exceed 100%", 400);
+        throw new APIError(400, "Percentage discount cannot exceed 100%");
       }
 
       // Validate expiry date if being updated
@@ -281,7 +400,7 @@ class OfferService {
         updateData.expiryDate &&
         new Date(updateData.expiryDate) <= new Date()
       ) {
-        throw new APIError("Expiry date must be in the future", 400);
+        throw new APIError(400, "Expiry date must be in the future");
       }
 
       // Validate food category if being updated
@@ -290,7 +409,7 @@ class OfferService {
           updateData.foodCategory
         );
         if (!categoryExists) {
-          throw new APIError("Food category not found", 404);
+          throw new APIError(404, "Food category not found");
         }
       }
 
@@ -298,7 +417,7 @@ class OfferService {
       if (updateData.foodItem) {
         const itemExists = await FoodItem.findById(updateData.foodItem);
         if (!itemExists) {
-          throw new APIError("Food item not found", 404);
+          throw new APIError(404, "Food item not found");
         }
       }
 
@@ -309,7 +428,7 @@ class OfferService {
           _id: { $ne: offerId },
         });
         if (codeExists) {
-          throw new APIError("Offer code already exists", 409);
+          throw new APIError(409, "Offer code already exists");
         }
       }
 
@@ -332,7 +451,7 @@ class OfferService {
         throw error;
       }
       if (error.code === 11000) {
-        throw new APIError("Offer code already exists", 409);
+        throw new APIError(409, "Offer code already exists");
       }
       throw new APIError(`Failed to update offer: ${error.message}`, 500);
     }
@@ -346,7 +465,7 @@ class OfferService {
   async deleteOffer(offerId, adminId = null) {
     try {
       if (!mongoose.Types.ObjectId.isValid(offerId)) {
-        throw new APIError("Invalid offer ID", 400);
+        throw new APIError(400, "Invalid offer ID");
       }
 
       const query = { _id: offerId };
@@ -356,7 +475,7 @@ class OfferService {
 
       const offer = await Offer.findOne(query);
       if (!offer) {
-        throw new APIError("Offer not found", 404);
+        throw new APIError(404, "Offer not found");
       }
 
       await Offer.findByIdAndDelete(offerId);
@@ -379,7 +498,7 @@ class OfferService {
   async toggleOfferStatus(offerId, adminId) {
     try {
       if (!mongoose.Types.ObjectId.isValid(offerId)) {
-        throw new APIError("Invalid offer ID", 400);
+        throw new APIError(400, "Invalid offer ID");
       }
 
       const query = { _id: offerId };
@@ -389,7 +508,7 @@ class OfferService {
 
       const offer = await Offer.findOne(query);
       if (!offer) {
-        throw new APIError("Offer not found", 404);
+        throw new APIError(404, "Offer not found");
       }
 
       const updatedOffer = await Offer.findByIdAndUpdate(
@@ -439,7 +558,7 @@ class OfferService {
         // Apply specific offers
         for (const code of specificOfferCodes) {
           try {
-            const offer = await this.getOfferByCode(code, adminId);
+            const offer = await this.getOfferByCodeForAdmin(code, adminId);
             offers.push(offer);
           } catch (error) {
             // Skip invalid offer codes but continue with others

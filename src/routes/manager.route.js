@@ -41,13 +41,6 @@ import {
   updateBulkMenuItemAvailability,
   getFoodCategories,
   getFoodCategory,
-  // Deprecated functions (will return 403 errors)
-  addMenuItem,
-  updateMenuItem,
-  deleteMenuItem,
-  addFoodCategory,
-  updateFoodCategory,
-  deleteFoodCategory,
 } from "../controllers/manager/menuController.js";
 
 import {

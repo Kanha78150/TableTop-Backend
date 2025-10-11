@@ -80,7 +80,19 @@ const offerSchema = new mongoose.Schema(
       },
       default: "all",
     },
-    // References
+    // Hotel/Branch Identification
+    hotelId: {
+      type: String,
+      required: [true, "Hotel ID is required"],
+      match: [/^HTL-\d{4}-\d{5}$/, "Invalid hotel ID format"],
+      index: true,
+    },
+    branchId: {
+      type: String,
+      match: [/^BRN-[A-Z0-9]+-\d{5}$/, "Invalid branch ID format"],
+      index: true,
+    },
+    // References (populated from hotelId/branchId)
     hotel: {
       type: mongoose.Schema.Types.Mixed, // Allow both ObjectId and String
       ref: "Hotel",
@@ -110,6 +122,13 @@ const offerSchema = new mongoose.Schema(
       startTime: { type: String }, // HH:MM format
       endTime: { type: String }, // HH:MM format
     },
+    // Multiple time slots when offer is valid
+    validTimeSlots: [
+      {
+        startTime: { type: String }, // HH:MM format
+        endTime: { type: String }, // HH:MM format
+      },
+    ],
     // Terms and conditions
     terms: {
       type: String,
@@ -261,7 +280,20 @@ export const offerValidationSchemas = {
     isActive: Joi.boolean().default(true),
     applicableFor: Joi.string()
       .valid("all", "category", "item", "hotel", "branch")
-      .default("all"),
+      .default("hotel"),
+    hotelId: Joi.string()
+      .pattern(/^HTL-\d{4}-\d{5}$/)
+      .required()
+      .messages({
+        "string.pattern.base": "Hotel ID must be in format HTL-YYYY-NNNNN",
+        "any.required": "Hotel ID is required",
+      }),
+    branchId: Joi.string()
+      .pattern(/^BRN-[A-Z0-9]+-\d{5}$/)
+      .optional()
+      .messages({
+        "string.pattern.base": "Branch ID must be in format BRN-XXX-NNNNN",
+      }),
     hotel: Joi.alternatives()
       .try(
         Joi.string().length(24).hex(),
@@ -283,6 +315,14 @@ export const offerValidationSchemas = {
       startTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
       endTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
     }).optional(),
+    validTimeSlots: Joi.array()
+      .items(
+        Joi.object({
+          startTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+          endTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+        })
+      )
+      .optional(),
     terms: Joi.string().max(1000).optional(),
   }),
 
@@ -302,6 +342,18 @@ export const offerValidationSchemas = {
     applicableFor: Joi.string()
       .valid("all", "category", "item", "hotel", "branch")
       .optional(),
+    hotelId: Joi.string()
+      .pattern(/^HTL-\d{4}-\d{5}$/)
+      .optional()
+      .messages({
+        "string.pattern.base": "Hotel ID must be in format HTL-YYYY-NNNNN",
+      }),
+    branchId: Joi.string()
+      .pattern(/^BRN-[A-Z0-9]+-\d{5}$/)
+      .optional()
+      .messages({
+        "string.pattern.base": "Branch ID must be in format BRN-XXX-NNNNN",
+      }),
     hotel: Joi.alternatives()
       .try(
         Joi.string().length(24).hex(),
@@ -329,6 +381,14 @@ export const offerValidationSchemas = {
       startTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
       endTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
     }).optional(),
+    validTimeSlots: Joi.array()
+      .items(
+        Joi.object({
+          startTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+          endTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+        })
+      )
+      .optional(),
     terms: Joi.string().max(1000).optional(),
   }),
 };

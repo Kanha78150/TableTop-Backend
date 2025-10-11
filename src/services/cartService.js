@@ -672,6 +672,356 @@ class CartService {
       ]);
     }
   }
+
+  /**
+   * Enhanced checkout - Create order immediately with all details
+   */
+  async enhancedCheckout(userId, orderDetails) {
+    try {
+      const {
+        hotelId,
+        branchId,
+        tableId,
+        paymentMethod,
+        customerNote,
+        specialInstructions,
+        coinsToUse = 0,
+        offerCode,
+        estimatedDeliveryTime,
+      } = orderDetails;
+
+      // Import necessary models
+      const { Order } = await import("../models/Order.model.js");
+      const { User } = await import("../models/User.model.js");
+      const { Table } = await import("../models/Table.model.js");
+      const { Offer } = await import("../models/Offer.model.js");
+
+      // Normalize branchId
+      const normalizedBranchId = branchId && branchId !== "" ? branchId : null;
+
+      // 1. Get user's active cart
+      const cart = await Cart.findOne({
+        user: userId,
+        hotel: hotelId,
+        branch: normalizedBranchId,
+        status: "active",
+      }).populate([
+        {
+          path: "items.foodItem",
+          select:
+            "name price discountPrice effectivePrice image preparationTime category",
+        },
+        {
+          path: "hotel",
+          select: "name address phone",
+        },
+        {
+          path: "branch",
+          select: "name address phone",
+        },
+      ]);
+
+      if (!cart || cart.items.length === 0) {
+        throw new APIError(404, "Active cart not found or empty");
+      }
+
+      // 2. Validate cart items
+      const validation = await cart.validateItems();
+      if (!validation.isValid) {
+        throw new APIError(
+          400,
+          "Cart has validation issues",
+          validation.errors
+        );
+      }
+
+      // 3. Get user details for coin validation
+      const user = await User.findById(userId).select("coins");
+      if (!user) {
+        throw new APIError(404, "User not found");
+      }
+
+      // 4. Validate coins usage
+      if (coinsToUse > 0 && coinsToUse > user.coins) {
+        throw new APIError(400, "Insufficient coins available");
+      }
+
+      // 5. Get table details
+      const table = await Table.findById(tableId).select(
+        "tableNumber capacity status"
+      );
+      if (!table) {
+        throw new APIError(404, "Table not found");
+      }
+
+      // 6. Calculate order totals
+      let subtotal = 0;
+      const orderItems = cart.items.map((item) => {
+        const itemPrice = item.foodItem.effectivePrice || item.foodItem.price;
+        const itemTotal = itemPrice * item.quantity;
+        subtotal += itemTotal;
+
+        return {
+          foodItem: item.foodItem._id,
+          foodItemName: item.foodItem.name,
+          quantity: item.quantity,
+          price: itemPrice,
+          totalPrice: itemTotal,
+          customizations: item.customizations,
+          foodType: item.foodItem.foodType || "veg",
+        };
+      });
+
+      // 7. Apply offer if provided
+      let offerDiscount = 0;
+      let appliedOffer = null;
+      if (offerCode) {
+        const now = new Date();
+
+        // Build flexible query based on offer scope
+        const baseQuery = {
+          code: offerCode,
+          isActive: true,
+          startDate: { $lte: now },
+          expiryDate: { $gte: now },
+        };
+
+        // Build $or conditions for different offer scopes
+        const orConditions = [
+          // Universal offers (applicable to all hotels/branches)
+          { applicableFor: "all" },
+          // Hotel-specific offers
+          {
+            applicableFor: "hotel",
+            hotelId: hotelId,
+          },
+        ];
+
+        // If branchId is provided, also check for branch-specific offers
+        if (normalizedBranchId) {
+          orConditions.push({
+            applicableFor: "branch",
+            hotelId: hotelId,
+            branchId: normalizedBranchId,
+          });
+        } else {
+          // No branchId provided - allow any branch offers under this hotel
+          orConditions.push({
+            applicableFor: "branch",
+            hotelId: hotelId,
+          });
+        }
+
+        const offer = await Offer.findOne({
+          ...baseQuery,
+          $or: orConditions,
+        });
+
+        if (!offer) {
+          throw new APIError(400, "Invalid or expired offer code");
+        }
+
+        // Check minimum order value
+        if (subtotal < (offer.minOrderValue || 0)) {
+          throw new APIError(
+            400,
+            `Minimum order value of ₹${offer.minOrderValue} required for this offer`
+          );
+        }
+
+        // Calculate discount
+        if (offer.discountType === "percent") {
+          offerDiscount = Math.min(
+            (subtotal * offer.discountValue) / 100,
+            offer.maxDiscountAmount || subtotal
+          );
+        } else {
+          offerDiscount = Math.min(offer.discountValue, subtotal);
+        }
+
+        appliedOffer = {
+          offerId: offer._id,
+          code: offer.code,
+          title: offer.title,
+          discountAmount: offerDiscount,
+        };
+      }
+
+      // 8. Calculate coin discount (1 coin = 1 rupee)
+      const coinDiscount = Math.min(coinsToUse, subtotal - offerDiscount);
+
+      // 9. Calculate final amounts
+      const taxes = (subtotal - offerDiscount - coinDiscount) * 0.18; // 18% GST
+      const serviceCharge = 0; // No service charge for now
+      const finalTotal =
+        subtotal - offerDiscount - coinDiscount + taxes + serviceCharge;
+
+      // 10. Calculate estimated time
+      const estimatedTime =
+        Math.max(
+          ...orderItems.map((item) => item.foodItem.preparationTime || 15)
+        ) + 5; // Add 5 minutes buffer
+
+      // 11. Create order
+      const orderData = {
+        user: userId,
+        hotel: hotelId,
+        branch: normalizedBranchId,
+        table: tableId,
+        tableNumber: table.tableNumber,
+        items: orderItems,
+        subtotal,
+        taxes,
+        serviceCharge,
+        totalPrice: finalTotal,
+        originalPrice: subtotal,
+        offerDiscount,
+        appliedOffer,
+        coinDiscount,
+        coinsUsed: coinDiscount, // Actual coins used
+        payment: {
+          paymentMethod,
+          paymentStatus: "pending", // Always start as pending
+        },
+        status: "pending",
+        estimatedTime,
+        specialInstructions: specialInstructions || "",
+        customerNote: customerNote || "",
+        orderSource: "mobile_app",
+        rewardCoins: Math.floor(finalTotal * 0.1), // 10% cashback in coins
+        rewardPointsUsed: 0,
+      };
+
+      const order = new Order(orderData);
+      await order.save();
+
+      // 12. Populate order details for response
+      await order.populate([
+        {
+          path: "user",
+          select: "name email phone coins",
+        },
+        {
+          path: "hotel",
+          select: "name hotelId",
+        },
+        {
+          path: "branch",
+          select: "name branchId location",
+        },
+        {
+          path: "table",
+          select: "tableNumber capacity identifier qrScanData",
+        },
+      ]);
+
+      // 13. Handle cart based on payment method
+      if (paymentMethod === "cash") {
+        // For cash orders: Complete order immediately, clear cart, deduct coins
+        cart.items = [];
+        cart.status = "completed";
+        cart.completedAt = new Date();
+        cart.checkoutOrderId = order._id;
+        await cart.save();
+
+        // Deduct coins immediately for cash orders since no gateway processing
+        if (coinDiscount > 0) {
+          await User.findByIdAndUpdate(userId, {
+            $inc: { coins: -coinDiscount },
+          });
+        }
+
+        // Add reward coins immediately for cash orders
+        if (order.rewardCoins > 0) {
+          await User.findByIdAndUpdate(userId, {
+            $inc: { coins: order.rewardCoins },
+          });
+        }
+
+        // Update user's coin balance in response
+        const updatedUser = await User.findById(userId).select("coins");
+        order.user.coins = updatedUser.coins;
+      } else {
+        // For digital payments: Keep cart locked until payment success
+        cart.status = "checkout";
+        cart.checkoutOrderId = order._id;
+        await cart.save();
+      }
+
+      // 14. Return order with detailed pricing breakdown
+      return new APIResponse(
+        201,
+        {
+          order,
+          checkout: {
+            cartId: cart._id,
+            paymentRequired: paymentMethod !== "cash",
+            orderConfirmed: paymentMethod === "cash",
+            message:
+              paymentMethod === "cash"
+                ? "Order confirmed! Payment on delivery. Your cart has been cleared."
+                : "Order created successfully. Please complete payment to confirm.",
+          },
+          pricingBreakdown: {
+            step1_itemsSubtotal: {
+              description: "Total price of all items",
+              amount: subtotal,
+              currency: "₹",
+            },
+            step2_afterOfferDiscount: {
+              description: "After applying offer discount",
+              offerApplied: appliedOffer,
+              discountAmount: offerDiscount,
+              amountAfterOffer: subtotal - offerDiscount,
+              currency: "₹",
+            },
+            step3_afterCoinDiscount: {
+              description: "After applying coin discount (1 coin = ₹1)",
+              coinsAvailable: order.user.coins + coinDiscount, // Show coins before usage
+              coinsUsed: coinDiscount,
+              coinDiscountAmount: coinDiscount,
+              amountAfterCoins: subtotal - offerDiscount - coinDiscount,
+              currency: "₹",
+            },
+            step4_taxesAndCharges: {
+              description: "Taxes and service charges",
+              baseAmount: subtotal - offerDiscount - coinDiscount,
+              gstRate: "18%",
+              gstAmount: taxes,
+              serviceCharge: serviceCharge,
+              totalTaxesAndCharges: taxes + serviceCharge,
+              currency: "₹",
+            },
+            step5_finalTotal: {
+              description: "Final amount to be paid",
+              calculation: `₹${subtotal} - ₹${offerDiscount} - ₹${coinDiscount} + ₹${taxes.toFixed(
+                2
+              )} + ₹${serviceCharge}`,
+              finalAmount: finalTotal,
+              currency: "₹",
+            },
+            summary: {
+              originalAmount: subtotal,
+              totalSavings: offerDiscount + coinDiscount,
+              offerSavings: offerDiscount,
+              coinSavings: coinDiscount,
+              taxesAndCharges: taxes + serviceCharge,
+              amountToPay: finalTotal,
+              currency: "₹",
+            },
+          },
+        },
+        paymentMethod === "cash"
+          ? "Order confirmed! Payment on delivery."
+          : "Order created successfully. Complete payment to confirm."
+      );
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+      throw new APIError(500, "Failed to process checkout", [error.message]);
+    }
+  }
 }
 
 export default new CartService();

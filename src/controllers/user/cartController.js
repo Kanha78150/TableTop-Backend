@@ -224,23 +224,57 @@ export const getAllUserCarts = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Transfer cart to checkout
+ * @desc    Enhanced checkout - Create order and prepare for payment
  * @route   POST /api/user/cart/checkout
  * @access  Private (User)
  */
 export const transferToCheckout = asyncHandler(async (req, res) => {
-  const { hotelId, branchId } = req.body;
+  const {
+    hotelId,
+    branchId,
+    tableId,
+    paymentMethod,
+    customerNote,
+    specialInstructions,
+    coinsToUse = 0,
+    offerCode,
+    estimatedDeliveryTime,
+  } = req.body;
+
   const userId = req.user._id;
 
+  // Validation
   if (!hotelId) {
     throw new APIError(400, "Hotel ID is required");
   }
 
-  const result = await cartService.transferToCheckout(
-    userId,
+  if (!tableId) {
+    throw new APIError(400, "Table ID is required");
+  }
+
+  if (!paymentMethod) {
+    throw new APIError(400, "Payment method is required");
+  }
+
+  const validPaymentMethods = ["cash", "card", "upi", "wallet", "phonepe"];
+  if (!validPaymentMethods.includes(paymentMethod)) {
+    throw new APIError(
+      400,
+      `Payment method must be one of: ${validPaymentMethods.join(", ")}`
+    );
+  }
+
+  const result = await cartService.enhancedCheckout(userId, {
     hotelId,
-    branchId
-  );
+    branchId,
+    tableId,
+    paymentMethod,
+    customerNote,
+    specialInstructions,
+    coinsToUse,
+    offerCode,
+    estimatedDeliveryTime,
+  });
 
   res.status(result.statusCode).json(result);
 });

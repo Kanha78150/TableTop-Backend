@@ -84,7 +84,7 @@ class UserMenuController {
       const { categoryId } = req.params;
 
       if (!categoryId) {
-        return next(new APIError("Category ID is required", 400));
+        return next(new APIError(400, "Category ID is required"));
       }
 
       const category = await userMenuService.getCategoryById(categoryId);
@@ -213,7 +213,7 @@ class UserMenuController {
       const { itemId } = req.params;
 
       if (!itemId) {
-        return next(new APIError("Item ID is required", 400));
+        return next(new APIError(400, "Item ID is required"));
       }
 
       const item = await userMenuService.getFoodItemById(itemId);
@@ -245,7 +245,7 @@ class UserMenuController {
       } = req.query;
 
       if (!categoryId) {
-        return next(new APIError("Category ID is required", 400));
+        return next(new APIError(400, "Category ID is required"));
       }
 
       // Validate query parameters
@@ -377,7 +377,7 @@ class UserMenuController {
       } = req.query;
 
       if (!searchTerm || searchTerm.trim().length === 0) {
-        return next(new APIError("Search term is required", 400));
+        return next(new APIError(400, "Search term is required"));
       }
 
       const filters = {};
@@ -426,7 +426,7 @@ class UserMenuController {
 
       // Validate required parameters
       if (!hotelId) {
-        return next(new APIError("Hotel ID is required", 400));
+        return next(new APIError(400, "Hotel ID is required"));
       }
 
       // Validate query parameters
@@ -532,7 +532,7 @@ class UserMenuController {
 
       // Validate required parameters
       if (!hotelId) {
-        return next(new APIError("Hotel ID is required", 400));
+        return next(new APIError(400, "Hotel ID is required"));
       }
 
       // Validate query parameters

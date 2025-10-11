@@ -40,7 +40,7 @@ const initiatePayment = asyncHandler(async (req, res) => {
     }
   }
 
-  // Initiate payment
+  // Initiate payment using v2 API
   const paymentResponse = await paymentService.initiatePayment({
     orderId,
     amount,
@@ -48,9 +48,9 @@ const initiatePayment = asyncHandler(async (req, res) => {
     ...customerDetails,
   });
 
-  logger.info("Payment initiated successfully", {
+  logger.info("Payment initiated successfully with v2 API", {
     orderId,
-    transactionId: paymentResponse.transactionId,
+    merchantOrderId: paymentResponse.merchantOrderId,
     userId,
   });
 
@@ -87,9 +87,9 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
       );
     }
 
-    // Check payment status
+    // Check payment status using v2 API
     const statusResponse = await paymentService.checkPaymentStatus(
-      order.payment.transactionId,
+      order.payment.merchantOrderId || orderId.toString(),
       orderId
     );
 
@@ -99,11 +99,11 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
       // Payment successful
       logger.info("Payment successful", {
         orderId,
-        transactionId: statusResponse.transactionId,
+        merchantOrderId: statusResponse.merchantOrderId,
       });
 
       return res.redirect(
-        `${redirectUrl}/payment/success?orderId=${orderId}&transactionId=${statusResponse.transactionId}`
+        `${redirectUrl}/payment/success?orderId=${orderId}&merchantOrderId=${statusResponse.merchantOrderId}`
       );
     } else {
       // Payment failed or pending
@@ -139,6 +139,19 @@ const handlePaymentWebhook = asyncHandler(async (req, res) => {
   try {
     const callbackResult = await paymentService.handlePaymentCallback(req.body);
 
+    // Handle payment result - success or failure
+    if (callbackResult.status === "paid" || callbackResult.success) {
+      await paymentService.handlePaymentSuccess(
+        callbackResult.orderId,
+        callbackResult.merchantOrderId || callbackResult.transactionId
+      );
+    } else if (callbackResult.status === "failed" || !callbackResult.success) {
+      await paymentService.handlePaymentFailure(
+        callbackResult.orderId,
+        "Payment gateway reported failure"
+      );
+    }
+
     logger.info("Payment webhook processed successfully", {
       orderId: callbackResult.orderId,
       status: callbackResult.status,
@@ -166,25 +179,23 @@ const handlePaymentWebhook = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Check payment status
- * @route   GET /api/v1/payment/phonepe/status/:transactionId
+ * @desc    Check payment status using v2 API
+ * @route   GET /api/v1/payment/phonepe/status/:merchantOrderId
  * @access  Private
  */
 const checkPaymentStatus = asyncHandler(async (req, res) => {
-  const { transactionId } = req.params;
+  const { merchantOrderId } = req.params;
 
-  // Find order by transaction ID
-  const order = await Order.findOne({
-    "payment.transactionId": transactionId,
-  }).select("payment");
+  // Find order by merchantOrderId (which is our orderId)
+  const order = await Order.findById(merchantOrderId).select("payment");
 
   if (!order) {
-    throw new APIError(404, "Order not found for this transaction");
+    throw new APIError(404, "Order not found for this merchant order ID");
   }
 
-  // Check payment status
+  // Check payment status using v2 API
   const statusResponse = await paymentService.checkPaymentStatus(
-    transactionId,
+    merchantOrderId,
     order._id.toString()
   );
 
@@ -230,17 +241,17 @@ const initiateRefund = asyncHandler(async (req, res) => {
     throw new APIError(400, "Refund amount cannot exceed order amount");
   }
 
-  // Initiate refund
+  // Initiate refund using v2 API
   const refundResponse = await paymentService.initiateRefund({
     orderId,
-    merchantTransactionId: order.payment.transactionId,
+    merchantOrderId: order.payment.merchantOrderId || orderId.toString(),
     amount,
     reason,
   });
 
-  logger.info("Refund initiated", {
+  logger.info("Refund initiated using v2 API", {
     orderId,
-    refundTransactionId: refundResponse.refundTransactionId,
+    merchantRefundId: refundResponse.merchantRefundId,
     amount,
     initiatedBy: req.user._id,
   });
@@ -268,7 +279,7 @@ const getPaymentHistory = asyncHandler(async (req, res) => {
     throw new APIError(404, "Order not found");
   }
 
-  // Format payment history
+  // Format payment history with v2 API fields
   const paymentHistory = {
     orderId,
     totalAmount: order.totalPrice,
@@ -277,7 +288,8 @@ const getPaymentHistory = asyncHandler(async (req, res) => {
     payment: {
       method: order.payment.paymentMethod,
       status: order.payment.paymentStatus,
-      transactionId: order.payment.transactionId,
+      merchantOrderId: order.payment.merchantOrderId,
+      transactionId: order.payment.transactionId, // Legacy field
       gatewayTransactionId: order.payment.gatewayTransactionId,
       paidAt: order.payment.paidAt,
       refund: order.payment.refund || null,

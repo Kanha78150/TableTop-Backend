@@ -13,7 +13,7 @@ class OfferController {
       // Validate request body
       const { error, value } = offerValidationSchemas.create.validate(req.body);
       if (error) {
-        return next(new APIError(error.details[0].message, 400));
+        return next(new APIError(400, error.details[0].message));
       }
 
       const adminId = req.admin._id;
@@ -43,6 +43,8 @@ class OfferController {
         foodItem,
         search,
         expired,
+        hotelId,
+        branchId,
       } = req.query;
 
       // Validate pagination
@@ -70,7 +72,7 @@ class OfferController {
         });
 
       if (paginationError) {
-        return next(new APIError(paginationError.details[0].message, 400));
+        return next(new APIError(400, paginationError.details[0].message));
       }
 
       const filters = {};
@@ -99,6 +101,14 @@ class OfferController {
         filters.expired = expired === "true";
       }
 
+      if (hotelId) {
+        filters.hotelId = hotelId;
+      }
+
+      if (branchId) {
+        filters.branchId = branchId;
+      }
+
       const adminId = req.admin._id;
       const result = await offerService.getAllOffers(
         filters,
@@ -122,7 +132,7 @@ class OfferController {
       const { offerId } = req.params;
 
       if (!offerId) {
-        return next(new APIError("Offer ID is required", 400));
+        return next(new APIError(400, "Offer ID is required"));
       }
 
       const adminId = req.admin._id;
@@ -144,10 +154,13 @@ class OfferController {
       const { code } = req.params;
 
       if (!code) {
-        return next(new APIError("Offer code is required", 400));
+        return next(new APIError(400, "Offer code is required"));
       }
 
-      const offer = await offerService.getOfferByCode(code, req.admin._id);
+      const offer = await offerService.getOfferByCodeForAdmin(
+        code,
+        req.admin._id
+      );
 
       return res
         .status(200)
@@ -165,13 +178,13 @@ class OfferController {
       const { offerId } = req.params;
 
       if (!offerId) {
-        return next(new APIError("Offer ID is required", 400));
+        return next(new APIError(400, "Offer ID is required"));
       }
 
       // Validate update data
       const { error, value } = offerValidationSchemas.update.validate(req.body);
       if (error) {
-        return next(new APIError(error.details[0].message, 400));
+        return next(new APIError(400, error.details[0].message));
       }
 
       const adminId = req.admin._id;
@@ -197,7 +210,7 @@ class OfferController {
       const { offerId } = req.params;
 
       if (!offerId) {
-        return next(new APIError("Offer ID is required", 400));
+        return next(new APIError(400, "Offer ID is required"));
       }
 
       const adminId = req.admin._id;
@@ -219,7 +232,7 @@ class OfferController {
       const { offerId } = req.params;
 
       if (!offerId) {
-        return next(new APIError("Offer ID is required", 400));
+        return next(new APIError(400, "Offer ID is required"));
       }
 
       const adminId = req.admin._id;
@@ -272,7 +285,7 @@ class OfferController {
 
       const { error, value } = orderSchema.validate(orderData);
       if (error) {
-        return next(new APIError(error.details[0].message, 400));
+        return next(new APIError(400, error.details[0].message));
       }
 
       // Apply offers (with or without specific codes)
@@ -299,7 +312,7 @@ class OfferController {
       const orderData = req.body;
 
       if (!code) {
-        return next(new APIError("Offer code is required", 400));
+        return next(new APIError(400, "Offer code is required"));
       }
 
       // Validate order data
@@ -319,7 +332,7 @@ class OfferController {
 
       const { error, value } = orderSchema.validate(orderData);
       if (error) {
-        return next(new APIError(error.details[0].message, 400));
+        return next(new APIError(400, error.details[0].message));
       }
 
       const result = await offerService.applyOffer(code, value, req.admin._id);
