@@ -151,9 +151,16 @@ class CoinService {
    * @param {number} coinsToUse - Number of coins to use
    * @param {number} orderValue - Total order value
    * @param {string} hotelId - Hotel ID to get admin-specific settings
+   * @param {boolean} skipValidation - Skip admin coin usage validation (if already done elsewhere)
    * @returns {Object} Application details
    */
-  async applyCoinsToOrder(userId, coinsToUse, orderValue, hotelId) {
+  async applyCoinsToOrder(
+    userId,
+    coinsToUse,
+    orderValue,
+    hotelId,
+    skipValidation = false
+  ) {
     try {
       if (coinsToUse <= 0) {
         return { discount: 0, coinsUsed: 0, transaction: null };
@@ -172,18 +179,55 @@ class CoinService {
         throw new APIError(404, "User not found");
       }
 
-      // Check if user has sufficient coins
-      if (!user.hasSufficientCoins(coinsToUse)) {
-        throw new APIError(400, "Insufficient coin balance");
-      }
+      // Calculate maximum coins usable (needed for return value)
+      const maxCoinsUsable = settings.getMaxCoinsUsable(
+        user.coins || 0,
+        orderValue
+      );
 
-      // Check maximum coin usage limit
-      const maxCoinsUsable = settings.getMaxCoinsUsable(orderValue);
-      if (coinsToUse > maxCoinsUsable) {
-        throw new APIError(
-          400,
-          `Can only use maximum ${maxCoinsUsable} coins for this order`
+      // Skip validation if already done by calling service (e.g., cart checkout)
+      if (!skipValidation) {
+        // Calculate theoretical maximum coins allowed by admin settings
+        const theoreticalMaxFromBalance = Math.floor(
+          (user.coins * settings.maxCoinUsagePercent) / 100
         );
+        const theoreticalMaxFromOrder = Math.floor(
+          orderValue / settings.coinValue
+        );
+        const theoreticalMax = Math.min(
+          theoreticalMaxFromBalance,
+          theoreticalMaxFromOrder
+        );
+
+        // Check if user has sufficient coins in their actual balance
+        if (!user.hasSufficientCoins(coinsToUse)) {
+          const maxAllowedByBalance = Math.floor(
+            (user.coins * settings.maxCoinUsagePercent) / 100
+          );
+          throw new APIError(
+            400,
+            `Insufficient coin balance! You have ${
+              user.coins || 0
+            } coins, but you're trying to use ${coinsToUse} coins. Based on admin settings (${
+              settings.maxCoinUsagePercent
+            }% usage limit), you can theoretically use up to ${theoreticalMax} coins for this order, but you only have ${
+              user.coins || 0
+            } coins in your balance. You can actually use maximum ${Math.min(
+              maxAllowedByBalance,
+              user.coins || 0
+            )} coins.`
+          );
+        }
+
+        // Check maximum coin usage limit based on user's coin balance and admin settings
+        if (coinsToUse > maxCoinsUsable) {
+          throw new APIError(
+            400,
+            `Can only use maximum ${maxCoinsUsable} coins for this order (${
+              settings.maxCoinUsagePercent
+            }% of your ${user.coins || 0} coin balance)`
+          );
+        }
       }
 
       // Calculate discount amount
@@ -354,7 +398,7 @@ class CoinService {
         throw new APIError(404, "User not found");
       }
 
-      const coinStats = user.getCoinStats();
+      const coinStats = await user.getCoinStats();
       const history = await CoinTransaction.getUserCoinHistory(userId, options);
       const expiringCoins = await CoinTransaction.getExpiringCoins(userId, 30);
 

@@ -2,8 +2,10 @@ import { Cart } from "../models/Cart.model.js";
 import { FoodItem } from "../models/FoodItem.model.js";
 import { Hotel } from "../models/Hotel.model.js";
 import { Branch } from "../models/Branch.model.js";
+import { CoinTransaction } from "../models/CoinTransaction.model.js";
 import { APIError } from "../utils/APIError.js";
 import { APIResponse } from "../utils/APIResponse.js";
+import { coinService } from "./rewardService.js";
 
 class CartService {
   /**
@@ -685,7 +687,7 @@ class CartService {
         paymentMethod,
         customerNote,
         specialInstructions,
-        coinsToUse = 0,
+        coinsToUse: requestedCoins = 0,
         offerCode,
         estimatedDeliveryTime,
       } = orderDetails;
@@ -741,9 +743,37 @@ class CartService {
         throw new APIError(404, "User not found");
       }
 
-      // 4. Validate coins usage
-      if (coinsToUse > 0 && coinsToUse > user.coins) {
-        throw new APIError(400, "Insufficient coins available");
+      // 4. Validate coins usage with admin limits
+      let coinAdjustmentMessage = null;
+      let coinsToUse = requestedCoins; // Create mutable variable
+
+      if (requestedCoins > 0) {
+        // First check if user has enough coins
+        if (requestedCoins > user.coins) {
+          throw new APIError(
+            400,
+            `Insufficient coins available. You have ${user.coins} coins but trying to use ${requestedCoins} coins.`
+          );
+        }
+
+        // Get admin's coin settings to check percentage limits
+        const hotel = await Hotel.findById(hotelId).select("createdBy");
+        if (!hotel) {
+          throw new APIError(404, "Hotel not found");
+        }
+
+        const coinSettings = await coinService.getCoinSettings(hotel.createdBy);
+        if (coinSettings) {
+          const maxAllowedCoins = Math.floor(
+            (user.coins * coinSettings.maxCoinUsagePercent) / 100
+          );
+
+          if (requestedCoins > maxAllowedCoins) {
+            // User requested more than admin allows, adjust to maximum allowed
+            coinsToUse = maxAllowedCoins;
+            coinAdjustmentMessage = `You requested to use ${requestedCoins} coins, but admin limits coin usage to ${coinSettings.maxCoinUsagePercent}% of your balance. Using maximum allowed ${maxAllowedCoins} coins instead.`;
+          }
+        }
       }
 
       // 5. Get table details
@@ -847,14 +877,34 @@ class CartService {
         };
       }
 
-      // 8. Calculate coin discount (1 coin = 1 rupee)
-      const coinDiscount = Math.min(coinsToUse, subtotal - offerDiscount);
+      // 8. Calculate coin discount with proper validation
+      let coinDiscount = 0;
+      let actualCoinsUsed = 0;
+      if (coinsToUse > 0) {
+        try {
+          const coinApplication = await coinService.applyCoinsToOrder(
+            userId,
+            coinsToUse,
+            subtotal - offerDiscount, // Order value after offer discount
+            hotelId,
+            true // Skip validation as we've already done it above
+          );
+
+          // Use the actual coins used for discount calculation (1 coin = ₹1)
+          actualCoinsUsed = coinApplication.coinsUsed;
+          coinDiscount = actualCoinsUsed; // Since 1 coin = ₹1, discount equals coins used
+        } catch (error) {
+          // If coin service validation fails, fall back to simple calculation
+          // This ensures order doesn't fail completely
+          coinDiscount = Math.min(coinsToUse, subtotal - offerDiscount);
+        }
+      }
 
       // 9. Calculate final amounts
-      const taxes = (subtotal - offerDiscount - coinDiscount) * 0.18; // 18% GST
+      const baseAmount = Math.max(0, subtotal - offerDiscount - coinDiscount);
+      const taxes = Math.max(0, baseAmount * 0.18); // 18% GST, minimum 0
       const serviceCharge = 0; // No service charge for now
-      const finalTotal =
-        subtotal - offerDiscount - coinDiscount + taxes + serviceCharge;
+      const finalTotal = Math.max(0, baseAmount + taxes + serviceCharge); // Ensure final total is not negative
 
       // 10. Calculate estimated time
       const estimatedTime =
@@ -871,14 +921,14 @@ class CartService {
         tableNumber: table.tableNumber,
         items: orderItems,
         subtotal,
-        taxes,
+        taxes: Math.max(0, taxes), // Ensure taxes is not negative
         serviceCharge,
-        totalPrice: finalTotal,
+        totalPrice: Math.max(0, finalTotal), // Ensure total price is not negative
         originalPrice: subtotal,
         offerDiscount,
         appliedOffer,
         coinDiscount,
-        coinsUsed: coinDiscount, // Actual coins used
+        coinsUsed: actualCoinsUsed, // Actual number of coins used
         payment: {
           paymentMethod,
           paymentStatus: "pending", // Always start as pending
@@ -888,7 +938,7 @@ class CartService {
         specialInstructions: specialInstructions || "",
         customerNote: customerNote || "",
         orderSource: "mobile_app",
-        rewardCoins: Math.floor(finalTotal * 0.1), // 10% cashback in coins
+        rewardCoins: Math.max(0, Math.floor(finalTotal * 0.1)), // 10% cashback in coins, minimum 0
         rewardPointsUsed: 0,
       };
 
@@ -925,9 +975,24 @@ class CartService {
         await cart.save();
 
         // Deduct coins immediately for cash orders since no gateway processing
-        if (coinDiscount > 0) {
+        if (actualCoinsUsed > 0) {
+          // Create coin usage transaction record
+          await CoinTransaction.createTransaction({
+            userId,
+            type: "used",
+            amount: -actualCoinsUsed,
+            orderId: order._id,
+            description: `Coins used for order payment (₹${coinDiscount} discount)`,
+            metadata: {
+              orderValue: subtotal - offerDiscount,
+              discount: coinDiscount,
+              coinValue: 1,
+            },
+          });
+
+          // Update user's coin balance
           await User.findByIdAndUpdate(userId, {
-            $inc: { coins: -coinDiscount },
+            $inc: { coins: -actualCoinsUsed },
           });
         }
 
@@ -949,19 +1014,31 @@ class CartService {
       }
 
       // 14. Return order with detailed pricing breakdown
+      const responseData = {
+        order,
+        checkout: {
+          cartId: cart._id,
+          paymentRequired: paymentMethod !== "cash",
+          orderConfirmed: paymentMethod === "cash",
+          message:
+            paymentMethod === "cash"
+              ? "Order confirmed! Payment on delivery. Your cart has been cleared."
+              : "Order created successfully. Please complete payment to confirm.",
+        },
+      };
+
+      // Add coin adjustment message if coins were adjusted
+      if (coinAdjustmentMessage) {
+        responseData.coinAdjustment = {
+          message: coinAdjustmentMessage,
+          adjustedCoinsUsed: coinsToUse,
+        };
+      }
+
       return new APIResponse(
         201,
         {
-          order,
-          checkout: {
-            cartId: cart._id,
-            paymentRequired: paymentMethod !== "cash",
-            orderConfirmed: paymentMethod === "cash",
-            message:
-              paymentMethod === "cash"
-                ? "Order confirmed! Payment on delivery. Your cart has been cleared."
-                : "Order created successfully. Please complete payment to confirm.",
-          },
+          ...responseData,
           pricingBreakdown: {
             step1_itemsSubtotal: {
               description: "Total price of all items",
@@ -977,15 +1054,18 @@ class CartService {
             },
             step3_afterCoinDiscount: {
               description: "After applying coin discount (1 coin = ₹1)",
-              coinsAvailable: order.user.coins + coinDiscount, // Show coins before usage
-              coinsUsed: coinDiscount,
-              coinDiscountAmount: coinDiscount,
-              amountAfterCoins: subtotal - offerDiscount - coinDiscount,
+              coinsAvailable: order.user.coins, // Show user's current coin balance
+              coinsUsed: actualCoinsUsed, // Number of coins actually used
+              coinDiscountAmount: coinDiscount, // Discount amount in rupees (should equal coinsUsed since 1 coin = ₹1)
+              amountAfterCoins: Math.max(
+                0,
+                subtotal - offerDiscount - coinDiscount
+              ),
               currency: "₹",
             },
             step4_taxesAndCharges: {
               description: "Taxes and service charges",
-              baseAmount: subtotal - offerDiscount - coinDiscount,
+              baseAmount: Math.max(0, subtotal - offerDiscount - coinDiscount),
               gstRate: "18%",
               gstAmount: taxes,
               serviceCharge: serviceCharge,

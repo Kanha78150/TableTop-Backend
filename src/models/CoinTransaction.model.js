@@ -209,7 +209,7 @@ coinTransactionSchema.statics.getTotalCoinsEarned = async function (userId) {
   const result = await this.aggregate([
     {
       $match: {
-        user: new mongoose.Schema.Types.ObjectId(userId),
+        user: new mongoose.Types.ObjectId(userId),
         type: "earned",
       },
     },
@@ -224,7 +224,7 @@ coinTransactionSchema.statics.getTotalCoinsUsed = async function (userId) {
   const result = await this.aggregate([
     {
       $match: {
-        user: new mongoose.Schema.Types.ObjectId(userId),
+        user: new mongoose.Types.ObjectId(userId),
         type: "used",
       },
     },

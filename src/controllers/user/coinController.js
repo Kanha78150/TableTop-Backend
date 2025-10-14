@@ -23,7 +23,7 @@ export const getCoinBalance = async (req, res, next) => {
       return next(new APIError(404, "User not found"));
     }
 
-    const coinStats = user.getCoinStats();
+    const coinStats = await user.getCoinStats();
 
     // Return basic coin balance without hotel-specific settings
     // Since coin balance is universal, we don't need specific hotel settings here
@@ -197,8 +197,47 @@ export const calculateCoinDiscount = async (req, res, next) => {
       return next(new APIError(404, "User not found"));
     }
 
+    // Get hotel to find admin settings for better error messages
+    const hotel = await Hotel.findById(hotelId).select("createdBy");
+    if (!hotel) {
+      return next(new APIError(404, "Hotel not found"));
+    }
+
+    const settings = await coinService.getCoinSettings(hotel.createdBy);
+    if (!settings) {
+      return next(
+        new APIError(404, "Coin system not configured for this hotel")
+      );
+    }
+
+    // Provide detailed validation before processing
     if (!user.hasSufficientCoins(coinsToUse)) {
-      return next(new APIError(400, "Insufficient coin balance"));
+      const theoreticalMaxFromBalance = Math.floor(
+        (user.coins * settings.maxCoinUsagePercent) / 100
+      );
+      const theoreticalMaxFromOrder = Math.floor(
+        orderValue / settings.coinValue
+      );
+      const theoreticalMax = Math.min(
+        theoreticalMaxFromBalance,
+        theoreticalMaxFromOrder
+      );
+      const actualUsable = Math.min(
+        theoreticalMaxFromBalance,
+        user.coins || 0,
+        theoreticalMaxFromOrder
+      );
+
+      return next(
+        new APIError(
+          400,
+          `Insufficient coin balance! You're trying to use ${coinsToUse} coins but you only have ${
+            user.coins || 0
+          } coins. Based on the admin's ${
+            settings.maxCoinUsagePercent
+          }% usage limit, you could theoretically use up to ${theoreticalMax} coins for this ₹${orderValue} order, but you can actually use maximum ${actualUsable} coins with your current balance.`
+        )
+      );
     }
 
     // Calculate discount
@@ -297,9 +336,31 @@ export const getMaxCoinsUsable = async (req, res, next) => {
       );
     }
 
-    const maxCoinsUsable = settings.getMaxCoinsUsable(orderValueNum);
-    const actualMaxUsable = Math.min(maxCoinsUsable, user.coins || 0);
-    const maxDiscount = actualMaxUsable * settings.coinValue;
+    const maxCoinsUsable = settings.getMaxCoinsUsable(
+      user.coins || 0,
+      orderValueNum
+    );
+    const maxDiscount = maxCoinsUsable * settings.coinValue;
+    const maxAllowedFromBalance = Math.floor(
+      (user.coins * settings.maxCoinUsagePercent) / 100
+    );
+    const theoreticalMaxFromOrder = Math.floor(
+      orderValueNum / settings.coinValue
+    );
+
+    // Create detailed explanation
+    let explanation = `Based on admin settings (${settings.maxCoinUsagePercent}% usage limit):`;
+    let warning = null;
+
+    if (user.coins === 0) {
+      explanation += ` You have no coins to use.`;
+      warning = "You need to earn coins first by placing orders!";
+    } else if (maxAllowedFromBalance > user.coins) {
+      explanation += ` You could theoretically use ${maxAllowedFromBalance} coins, but you only have ${user.coins} coins. You can use all ${user.coins} of your coins.`;
+      warning = `You have insufficient coin balance. Consider earning more coins by placing orders.`;
+    } else {
+      explanation += ` You can use up to ${maxAllowedFromBalance} coins from your ${user.coins} coin balance.`;
+    }
 
     res.status(200).json(
       new APIResponse(
@@ -307,11 +368,24 @@ export const getMaxCoinsUsable = async (req, res, next) => {
         {
           orderValue: orderValueNum,
           userCoinBalance: user.coins || 0,
-          maxCoinsUsable: actualMaxUsable,
-          systemMaxCoins: maxCoinsUsable,
+          maxCoinsUsable: maxCoinsUsable,
+          theoreticalMaxFromBalance: maxAllowedFromBalance,
+          theoreticalMaxFromOrderValue: theoreticalMaxFromOrder,
+          actualUsableCoins: maxCoinsUsable,
           maxDiscount,
           coinValue: settings.coinValue,
           maxUsagePercent: settings.maxCoinUsagePercent,
+          explanation,
+          warning,
+          breakdown: {
+            adminAllowsUpTo: `${settings.maxCoinUsagePercent}% of coin balance`,
+            yourCoinBalance: `${user.coins || 0} coins`,
+            theoreticalLimit: `${maxAllowedFromBalance} coins (${
+              settings.maxCoinUsagePercent
+            }% of ${user.coins || 0})`,
+            orderValueLimit: `${theoreticalMaxFromOrder} coins (₹${orderValueNum} ÷ ₹${settings.coinValue})`,
+            finalUsableCoins: `${maxCoinsUsable} coins (minimum of above limits)`,
+          },
         },
         "Maximum usable coins calculated successfully"
       )
@@ -481,7 +555,7 @@ export const getCoinSystemInfo = async (req, res, next) => {
             }% of order value as coins (minimum order ₹${
               settings.minimumOrderValue
             })`,
-            usage: `Use up to ${settings.maxCoinUsagePercent}% of order value with coins`,
+            usage: `Use up to ${settings.maxCoinUsagePercent}% of your total coin balance per order`,
             value: `1 coin = ₹${settings.coinValue}`,
             expiry:
               settings.coinExpiryDays > 0

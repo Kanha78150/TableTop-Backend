@@ -117,13 +117,26 @@ userSchema.methods.getCoinBalance = function () {
 };
 
 // Instance method to get coin statistics
-userSchema.methods.getCoinStats = function () {
+userSchema.methods.getCoinStats = async function () {
+  const CoinTransaction = mongoose.model("CoinTransaction");
+
+  // Calculate totals dynamically from coin transactions
+  const totalEarned = await CoinTransaction.getTotalCoinsEarned(this._id);
+  const totalUsed = await CoinTransaction.getTotalCoinsUsed(this._id);
+
+  // Get the last coin transaction for activity timestamp
+  const lastTransaction = await CoinTransaction.findOne({
+    user: this._id,
+  })
+    .sort({ createdAt: -1 })
+    .select("createdAt");
+
   return {
     currentBalance: this.coins || 0,
-    totalEarned: this.totalCoinsEarned || 0,
-    totalUsed: this.totalCoinsUsed || 0,
-    netGain: (this.totalCoinsEarned || 0) - (this.totalCoinsUsed || 0),
-    lastActivity: this.lastCoinActivity,
+    totalEarned,
+    totalUsed,
+    netGain: totalEarned - totalUsed,
+    lastActivity: lastTransaction ? lastTransaction.createdAt : null,
   };
 };
 

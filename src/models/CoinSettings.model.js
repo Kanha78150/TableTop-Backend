@@ -39,7 +39,7 @@ const coinSettingsSchema = new mongoose.Schema(
       min: 0,
     },
 
-    // Maximum percentage of order value that can be paid with coins (Admin configurable)
+    // Maximum percentage of user's coin balance that can be used per order (Admin configurable)
     maxCoinUsagePercent: {
       type: Number,
       required: true,
@@ -189,12 +189,25 @@ coinSettingsSchema.methods.calculateCoinsEarned = function (orderValue) {
   return Math.min(baseCoins, this.maxCoinsPerOrder);
 };
 
-// Method to calculate maximum coins usable for an order
-coinSettingsSchema.methods.getMaxCoinsUsable = function (orderValue) {
+// Method to calculate maximum coins usable based on user's coin balance
+coinSettingsSchema.methods.getMaxCoinsUsable = function (
+  userCoinBalance,
+  orderValue = null
+) {
   if (!this.isActive) return 0;
 
-  const maxAmount = (orderValue * this.maxCoinUsagePercent) / 100;
-  return Math.floor(maxAmount / this.coinValue);
+  // Calculate maximum coins based on percentage of user's total coin balance
+  const maxCoinsFromBalance = Math.floor(
+    (userCoinBalance * this.maxCoinUsagePercent) / 100
+  );
+
+  // If order value is provided, also ensure we don't exceed order value
+  if (orderValue) {
+    const maxCoinsFromOrderValue = Math.floor(orderValue / this.coinValue);
+    return Math.min(maxCoinsFromBalance, maxCoinsFromOrderValue);
+  }
+
+  return maxCoinsFromBalance;
 };
 
 export const CoinSettings = mongoose.model("CoinSettings", coinSettingsSchema);
