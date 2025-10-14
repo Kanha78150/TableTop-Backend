@@ -312,27 +312,21 @@ export const offerValidationSchemas = {
         Joi.string().pattern(/^BRN-[A-Z0-9]+-\d{5}$/)
       )
       .optional(),
-    foodCategory: Joi.string()
-      .length(24)
-      .hex()
-      .when("applicableFor", {
-        is: "item",
-        then: Joi.required().messages({
-          "any.required":
-            'Food category is required when applicable for is "item"',
-        }),
-        otherwise: Joi.optional(),
+    foodCategory: Joi.when("applicableFor", {
+      is: "item",
+      then: Joi.string().length(24).hex().required().messages({
+        "any.required":
+          'Food category is required when applicable for is "item"',
       }),
-    foodItem: Joi.string()
-      .length(24)
-      .hex()
-      .when("applicableFor", {
-        is: "item",
-        then: Joi.required().messages({
-          "any.required": 'Food item is required when applicable for is "item"',
-        }),
-        otherwise: Joi.optional(),
+      otherwise: Joi.string().length(24).hex().optional(),
+    }),
+    foodItem: Joi.when("applicableFor", {
+      is: "item",
+      then: Joi.string().length(24).hex().required().messages({
+        "any.required": 'Food item is required when applicable for is "item"',
       }),
+      otherwise: Joi.string().length(24).hex().optional(),
+    }),
     validDays: Joi.array()
       .items(Joi.number().integer().min(0).max(6))
       .optional(),
@@ -393,25 +387,25 @@ export const offerValidationSchemas = {
         Joi.string().valid(null)
       )
       .optional(),
-    foodCategory: Joi.alternatives()
-      .try(Joi.string().length(24).hex(), Joi.string().valid(null))
-      .when("applicableFor", {
-        is: "item",
-        then: Joi.string().length(24).hex().required().messages({
-          "any.required":
-            'Food category is required when applicable for is "item"',
-        }),
-        otherwise: Joi.optional(),
+    foodCategory: Joi.when("applicableFor", {
+      is: "item",
+      then: Joi.string().length(24).hex().required().messages({
+        "any.required":
+          'Food category is required when applicable for is "item"',
       }),
-    foodItem: Joi.alternatives()
-      .try(Joi.string().length(24).hex(), Joi.string().valid(null))
-      .when("applicableFor", {
-        is: "item",
-        then: Joi.string().length(24).hex().required().messages({
-          "any.required": 'Food item is required when applicable for is "item"',
-        }),
-        otherwise: Joi.optional(),
+      otherwise: Joi.alternatives()
+        .try(Joi.string().length(24).hex(), Joi.string().valid(null))
+        .optional(),
+    }),
+    foodItem: Joi.when("applicableFor", {
+      is: "item",
+      then: Joi.string().length(24).hex().required().messages({
+        "any.required": 'Food item is required when applicable for is "item"',
       }),
+      otherwise: Joi.alternatives()
+        .try(Joi.string().length(24).hex(), Joi.string().valid(null))
+        .optional(),
+    }),
     validDays: Joi.array()
       .items(Joi.number().integer().min(0).max(6))
       .optional(),
