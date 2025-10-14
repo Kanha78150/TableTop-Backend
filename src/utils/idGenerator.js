@@ -189,6 +189,17 @@ export const generateFoodItemId = (counter = 1) => {
   return `ITEM-${year}-${paddedCounter}`;
 };
 
+/**
+ * Generate Transaction ID
+ * Format: TXN-YYYY-XXXXXXXXXXXX (e.g., TXN-2025-A1B2C3D4E5F6)
+ * @returns {string} Generated transaction ID
+ */
+export const generateTransactionId = () => {
+  const year = new Date().getFullYear();
+  const randomHex = crypto.randomBytes(6).toString("hex").toUpperCase();
+  return `TXN-${year}-${randomHex}`;
+};
+
 export default {
   generateHotelId,
   generateBranchId,
@@ -200,4 +211,5 @@ export default {
   generateBookingId,
   generateCategoryId,
   generateFoodItemId,
+  generateTransactionId,
 };

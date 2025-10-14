@@ -8,7 +8,7 @@ router.get("/health", (req, res) => {
     success: true,
     message: "Payment service is running",
     timestamp: new Date().toISOString(),
-    service: "PhonePe Payment Gateway",
+    service: "Razorpay Payment Gateway",
   });
 });
 

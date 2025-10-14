@@ -1,845 +1,467 @@
+﻿import { razorpayConfig } from "../config/payment.js";
 import crypto from "crypto";
 import axios from "axios";
-import { phonePeConfig, phonePeEndpoints } from "../config/payment.js";
+import Razorpay from "razorpay";
+import { validateWebhookSignature } from "razorpay/dist/utils/razorpay-utils.js";
+
 import { Order } from "../models/Order.model.js";
 import { APIError } from "../utils/APIError.js";
 import { logger } from "../utils/logger.js";
+import { generateTransactionId } from "../utils/idGenerator.js";
 
-/**
- * PhonePe Payment Service
- * Handles all PhonePe payment gateway interactions
- */
 class PaymentService {
   constructor() {
-    this.config = phonePeConfig;
-    this.baseUrl = this.config.hostUrl;
+    this.config = razorpayConfig;
+    this.razorpay = new Razorpay({
+      key_id: this.config.keyId,
+      key_secret: this.config.keySecret,
+    });
   }
 
-  /**
-   * Generate SHA256 hash for PhonePe Create Payment API
-   * @param {string} payload - Base64 encoded payload
-   * @returns {string} SHA256 hash
-   */
-  generateHash(payload) {
-    const hashString =
-      payload + phonePeEndpoints.CREATE_PAYMENT + this.config.saltKey;
-    return (
-      crypto.createHash("sha256").update(hashString).digest("hex") +
-      "###" +
-      this.config.saltIndex
-    );
-  }
-
-  /**
-   * Generate hash for order status API
-   * @param {string} merchantOrderId - Merchant Order ID (our orderId)
-   * @returns {string} SHA256 hash
-   */
-  generateStatusHash(merchantOrderId) {
-    const hashString =
-      `${phonePeEndpoints.ORDER_STATUS}/${merchantOrderId}/status` +
-      this.config.saltKey;
-    return (
-      crypto.createHash("sha256").update(hashString).digest("hex") +
-      "###" +
-      this.config.saltIndex
-    );
-  }
-
-  /**
-   * Generate hash for refund API
-   * @param {string} payload - Base64 encoded payload
-   * @returns {string} SHA256 hash
-   */
-  generateRefundHash(payload) {
-    const hashString = payload + phonePeEndpoints.REFUND + this.config.saltKey;
-    return (
-      crypto.createHash("sha256").update(hashString).digest("hex") +
-      "###" +
-      this.config.saltIndex
-    );
-  }
-
-  /**
-   * Initiate PhonePe payment
-   * @param {Object} paymentData - Payment request data
-   * @returns {Object} Payment initiation response
-   */
-  async initiatePayment(paymentData) {
+  async initiatePayment(orderId, paymentData) {
     try {
-      const {
-        orderId,
-        amount,
-        userId,
-        userPhone,
-        userName = "Customer",
-        userEmail,
-      } = paymentData;
+      logger.info("Initiating Razorpay payment", { orderId });
 
-      // Use orderId as merchantOrderId as per PhonePe v2 API
-      const merchantOrderId = orderId.toString();
+      // Get order details from database
+      const order = await Order.findById(orderId);
+      if (!order) {
+        throw new APIError(404, "Order not found");
+      }
 
-      // Format mobile number (remove +91 or country code if present)
-      const formattedPhone = userPhone.replace(/^\+91/, "").replace(/^91/, "");
+      // Generate unique transaction ID
+      const transactionId = generateTransactionId();
 
-      // Prepare PhonePe payment request payload as per v2 API
-      const payload = {
-        merchantId: this.config.merchantId,
-        merchantOrderId: merchantOrderId,
-        merchantUserId: userId || this.config.merchantUserId,
-        amount: Math.round(amount * 100), // Convert to paise
-        redirectUrl: `${this.config.redirectUrl}?orderId=${orderId}`,
-        redirectMode: "REDIRECT",
-        callbackUrl: this.config.callbackUrl,
-        mobileNumber: formattedPhone,
-        paymentInstrument: {
-          type: "PAY_PAGE",
+      // Convert amount to paise (Razorpay expects amount in smallest currency unit)
+      const amountInPaise = Math.round(order.totalPrice * 100);
+
+      // Create Razorpay order
+      const razorpayOrder = await this.razorpay.orders.create({
+        amount: amountInPaise,
+        currency: "INR",
+        receipt: `order_${orderId}`,
+        notes: {
+          orderId: orderId,
+          transactionId: transactionId,
+          userId: order.user.toString(),
+          hotelId: order.hotel.toString(),
         },
-      };
-
-      // Note: merchantUserId should be consistent, not overwritten with email
-
-      // Encode payload to base64
-      const base64Payload = Buffer.from(JSON.stringify(payload)).toString(
-        "base64"
-      );
-
-      // Generate hash
-      const xVerify = this.generateHash(base64Payload);
-
-      // Prepare API request using official v2 endpoint
-      const requestConfig = {
-        method: "POST",
-        url: `${this.baseUrl}${phonePeEndpoints.CREATE_PAYMENT}`,
-        headers: {
-          "Content-Type": "application/json",
-          "X-VERIFY": xVerify,
-          "X-MERCHANT-ID": this.config.merchantId,
-          accept: "application/json",
-        },
-        data: {
-          request: base64Payload,
-        },
-      };
-
-      logger.info("Initiating PhonePe payment v2", {
-        orderId,
-        merchantOrderId,
-        amount: payload.amount,
-        url: requestConfig.url,
-        payload: payload,
-        base64Payload,
-        xVerify,
-        merchantId: this.config.merchantId,
-        saltKey: this.config.saltKey,
-        saltIndex: this.config.saltIndex,
       });
 
-      // Make API call
-      let response;
-      try {
-        response = await axios(requestConfig);
-      } catch (error) {
-        // Temporary mock response for testing when UAT credentials are not available
-        if (
-          error.response?.status === 400 ||
-          error.response?.status === 401 ||
-          error.response?.data?.code === "KEY_NOT_CONFIGURED"
-        ) {
-          logger.warn(
-            "UAT credentials not properly configured, using mock response for testing"
-          );
+      // Update order with Razorpay order ID and transaction ID
+      await Order.findByIdAndUpdate(orderId, {
+        "payment.transactionId": transactionId,
+        "payment.razorpayOrderId": razorpayOrder.id,
+        "payment.gatewayTransactionId": razorpayOrder.id,
+        "payment.paymentStatus": "pending",
+      });
 
-          // Mock successful PhonePe v2 response for testing
-          const mockResponse = {
-            data: {
-              success: true,
-              code: "PAYMENT_INITIATED",
-              message: "Payment initiated successfully",
-              data: {
-                merchantId: this.config.merchantId,
-                merchantOrderId: merchantOrderId,
-                instrumentResponse: {
-                  type: "PAY_PAGE",
-                  redirectInfo: {
-                    url: `https://mercury-uat.phonepe.com/transact/uat_v2?token=mock_token_${Date.now()}`,
-                    method: "GET",
-                  },
-                },
-              },
-            },
-          };
-          response = mockResponse;
-        } else {
-          throw error;
-        }
-      }
+      logger.info("Razorpay order created successfully", {
+        orderId,
+        razorpayOrderId: razorpayOrder.id,
+      });
 
-      if (response.data.success) {
-        // Update order with payment details using v2 structure
-        await Order.findByIdAndUpdate(orderId, {
-          "payment.merchantOrderId": merchantOrderId,
-          "payment.paymentMethod": "phonepe",
-          "payment.paymentStatus": "pending",
-          "payment.gatewayResponse": response.data,
-        });
-
-        return {
-          success: true,
-          paymentUrl: response.data.data.instrumentResponse.redirectInfo.url,
-          merchantOrderId: merchantOrderId,
-          orderId,
-          message: "Payment initiated successfully",
-        };
-      } else {
-        throw new APIError(400, "Failed to initiate payment", response.data);
-      }
+      return {
+        transactionId: transactionId,
+        orderId: razorpayOrder.id,
+        amount: amountInPaise,
+        currency: "INR",
+        key: this.config.keyId,
+        name: "Hotel Management System",
+        description: `Payment for Order #${orderId}`,
+        order_id: razorpayOrder.id,
+        callback_url: this.config.callbackUrl,
+        prefill: {
+          name: paymentData.customerName || "",
+          email: paymentData.customerEmail || "",
+          contact: paymentData.customerPhone || "",
+        },
+        theme: {
+          color: "#3399cc",
+        },
+      };
     } catch (error) {
       logger.error("Payment initiation failed", {
+        orderId,
         error: error.message,
-        orderId: paymentData.orderId,
-        response: error.response?.data || null,
-        status: error.response?.status || null,
-        headers: error.response?.headers || null,
+        stack: error.stack,
       });
-
       if (error instanceof APIError) throw error;
-      throw new APIError(
-        500,
-        "Payment gateway error",
-        error.response?.data || error.message
-      );
+      throw new APIError(500, "Payment initiation failed");
     }
   }
 
-  /**
-   * Check payment status using v2 API
-   * @param {string} merchantOrderId - Merchant Order ID (our orderId)
-   * @param {string} orderId - Order ID
-   * @returns {Object} Payment status response
-   */
-  async checkPaymentStatus(merchantOrderId, orderId) {
+  async checkPaymentStatus(identifier) {
     try {
-      // Generate hash for status check using v2 API
-      const xVerify = this.generateStatusHash(merchantOrderId);
+      logger.info("Checking payment status", { identifier });
 
-      const requestConfig = {
-        method: "GET",
-        url: `${this.baseUrl}${phonePeEndpoints.ORDER_STATUS}/${merchantOrderId}/status`,
-        headers: {
-          "Content-Type": "application/json",
-          "X-VERIFY": xVerify,
-          "X-MERCHANT-ID": this.config.merchantId,
-          accept: "application/json",
-        },
-      };
+      let order;
+      let payment;
 
-      let response;
-      try {
-        response = await axios(requestConfig);
-      } catch (error) {
-        // Mock response for status check when UAT credentials are not available
-        if (error.response?.status === 400) {
-          logger.warn(
-            "UAT credentials not configured, using mock status response"
+      // Check if identifier is a transaction ID (our format) or Razorpay payment ID
+      if (identifier.startsWith("TXN-")) {
+        // Find order by our transaction ID
+        order = await Order.findOne({
+          "payment.transactionId": identifier,
+        });
+
+        if (!order) {
+          throw new APIError(404, "Transaction not found");
+        }
+
+        // If we have a Razorpay payment ID, fetch payment details
+        if (order.payment.razorpayPaymentId) {
+          payment = await this.razorpay.payments.fetch(
+            order.payment.razorpayPaymentId
           );
+        }
+      } else {
+        // Assume it's a Razorpay payment ID
+        payment = await this.razorpay.payments.fetch(identifier);
 
-          // Mock status response using v2 API structure
-          const mockStatus = merchantOrderId.includes("mock")
-            ? "PENDING"
-            : "COMPLETED";
-          const mockResponse = {
-            data: {
-              success: true,
-              code: "PAYMENT_SUCCESS",
-              message: "Payment status retrieved successfully",
-              data: {
-                merchantId: this.config.merchantId,
-                merchantOrderId: merchantOrderId,
-                transactionId: `PG_TXN_${Date.now()}`,
-                amount: 70108, // Mock amount in paise
-                state: mockStatus,
-                responseCode: "SUCCESS",
-                paymentInstrument: {
-                  type: "PAY_PAGE",
-                },
-              },
-            },
-          };
-          response = mockResponse;
-        } else {
-          throw error;
+        // Find order by Razorpay order ID
+        order = await Order.findOne({
+          "payment.razorpayOrderId": payment.order_id,
+        });
+      }
+      if (!order) {
+        throw new APIError(404, "Order not found for this payment");
+      }
+
+      // Map Razorpay status to our system status (if payment exists)
+      let paymentStatus = order.payment.paymentStatus || "pending";
+
+      if (payment) {
+        switch (payment.status) {
+          case "captured":
+          case "authorized":
+            paymentStatus = "paid";
+            break;
+          case "failed":
+            paymentStatus = "failed";
+            break;
+          case "refunded":
+            paymentStatus = "refunded";
+            break;
+          default:
+            paymentStatus = "pending";
+        }
+
+        // Update order status if payment is successful
+        if (
+          paymentStatus === "paid" &&
+          order.payment.paymentStatus !== "paid"
+        ) {
+          await Order.findByIdAndUpdate(order._id, {
+            "payment.paymentStatus": "paid",
+            "payment.razorpayPaymentId": payment.id,
+            "payment.paidAt": new Date(),
+            status: "confirmed",
+          });
         }
       }
 
-      if (response.data.success) {
-        const paymentData = response.data.data;
-        const status = this.mapPhonePeStatus(paymentData.state);
-
-        // Update order with payment status
-        await Order.findByIdAndUpdate(orderId, {
-          "payment.paymentStatus": status,
-          "payment.gatewayTransactionId": paymentData.transactionId || null,
-          "payment.gatewayResponse": response.data,
-          "payment.paidAt": status === "paid" ? new Date() : null,
-        });
-
-        logger.info("Payment status updated", {
-          orderId,
-          merchantOrderId,
-          status,
-          phonePeStatus: paymentData.state,
-        });
-
-        return {
-          success: true,
-          status,
-          merchantOrderId: merchantOrderId,
-          gatewayTransactionId: paymentData.transactionId,
-          amount: paymentData.amount / 100, // Convert back from paise
-          orderId,
-          paymentMethod: paymentData.paymentInstrument?.type || "phonepe",
-        };
-      } else {
-        throw new APIError(
-          400,
-          "Failed to fetch payment status",
-          response.data
-        );
-      }
-    } catch (error) {
-      logger.error("Payment status check failed", {
-        error: error.message,
-        merchantOrderId,
-        orderId,
-      });
-
-      if (error instanceof APIError) throw error;
-      throw new APIError(500, "Payment status check failed", error.message);
-    }
-  }
-
-  /**
-   * Handle payment callback/webhook
-   * @param {Object} callbackData - Webhook data from PhonePe
-   * @returns {Object} Callback processing result
-   */
-  async handlePaymentCallback(callbackData) {
-    try {
-      const { response: base64Response } = callbackData;
-
-      if (!base64Response) {
-        throw new APIError(400, "Invalid callback data: missing response");
-      }
-
-      // Decode base64 response
-      const decodedResponse = JSON.parse(
-        Buffer.from(base64Response, "base64").toString()
-      );
-      const { merchantTransactionId, transactionId, amount, state } =
-        decodedResponse;
-
-      // Map PhonePe status to our system
-      const paymentStatus = this.mapPhonePeStatus(state);
-
-      // Find order by transaction ID
-      const order = await Order.findOne({
-        "payment.transactionId": merchantTransactionId,
-      });
-
-      if (!order) {
-        throw new APIError(
-          404,
-          "Order not found for transaction",
-          merchantTransactionId
-        );
-      }
-
-      // Update order with final payment status
-      await Order.findByIdAndUpdate(order._id, {
-        "payment.paymentStatus": paymentStatus,
-        "payment.gatewayTransactionId": transactionId,
-        "payment.gatewayResponse": decodedResponse,
-        "payment.paidAt": paymentStatus === "paid" ? new Date() : null,
-      });
-
-      logger.info("Payment callback processed", {
-        orderId: order._id,
-        merchantTransactionId,
-        gatewayTransactionId: transactionId,
+      logger.info("Payment status checked successfully", {
+        identifier,
+        transactionId: order.payment.transactionId,
         status: paymentStatus,
       });
 
       return {
-        success: true,
+        transactionId: order.payment.transactionId,
         orderId: order._id,
+        razorpayOrderId: order.payment.razorpayOrderId,
+        razorpayPaymentId:
+          order.payment.razorpayPaymentId || (payment ? payment.id : null),
         status: paymentStatus,
-        transactionId: merchantTransactionId,
-        amount: amount / 100,
+        amount: payment ? payment.amount / 100 : order.totalPrice, // Convert back to rupees
+        currency: payment ? payment.currency : "INR",
+        method: payment ? payment.method : order.payment.paymentMethod,
+        createdAt: payment
+          ? new Date(payment.created_at * 1000)
+          : order.createdAt,
       };
     } catch (error) {
-      logger.error("Payment callback processing failed", {
+      logger.error("Payment status check failed", {
+        identifier,
+        error: error.message,
+      });
+      if (error instanceof APIError) throw error;
+      throw new APIError(500, "Payment status check failed");
+    }
+  }
+
+  async handlePaymentCallback(callbackData) {
+    try {
+      logger.info("Processing Razorpay payment callback", callbackData);
+
+      // Check if this is a standard Razorpay callback or custom callback
+      const isRazorpayCallback =
+        callbackData.razorpay_payment_id && callbackData.razorpay_order_id;
+      const isCustomCallback =
+        callbackData.orderId && callbackData.transactionId;
+
+      if (isRazorpayCallback) {
+        return await this.handleStandardRazorpayCallback(callbackData);
+      } else if (isCustomCallback) {
+        return await this.handleCustomCallback(callbackData);
+      } else {
+        throw new APIError(400, "Invalid callback parameters");
+      }
+    } catch (error) {
+      logger.error("Payment callback handling failed", {
         error: error.message,
         callbackData,
       });
-
       if (error instanceof APIError) throw error;
-      throw new APIError(500, "Callback processing failed", error.message);
+      throw new APIError(500, "Payment callback handling failed");
     }
   }
 
-  /**
-   * Initiate refund for a payment using v2 API
-   * @param {Object} refundData - Refund request data
-   * @returns {Object} Refund response
-   */
-  async initiateRefund(refundData) {
-    try {
-      const {
-        orderId,
-        merchantOrderId,
-        amount,
-        reason = "Customer request",
-      } = refundData;
+  async handleStandardRazorpayCallback(callbackData) {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
+      callbackData;
 
-      const merchantRefundId = `REFUND_${orderId}_${Date.now()}`;
-
-      const payload = {
-        merchantId: this.config.merchantId,
-        merchantRefundId: merchantRefundId,
-        originalTransactionId: merchantOrderId,
-        amount: Math.round(amount * 100), // Convert to paise
-        callbackUrl: this.config.callbackUrl,
-      };
-
-      const base64Payload = Buffer.from(JSON.stringify(payload)).toString(
-        "base64"
-      );
-      const xVerify = this.generateRefundHash(base64Payload);
-
-      logger.info("Initiating PhonePe refund v2", {
-        orderId,
-        merchantRefundId,
-        originalTransactionId: merchantOrderId,
-        amount: payload.amount,
-        payload: payload,
-        base64Payload,
-        xVerify,
+    // Verify payment signature (skip if already verified via webhook)
+    if (razorpay_signature !== "webhook_verified") {
+      const isSignatureValid = this.verifyPaymentSignature({
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
       });
 
-      const requestConfig = {
-        method: "POST",
-        url: `${this.baseUrl}${phonePeEndpoints.REFUND}`,
-        headers: {
-          "Content-Type": "application/json",
-          "X-VERIFY": xVerify,
-          "X-MERCHANT-ID": this.config.merchantId,
-          accept: "application/json",
-        },
-        data: {
-          request: base64Payload,
-        },
-      };
+      if (!isSignatureValid) {
+        throw new APIError(400, "Invalid payment signature");
+      }
+    }
 
-      let response;
-      try {
-        response = await axios(requestConfig);
-      } catch (error) {
-        // Mock response for refund when UAT credentials are not available
-        if (
-          error.response?.status === 400 ||
-          error.response?.data?.code === "KEY_NOT_CONFIGURED"
-        ) {
-          logger.warn(
-            "UAT credentials not configured for refunds, using mock response for testing"
-          );
+    // Find order by Razorpay order ID
+    const order = await Order.findOne({
+      "payment.razorpayOrderId": razorpay_order_id,
+    });
 
-          // Mock successful refund response for testing using v2 structure
-          const mockRefundResponse = {
-            data: {
-              success: true,
-              code: "REFUND_INITIATED",
-              message: "Refund initiated successfully",
-              data: {
-                merchantId: this.config.merchantId,
-                merchantRefundId: merchantRefundId,
-                transactionId: `REFUND_PG_${Date.now()}`,
-                amount: Math.round(amount * 100),
-                state: "PENDING",
-              },
-            },
-          };
-          response = mockRefundResponse;
-        } else {
-          throw error;
+    if (!order) {
+      throw new APIError(404, "Order not found");
+    }
+
+    // Get payment details from Razorpay
+    const payment = await this.razorpay.payments.fetch(razorpay_payment_id);
+
+    // Update order status
+    await Order.findByIdAndUpdate(order._id, {
+      "payment.paymentStatus": "paid",
+      "payment.razorpayPaymentId": razorpay_payment_id,
+      "payment.paidAt": new Date(),
+      "payment.paymentMethod": "razorpay",
+      status: "confirmed",
+    });
+
+    logger.info("Standard Razorpay callback processed successfully", {
+      orderId: order._id,
+      razorpayPaymentId: razorpay_payment_id,
+    });
+
+    return {
+      transactionId: order.payment.transactionId,
+      orderId: order._id,
+      status: "success",
+      razorpayPaymentId: razorpay_payment_id,
+      amount: payment.amount / 100,
+    };
+  }
+
+  async handleCustomCallback(callbackData) {
+    const { orderId, transactionId } = callbackData;
+
+    logger.info("Processing custom callback", { orderId, transactionId });
+
+    // Find order by order ID or transaction ID
+    let order = null;
+
+    if (orderId) {
+      order = await Order.findById(orderId);
+    }
+
+    if (!order && transactionId) {
+      order = await Order.findOne({
+        "payment.transactionId": transactionId,
+      });
+    }
+
+    if (!order) {
+      throw new APIError(404, "Order not found");
+    }
+
+    // Check current payment status from Razorpay
+    const currentStatus = await this.checkPaymentStatus(
+      transactionId || order.payment.transactionId
+    );
+
+    if (currentStatus.status === "paid") {
+      // Update order if payment is successful
+      await Order.findByIdAndUpdate(order._id, {
+        "payment.paymentStatus": "paid",
+        "payment.paidAt": new Date(),
+        "payment.paymentMethod": "razorpay",
+        status: "confirmed",
+      });
+
+      logger.info(
+        "Custom callback processed successfully - payment confirmed",
+        {
+          orderId: order._id,
+          transactionId: currentStatus.transactionId,
         }
+      );
+
+      return {
+        transactionId: currentStatus.transactionId,
+        orderId: order._id,
+        status: "success",
+        razorpayPaymentId: currentStatus.razorpayPaymentId,
+        amount: currentStatus.amount,
+      };
+    } else {
+      logger.info("Custom callback processed - payment still pending/failed", {
+        orderId: order._id,
+        transactionId: currentStatus.transactionId,
+        paymentStatus: currentStatus.status,
+      });
+
+      return {
+        transactionId: currentStatus.transactionId,
+        orderId: order._id,
+        status: currentStatus.status,
+        amount: currentStatus.amount,
+      };
+    }
+  }
+
+  async initiateRefund(orderId, refundData) {
+    try {
+      logger.info("Initiating Razorpay refund", { orderId, refundData });
+
+      // Get order details
+      const order = await Order.findById(orderId);
+      if (!order) {
+        throw new APIError(404, "Order not found");
       }
 
-      if (response.data.success) {
-        // Update order with refund status
-        await Order.findByIdAndUpdate(orderId, {
-          "payment.paymentStatus": "refund_pending",
-          "payment.refund": {
-            merchantRefundId: merchantRefundId,
-            amount: amount,
-            reason: reason,
-            initiatedAt: new Date(),
-            gatewayResponse: response.data,
+      if (!order.payment.razorpayPaymentId) {
+        throw new APIError(400, "No payment found for this order");
+      }
+
+      if (order.payment.paymentStatus !== "paid") {
+        throw new APIError(400, "Cannot refund unpaid order");
+      }
+
+      // Calculate refund amount (in paise)
+      const refundAmount = refundData.amount
+        ? Math.round(refundData.amount * 100)
+        : Math.round(order.totalPrice * 100);
+
+      // Create refund in Razorpay
+      const refund = await this.razorpay.payments.refund(
+        order.payment.razorpayPaymentId,
+        {
+          amount: refundAmount,
+          notes: {
+            orderId: orderId,
+            reason: refundData.reason || "Refund requested",
+            initiatedBy: refundData.initiatedBy,
           },
-        });
+        }
+      );
 
-        return {
-          success: true,
-          merchantRefundId,
-          orderId,
-          amount,
-          message: "Refund initiated successfully",
-        };
-      } else {
-        throw new APIError(400, "Failed to initiate refund", response.data);
-      }
+      // Update order status
+      await Order.findByIdAndUpdate(orderId, {
+        "payment.paymentStatus": "refund_pending",
+        "payment.refundId": refund.id,
+        "payment.refundAmount": refundAmount / 100,
+        "payment.refundInitiatedAt": new Date(),
+      });
+
+      logger.info("Refund initiated successfully", {
+        orderId,
+        refundId: refund.id,
+        amount: refundAmount / 100,
+      });
+
+      return {
+        refundId: refund.id,
+        orderId: orderId,
+        amount: refundAmount / 100,
+        status: refund.status,
+        estimatedSettlement: "5-7 business days",
+      };
     } catch (error) {
       logger.error("Refund initiation failed", {
+        orderId,
         error: error.message,
-        orderId: refundData.orderId,
       });
-
       if (error instanceof APIError) throw error;
-      throw new APIError(500, "Refund gateway error", error.message);
+      throw new APIError(500, "Refund initiation failed");
     }
   }
 
   /**
-   * Check refund status using v2 API
-   * @param {string} merchantRefundId - Refund ID
-   * @param {string} orderId - Order ID
-   * @returns {Object} Refund status response
+   * Verify Razorpay payment signature
+   * @param {Object} paymentData - Payment verification data
+   * @returns {boolean} - Signature validity
    */
-  async checkRefundStatus(merchantRefundId, orderId) {
+  verifyPaymentSignature(paymentData) {
     try {
-      // Generate hash for refund status check
-      const hashString =
-        `${phonePeEndpoints.REFUND_STATUS}/${merchantRefundId}/status` +
-        this.config.saltKey;
-      const xVerify =
-        crypto.createHash("sha256").update(hashString).digest("hex") +
-        "###" +
-        this.config.saltIndex;
+      const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
+        paymentData;
 
-      const requestConfig = {
-        method: "GET",
-        url: `${this.baseUrl}${phonePeEndpoints.REFUND_STATUS}/${merchantRefundId}/status`,
-        headers: {
-          "Content-Type": "application/json",
-          "X-VERIFY": xVerify,
-          "X-MERCHANT-ID": this.config.merchantId,
-          accept: "application/json",
-        },
-      };
+      const body = razorpay_order_id + "|" + razorpay_payment_id;
+      const expectedSignature = crypto
+        .createHmac("sha256", this.config.keySecret)
+        .update(body.toString())
+        .digest("hex");
 
-      let response;
-      try {
-        response = await axios(requestConfig);
-      } catch (error) {
-        // Mock response for refund status when UAT credentials are not available
-        if (error.response?.status === 400) {
-          logger.warn(
-            "UAT credentials not configured, using mock refund status response"
-          );
-
-          const mockRefundStatus = {
-            data: {
-              success: true,
-              code: "REFUND_SUCCESS",
-              message: "Refund status retrieved successfully",
-              data: {
-                merchantId: this.config.merchantId,
-                merchantRefundId: merchantRefundId,
-                transactionId: `REFUND_PG_${Date.now()}`,
-                amount: 70108,
-                state: "COMPLETED",
-                responseCode: "SUCCESS",
-              },
-            },
-          };
-          response = mockRefundStatus;
-        } else {
-          throw error;
-        }
-      }
-
-      if (response.data.success) {
-        const refundData = response.data.data;
-        const status = this.mapPhonePeRefundStatus(refundData.state);
-
-        logger.info("Refund status updated", {
-          orderId,
-          merchantRefundId,
-          status,
-          phonePeStatus: refundData.state,
-        });
-
-        return {
-          success: true,
-          status,
-          merchantRefundId,
-          amount: refundData.amount / 100,
-          orderId,
-        };
-      } else {
-        throw new APIError(400, "Failed to fetch refund status", response.data);
-      }
+      return expectedSignature === razorpay_signature;
     } catch (error) {
-      logger.error("Refund status check failed", {
-        error: error.message,
-        merchantRefundId,
-        orderId,
-      });
-
-      if (error instanceof APIError) throw error;
-      throw new APIError(500, "Refund status check failed", error.message);
-    }
-  }
-
-  /**
-   * Generate OAuth token for production use (future implementation)
-   * @returns {Object} OAuth token response
-   */
-  async generateOAuthToken() {
-    try {
-      if (!this.config.clientId || !this.config.clientSecret) {
-        throw new APIError(400, "OAuth credentials not configured");
-      }
-
-      const requestConfig = {
-        method: "POST",
-        url: `${this.config.authUrl}${phonePeEndpoints.OAUTH_TOKEN}`,
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json",
-        },
-        data: {
-          grant_type: "client_credentials",
-          client_id: this.config.clientId,
-          client_secret: this.config.clientSecret,
-        },
-      };
-
-      const response = await axios(requestConfig);
-
-      if (response.data.access_token) {
-        logger.info("OAuth token generated successfully");
-        return {
-          success: true,
-          accessToken: response.data.access_token,
-          tokenType: response.data.token_type,
-          expiresIn: response.data.expires_in,
-        };
-      } else {
-        throw new APIError(
-          400,
-          "Failed to generate OAuth token",
-          response.data
-        );
-      }
-    } catch (error) {
-      logger.error("OAuth token generation failed", {
+      logger.error("Signature verification failed", {
         error: error.message,
       });
-
-      if (error instanceof APIError) throw error;
-      throw new APIError(500, "OAuth token generation failed", error.message);
+      return false;
     }
   }
 
   /**
-   * Map PhonePe payment status to our system status
-   * @param {string} phonePeStatus - PhonePe status
-   * @returns {string} Mapped status
+   * Verify Razorpay webhook signature using official Razorpay utility
+   * @param {string} body - Raw webhook body
+   * @param {string} signature - Webhook signature from headers
+   * @returns {boolean} - Signature validity
    */
-  mapPhonePeStatus(phonePeStatus) {
-    const statusMap = {
-      COMPLETED: "paid",
-      FAILED: "failed",
-      PENDING: "pending",
-      EXPIRED: "failed",
-      USER_ABORTED: "cancelled",
-      INTERNAL_SERVER_ERROR: "failed",
-    };
-
-    return statusMap[phonePeStatus] || "pending";
-  }
-
-  /**
-   * Map PhonePe refund status to our system status
-   * @param {string} phonePeRefundStatus - PhonePe refund status
-   * @returns {string} Mapped refund status
-   */
-  mapPhonePeRefundStatus(phonePeRefundStatus) {
-    const refundStatusMap = {
-      COMPLETED: "refunded",
-      FAILED: "refund_failed",
-      PENDING: "refund_pending",
-      EXPIRED: "refund_failed",
-    };
-
-    return refundStatusMap[phonePeRefundStatus] || "refund_pending";
-  }
-
-  /**
-   * Validate payment amount and order
-   * @param {string} orderId - Order ID
-   * @param {number} amount - Payment amount
-   * @returns {Object} Validation result
-   */
-  async validatePayment(orderId, amount) {
+  verifyWebhookSignature(body, signature) {
     try {
-      const order = await Order.findById(orderId);
-
-      if (!order) {
-        throw new APIError(404, "Order not found");
+      if (!this.config.webhookSecret) {
+        logger.warn("Webhook secret not configured, skipping verification");
+        return true; // Allow for now if webhook secret is not set
       }
 
-      if (order.payment.paymentStatus === "paid") {
-        throw new APIError(400, "Order already paid");
-      }
+      // Use official Razorpay utility for webhook validation
+      const isValid = validateWebhookSignature(
+        JSON.stringify(body),
+        signature,
+        this.config.webhookSecret
+      );
 
-      if (order.totalPrice !== amount) {
-        throw new APIError(400, "Amount mismatch", {
-          orderAmount: order.totalPrice,
-          paymentAmount: amount,
-        });
-      }
-
-      return { valid: true, order };
-    } catch (error) {
-      if (error instanceof APIError) throw error;
-      throw new APIError(500, "Payment validation failed", error.message);
-    }
-  }
-
-  /**
-   * Handle successful payment - Complete order and cleanup cart
-   */
-  async handlePaymentSuccess(orderId, transactionId) {
-    try {
-      const { Order } = await import("../models/Order.model.js");
-      const { User } = await import("../models/User.model.js");
-      const { Cart } = await import("../models/Cart.model.js");
-
-      // 1. Update order payment status
-      const order = await Order.findById(orderId);
-      if (!order) {
-        throw new APIError(404, "Order not found");
-      }
-
-      order.payment.paymentStatus = "paid";
-      order.payment.transactionId = transactionId;
-      order.payment.paidAt = new Date();
-      await order.save();
-
-      // 2. Find and remove cart items
-      const cart = await Cart.findOne({
-        checkoutOrderId: orderId,
-        status: "checkout",
+      logger.info("Webhook signature verification", {
+        isValid,
+        hasSignature: !!signature,
+        hasSecret: !!this.config.webhookSecret,
       });
 
-      if (cart) {
-        // Clear cart items
-        cart.items = [];
-        cart.status = "completed";
-        cart.completedAt = new Date();
-        await cart.save();
-      }
-
-      // 3. Deduct coins from user if used
-      if (order.coinsUsed > 0) {
-        await User.findByIdAndUpdate(order.user, {
-          $inc: { coins: -order.coinsUsed },
-        });
-      }
-
-      // 4. Add reward coins to user
-      if (order.rewardCoins > 0) {
-        await User.findByIdAndUpdate(order.user, {
-          $inc: { coins: order.rewardCoins },
-        });
-      }
-
-      logger.info("Payment success processed", {
-        orderId,
-        transactionId,
-        coinsDeducted: order.coinsUsed,
-        rewardCoinsAdded: order.rewardCoins,
-      });
-
-      return {
-        success: true,
-        orderId,
-        message: "Payment processed successfully",
-      };
+      return isValid;
     } catch (error) {
-      logger.error("Payment success handling failed", {
+      logger.error("Webhook signature verification failed", {
         error: error.message,
-        orderId,
-        transactionId,
       });
-      throw error;
-    }
-  }
-
-  /**
-   * Handle failed payment - Restore cart to active state
-   */
-  async handlePaymentFailure(orderId, reason = "Payment failed") {
-    try {
-      const { Order } = await import("../models/Order.model.js");
-      const { Cart } = await import("../models/Cart.model.js");
-
-      // 1. Update order payment status
-      const order = await Order.findById(orderId);
-      if (!order) {
-        throw new APIError(404, "Order not found");
-      }
-
-      order.payment.paymentStatus = "failed";
-      order.status = "cancelled";
-      order.cancellationReason = reason;
-      order.cancelledAt = new Date();
-      await order.save();
-
-      // 2. Restore cart to active state
-      const cart = await Cart.findOne({
-        checkoutOrderId: orderId,
-        status: "checkout",
-      });
-
-      if (cart) {
-        cart.status = "active";
-        cart.checkoutOrderId = null;
-        await cart.save();
-      }
-
-      logger.info("Payment failure processed", {
-        orderId,
-        reason,
-        cartRestored: !!cart,
-      });
-
-      return {
-        success: true,
-        orderId,
-        message: "Payment failure processed, cart restored",
-      };
-    } catch (error) {
-      logger.error("Payment failure handling failed", {
-        error: error.message,
-        orderId,
-        reason,
-      });
-      throw error;
+      return false;
     }
   }
 }
 
-export default new PaymentService();
+export const paymentService = new PaymentService();

@@ -7,7 +7,7 @@ import { Order } from "../../models/Order.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
-import paymentService from "../../services/paymentService.js";
+import { paymentService } from "../../services/paymentService.js";
 import { coinService } from "../../services/rewardService.js";
 
 /**

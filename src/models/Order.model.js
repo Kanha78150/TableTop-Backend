@@ -81,7 +81,7 @@ const orderSchema = new mongoose.Schema(
     payment: {
       paymentMethod: {
         type: String,
-        enum: ["cash", "card", "upi", "wallet", "phonepe"],
+        enum: ["cash", "card", "upi", "wallet", "razorpay"],
         default: "cash",
       },
       paymentStatus: {
@@ -258,7 +258,7 @@ export const validateOrder = (data) => {
     totalPrice: Joi.number().min(0).required(),
     payment: Joi.object({
       paymentMethod: Joi.string()
-        .valid("cash", "card", "upi", "wallet", "phonepe")
+        .valid("cash", "card", "upi", "wallet", "razorpay")
         .optional(),
       paymentStatus: Joi.string()
         .valid(

@@ -33,7 +33,7 @@ router.use("/user", userRoutes);
 // Public QR scan routes (no authentication required)
 router.use("/scan", scanRoutes);
 
-// Payment routes (PhonePe integration)
+// Payment routes (Razorpay integration)
 router.use("/payment", paymentRoutes);
 
 // Health check

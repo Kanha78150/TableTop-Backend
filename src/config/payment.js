@@ -2,48 +2,27 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// PhonePe Payment Gateway Configuration - Official UAT Sandbox
-export const phonePeConfig = {
-  merchantId: process.env.PHONEPE_MERCHANT_ID || "PGTESTPAYUAT",
-  saltKey:
-    process.env.PHONEPE_SALT_KEY || "099eb0cd-02cf-4e2a-8aca-3e6c6aff0399",
-  saltIndex: process.env.PHONEPE_SALT_INDEX || 1,
-  merchantUserId: process.env.PHONEPE_MERCHANT_USER_ID || "MUID123",
-  // Official UAT Sandbox URL as per documentation
+// Razorpay Payment Gateway Configuration
+export const razorpayConfig = {
+  keyId: process.env.RAZORPAY_KEY_ID || "",
+  keySecret: process.env.RAZORPAY_KEY_SECRET || "",
+  webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
+  mode: process.env.NODE_ENV === "production" ? "PRODUCTION" : "TEST",
   hostUrl:
-    process.env.PHONEPE_HOST_URL ||
-    "https://api-preprod.phonepe.com/apis/pg-sandbox",
-  // OAuth endpoint for authentication (will be used for production)
-  authUrl:
-    process.env.PHONEPE_AUTH_URL ||
-    "https://api-preprod.phonepe.com/apis/identity-manager",
-  redirectUrl:
-    process.env.PHONEPE_REDIRECT_URL ||
-    "http://localhost:8000/api/v1/payment/phonepe/callback",
+    process.env.NODE_ENV === "production"
+      ? "https://api.razorpay.com/v1"
+      : "https://api.razorpay.com/v1",
   callbackUrl:
-    process.env.PHONEPE_CALLBACK_URL ||
-    "http://localhost:8000/api/v1/payment/phonepe/webhook",
-  mode: process.env.NODE_ENV === "production" ? "PRODUCTION" : "UAT",
-  // Add client credentials for OAuth (for future production use)
-  clientId: process.env.PHONEPE_CLIENT_ID || "",
-  clientSecret: process.env.PHONEPE_CLIENT_SECRET || "",
-  clientVersion: process.env.PHONEPE_CLIENT_VERSION || "v1",
+    process.env.RAZORPAY_REDIRECT_URL ||
+    "http://localhost:8000/api/v1/payment/razorpay/callback",
+  webhookUrl:
+    process.env.RAZORPAY_WEBHOOK_URL ||
+    "http://localhost:8000/api/v1/payment/razorpay/webhook",
 };
 
-// Payment Gateway URLs - Official PhonePe Documentation
-export const phonePeUrls = {
-  UAT: "https://api-preprod.phonepe.com/apis/pg-sandbox",
-  PRODUCTION: "https://api.phonepe.com/apis/pg",
-  AUTH_PRODUCTION: "https://api.phonepe.com/apis/identity-manager",
-};
-
-// API Endpoints as per official documentation
-export const phonePeEndpoints = {
-  OAUTH_TOKEN: "/v1/oauth/token",
-  CREATE_PAYMENT: "/checkout/v2/pay",
-  ORDER_STATUS: "/checkout/v2/order",
-  REFUND: "/payments/v2/refund",
-  REFUND_STATUS: "/payments/v2/refund",
+// Payment Gateway URLs
+export const paymentGatewayUrls = {
+  RAZORPAY: "https://api.razorpay.com/v1",
 };
 
 // Payment Methods Enum
@@ -52,7 +31,7 @@ export const paymentMethods = {
   CARD: "card",
   UPI: "upi",
   WALLET: "wallet",
-  PHONEPE: "phonepe",
+  RAZORPAY: "razorpay",
 };
 
 // Payment Status Enum
@@ -66,8 +45,8 @@ export const paymentStatus = {
 };
 
 export default {
-  phonePeConfig,
-  phonePeUrls,
+  razorpayConfig,
+  paymentGatewayUrls,
   paymentMethods,
   paymentStatus,
 };

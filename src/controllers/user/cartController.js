@@ -256,7 +256,7 @@ export const transferToCheckout = asyncHandler(async (req, res) => {
     throw new APIError(400, "Payment method is required");
   }
 
-  const validPaymentMethods = ["cash", "card", "upi", "wallet", "phonepe"];
+  const validPaymentMethods = ["cash", "card", "upi", "wallet", "razorpay"];
   if (!validPaymentMethods.includes(paymentMethod)) {
     throw new APIError(
       400,

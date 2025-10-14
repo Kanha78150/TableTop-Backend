@@ -9,7 +9,7 @@ import {
   getAllPayments,
   getPaymentAnalytics,
   debugOrdersData,
-} from "../controllers/payment/paymentController.js";
+} from "../controllers/payment/genericPaymentController.js";
 import {
   createRefundRequest,
   getUserRefundRequests,
@@ -80,13 +80,13 @@ const orderIdValidation = [
 
 const transactionIdValidation = [
   param("transactionId")
-    .matches(/^TXN_[a-fA-F0-9]{24}_\d+$/)
+    .matches(/^TXN-\d{4}-[A-F0-9]{12}$/)
     .withMessage("Invalid transaction ID format"),
 ];
 
-// PhonePe Payment Routes
+// Razorpay Payment Routes
 router.post(
-  "/phonepe/initiate",
+  "/razorpay/initiate",
   rateLimitSensitiveOps,
   authenticateUser,
   paymentInitiateValidation,
@@ -94,15 +94,16 @@ router.post(
   initiatePayment
 );
 
-// Payment callback/redirect (public route)
-router.get("/phonepe/callback", handlePaymentCallback);
+// Payment callback/redirect (public route) - supports both GET and POST
+router.get("/razorpay/callback", handlePaymentCallback);
+router.post("/razorpay/callback", handlePaymentCallback);
 
-// Payment webhook (public route) - PhonePe will call this
-router.post("/phonepe/status", handlePaymentWebhook);
+// Payment webhook (public route) - Razorpay will call this
+router.post("/razorpay/webhook", handlePaymentWebhook);
 
 // Check payment status
 router.get(
-  "/phonepe/status/:transactionId",
+  "/razorpay/status/:transactionId",
   authenticateUser,
   transactionIdValidation,
   validateRequest,
@@ -111,7 +112,7 @@ router.get(
 
 // Initiate refund (Admin/Manager only)
 router.post(
-  "/phonepe/refund",
+  "/razorpay/refund",
   authenticateAdmin,
   refundValidation,
   validateRequest,
@@ -153,7 +154,7 @@ router.get(
       .withMessage("Invalid payment status"),
     query("method")
       .optional()
-      .isIn(["cash", "card", "upi", "wallet", "phonepe"])
+      .isIn(["cash", "card", "upi", "wallet", "razorpay"])
       .withMessage("Invalid payment method"),
     query("startDate")
       .optional()
@@ -238,7 +239,7 @@ router.get("/health", (req, res) => {
     success: true,
     message: "Payment service is running",
     timestamp: new Date().toISOString(),
-    service: "PhonePe Payment Gateway",
+    service: "Razorpay Payment Gateway",
   });
 });
 
