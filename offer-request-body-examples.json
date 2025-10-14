@@ -74,7 +74,7 @@
     },
 
     "4_item_specific_offer": {
-      "description": "Specific food item discount",
+      "description": "Specific food item discount - Now requires foodCategory ID",
       "request_body": {
         "code": "BURGER50",
         "title": "50% Off on Chicken Burger",
@@ -88,6 +88,7 @@
         "expiryDate": "2025-11-15T23:59:59.000Z",
         "hotelId": "HTL-2025-00001",
         "applicableFor": "item",
+        "foodCategory": "67a1b2c3d4e5f6789abc1234",
         "foodItem": "67a1b2c3d4e5f6789abc5678"
       }
     },
@@ -183,7 +184,7 @@
       "branchId: Required if applicableFor is 'branch' (Format: BRN-XXX-NNNNN)",
       "hotel: MongoDB ObjectId or Hotel ID string",
       "branch: MongoDB ObjectId or Branch ID string",
-      "foodCategory: MongoDB ObjectId (required if applicableFor is 'category')",
+      "foodCategory: MongoDB ObjectId (required if applicableFor is 'category' or 'item')",
       "foodItem: MongoDB ObjectId (required if applicableFor is 'item')",
       "validDays: Array of day numbers (0=Sunday, 1=Monday, ..., 6=Saturday)",
       "validTimeRange: Single time range with startTime and endTime (HH:MM format)",
@@ -198,7 +199,8 @@
       "Branch ID must belong to the specified hotel",
       "Time format must be HH:MM (24-hour format)",
       "Valid days: 0-6 (Sunday to Saturday)",
-      "All ObjectIds must be valid 24-character hex strings"
+      "All ObjectIds must be valid 24-character hex strings",
+      "For item-specific offers: foodCategory is required and must match the category of the specified foodItem"
     ]
   }
 }

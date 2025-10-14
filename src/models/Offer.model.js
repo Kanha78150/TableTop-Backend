@@ -241,6 +241,12 @@ offerSchema.pre("save", function (next) {
     );
   }
 
+  if (this.applicableFor === "item" && !this.foodCategory) {
+    return next(
+      new Error("Food category reference is required when applicable for item")
+    );
+  }
+
   next();
 });
 
@@ -306,8 +312,27 @@ export const offerValidationSchemas = {
         Joi.string().pattern(/^BRN-[A-Z0-9]+-\d{5}$/)
       )
       .optional(),
-    foodCategory: Joi.string().length(24).hex().optional(),
-    foodItem: Joi.string().length(24).hex().optional(),
+    foodCategory: Joi.string()
+      .length(24)
+      .hex()
+      .when("applicableFor", {
+        is: "item",
+        then: Joi.required().messages({
+          "any.required":
+            'Food category is required when applicable for is "item"',
+        }),
+        otherwise: Joi.optional(),
+      }),
+    foodItem: Joi.string()
+      .length(24)
+      .hex()
+      .when("applicableFor", {
+        is: "item",
+        then: Joi.required().messages({
+          "any.required": 'Food item is required when applicable for is "item"',
+        }),
+        otherwise: Joi.optional(),
+      }),
     validDays: Joi.array()
       .items(Joi.number().integer().min(0).max(6))
       .optional(),
@@ -370,10 +395,23 @@ export const offerValidationSchemas = {
       .optional(),
     foodCategory: Joi.alternatives()
       .try(Joi.string().length(24).hex(), Joi.string().valid(null))
-      .optional(),
+      .when("applicableFor", {
+        is: "item",
+        then: Joi.string().length(24).hex().required().messages({
+          "any.required":
+            'Food category is required when applicable for is "item"',
+        }),
+        otherwise: Joi.optional(),
+      }),
     foodItem: Joi.alternatives()
       .try(Joi.string().length(24).hex(), Joi.string().valid(null))
-      .optional(),
+      .when("applicableFor", {
+        is: "item",
+        then: Joi.string().length(24).hex().required().messages({
+          "any.required": 'Food item is required when applicable for is "item"',
+        }),
+        otherwise: Joi.optional(),
+      }),
     validDays: Joi.array()
       .items(Joi.number().integer().min(0).max(6))
       .optional(),

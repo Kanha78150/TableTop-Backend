@@ -64,9 +64,34 @@ class OfferService {
       }
 
       if (offerData.foodItem) {
-        const itemExists = await FoodItem.findById(offerData.foodItem);
+        const itemExists = await FoodItem.findById(offerData.foodItem).populate(
+          "category"
+        );
         if (!itemExists) {
           throw new APIError(404, "Food item not found");
+        }
+
+        // For item-specific offers, food category is required and must match the item's category
+        if (offerData.applicableFor === "item") {
+          if (!offerData.foodCategory) {
+            throw new APIError(
+              400,
+              "Food category is required for item-specific offers"
+            );
+          }
+
+          // Validate that the food item belongs to the specified category
+          const itemCategoryId =
+            itemExists.category._id?.toString() ||
+            itemExists.category.toString();
+          const specifiedCategoryId = offerData.foodCategory.toString();
+
+          if (itemCategoryId !== specifiedCategoryId) {
+            throw new APIError(
+              400,
+              "The specified food item does not belong to the specified food category"
+            );
+          }
         }
       }
 
