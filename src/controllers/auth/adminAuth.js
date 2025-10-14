@@ -58,6 +58,7 @@ import {
   validateEmailVerification,
   validateResendOtp,
 } from "../../models/Admin.model.js";
+import { Hotel } from "../../models/Hotel.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
@@ -208,6 +209,13 @@ export const loginAdmin = async (req, res, next) => {
       admin.refreshToken = tokens.refreshToken;
       await admin.save();
 
+      // Fetch hotels created by this admin
+      const createdHotels = await Hotel.find({ createdBy: admin._id })
+        .select(
+          "name hotelId mainLocation contactInfo status rating starRating images"
+        )
+        .lean();
+
       // Set cookies
       setAuthCookies(res, tokens);
 
@@ -225,6 +233,7 @@ export const loginAdmin = async (req, res, next) => {
               assignedBranches: admin.assignedBranches,
               lastLogin: admin.lastLogin,
             },
+            createdHotels: createdHotels || [],
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
           },
