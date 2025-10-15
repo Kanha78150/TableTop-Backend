@@ -111,10 +111,18 @@ class OfferService {
 
       const savedOffer = await offer.save();
 
-      // Populate references for response
+      // Populate references for response with complete details
       await savedOffer.populate([
-        { path: "hotel", select: "name hotelId location" },
-        { path: "branch", select: "name branchId location" },
+        {
+          path: "hotel",
+          select:
+            "name hotelId description mainLocation contactInfo cuisineType isActive createdAt",
+        },
+        {
+          path: "branch",
+          select:
+            "name branchId location contactInfo isActive status capacity createdAt",
+        },
         { path: "foodCategory", select: "name categoryId" },
         { path: "foodItem", select: "name itemId price" },
         { path: "createdBy", select: "name email" },
