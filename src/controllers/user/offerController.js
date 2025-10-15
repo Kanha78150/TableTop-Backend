@@ -147,6 +147,51 @@ class UserOfferController {
       next(error);
     }
   }
+
+  /**
+   * Get smart offer recommendations based on user's cart
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   * @param {Function} next - Next middleware function
+   */
+  async getSmartOfferRecommendations(req, res, next) {
+    try {
+      const { hotelId, branchId } = req.params;
+      const userId = req.user._id;
+
+      if (!hotelId) {
+        return next(new APIError(400, "Hotel ID is required"));
+      }
+
+      // Validate hotel ID format
+      if (!/^HTL-\d{4}-\d{5}$/.test(hotelId)) {
+        return next(new APIError(400, "Invalid hotel ID format"));
+      }
+
+      // Validate branch ID format if provided
+      if (branchId && !/^BRN-[A-Z0-9]+-\d{5}$/.test(branchId)) {
+        return next(new APIError(400, "Invalid branch ID format"));
+      }
+
+      const recommendations = await offerService.getSmartOfferRecommendations(
+        userId,
+        hotelId,
+        branchId
+      );
+
+      return res
+        .status(200)
+        .json(
+          new APIResponse(
+            200,
+            recommendations,
+            "Smart offer recommendations fetched successfully"
+          )
+        );
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new UserOfferController();

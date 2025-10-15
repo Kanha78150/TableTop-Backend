@@ -38,24 +38,12 @@ class CartService {
 
       // Check if hotel is active
       if (!foodItem.hotel?.status || foodItem.hotel.status !== "active") {
-        // Add debug information
-        console.log("Hotel validation failed:", {
-          hotelExists: !!foodItem.hotel,
-          hotelStatus: foodItem.hotel?.status,
-          hotelName: foodItem.hotel?.name,
-        });
         throw new APIError(400, "Hotel is currently inactive");
       }
 
       // Check branch status only if branch is provided and food item has a branch
       if (branchId && branchId !== "" && branchId !== null) {
         if (!foodItem.branch?.status || foodItem.branch.status !== "active") {
-          // Add debug information
-          console.log("Branch validation failed:", {
-            branchExists: !!foodItem.branch,
-            branchStatus: foodItem.branch?.status,
-            branchName: foodItem.branch?.name,
-          });
           throw new APIError(400, "Branch is currently inactive");
         }
       }

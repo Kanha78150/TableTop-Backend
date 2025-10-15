@@ -633,16 +633,12 @@ export const debugCoinSettings = async (req, res, next) => {
 
     // Check raw database query
     const rawSettings = await CoinSettings.findOne({ adminId });
-    console.log("Debug - Admin ID:", adminId);
-    console.log("Debug - Raw settings found:", rawSettings);
 
     // Check using the service method
     const serviceSettings = await coinService.getCoinSettings(adminId);
-    console.log("Debug - Service settings:", serviceSettings);
 
     // Count total settings for this admin
     const count = await CoinSettings.countDocuments({ adminId });
-    console.log("Debug - Settings count for admin:", count);
 
     res.status(200).json(
       new APIResponse(

@@ -160,11 +160,17 @@ class OfferService {
       if (branchId) {
         query.$or = [
           { applicableFor: "hotel" }, // Hotel-level offers
+          { applicableFor: "all" }, // Universal offers
           { applicableFor: "branch", branchId: branchId }, // Branch-specific offers
         ];
       } else {
-        // Only hotel-level offers
-        query.applicableFor = "hotel";
+        // Only hotel-level offers - include universal offers
+        query.$or = [
+          { applicableFor: "hotel" },
+          { applicableFor: "all" }, // Universal offers that apply everywhere
+          { applicableFor: { $exists: false } }, // Handle offers without applicableFor field
+          { applicableFor: null },
+        ];
       }
 
       const offers = await Offer.find(query)
@@ -918,6 +924,260 @@ class OfferService {
         500
       );
     }
+  }
+
+  /**
+   * Get smart offer recommendations based on user's cart
+   * @param {string} userId - User ID
+   * @param {string} hotelId - Hotel ID
+   * @param {string} branchId - Branch ID (optional)
+   * @returns {Promise<Object>} Recommended and non-recommended offers
+   */
+  async getSmartOfferRecommendations(userId, hotelId, branchId = null) {
+    try {
+      // Import cart service for getting user's cart
+      const { default: cartService } = await import("./cartService.js");
+
+      // Get user's current cart total
+      let cartTotal = 0;
+      let cartItems = [];
+      try {
+        // First, get the hotel ObjectId from hotelId string
+        const hotel = await Hotel.findOne({ hotelId: hotelId }).select("_id");
+        if (!hotel) {
+          throw new Error("Hotel not found");
+        }
+
+        // Get branch ObjectId if branchId is provided
+        let branchObjectId = null;
+        if (branchId) {
+          const branch = await Branch.findOne({ branchId: branchId }).select(
+            "_id"
+          );
+          if (branch) {
+            branchObjectId = branch._id;
+          }
+        }
+
+        // Call cart service with ObjectIds
+        const cartResponse = await cartService.getCart(
+          userId,
+          hotel._id,
+          branchObjectId
+        );
+
+        const cart = cartResponse?.data || cartResponse; // Handle both response object and direct data
+
+        if (cart && cart.items && cart.items.length > 0) {
+          cartTotal = cart.items.reduce(
+            (total, item) => total + (item.totalPrice || 0),
+            0
+          );
+          cartItems = cart.items;
+        }
+      } catch (cartError) {
+        // User might not have a cart, continue with 0 total
+      }
+
+      // Get all available offers for the hotel/branch
+      const now = new Date();
+
+      const query = {
+        isActive: true,
+        startDate: { $lte: now },
+        expiryDate: { $gte: now },
+        hotelId: hotelId,
+      };
+
+      // If branchId is provided, get hotel-level, branch-specific, and universal offers
+      if (branchId) {
+        query.$or = [
+          { applicableFor: "all" }, // Universal offers
+          { applicableFor: "hotel" }, // Hotel-level offers
+          { applicableFor: "branch", branchId: branchId }, // Branch-specific offers
+        ];
+      } else {
+        // Get universal and hotel-level offers
+        query.$or = [
+          { applicableFor: "all" }, // Universal offers
+          { applicableFor: "hotel" }, // Hotel-level offers
+        ];
+      }
+
+      const allOffers = await Offer.find(query)
+        .populate("hotel", "name hotelId")
+        .populate("branch", "name branchId")
+        .populate("foodCategory", "name categoryId")
+        .populate("foodItem", "name itemId price")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      // Categorize offers into recommended and non-recommended
+      const recommendedOffers = [];
+      const nonRecommendedOffers = [];
+
+      for (const offer of allOffers) {
+        const offerAnalysis = this.analyzeOfferForUser(
+          offer,
+          cartTotal,
+          cartItems
+        );
+
+        if (offerAnalysis.isRecommended) {
+          recommendedOffers.push({
+            ...offer,
+            recommendation: offerAnalysis,
+          });
+        } else {
+          nonRecommendedOffers.push({
+            ...offer,
+            recommendation: offerAnalysis,
+          });
+        }
+      }
+
+      // Sort recommended offers by potential savings (highest first)
+      recommendedOffers.sort(
+        (a, b) =>
+          (b.recommendation.potentialSavings || 0) -
+          (a.recommendation.potentialSavings || 0)
+      );
+
+      return {
+        userCart: {
+          totalAmount: cartTotal,
+          itemCount: cartItems.length,
+          items: cartItems.map((item) => ({
+            name: item.foodItemName,
+            quantity: item.quantity,
+            price: item.price,
+            totalPrice: item.totalPrice,
+          })),
+        },
+        recommended: {
+          count: recommendedOffers.length,
+          offers: recommendedOffers,
+        },
+        nonRecommended: {
+          count: nonRecommendedOffers.length,
+          offers: nonRecommendedOffers,
+        },
+        metadata: {
+          totalOffersAvailable: allOffers.length,
+          scannedLocation: {
+            hotelId,
+            branchId: branchId || null,
+          },
+        },
+      };
+    } catch (error) {
+      throw new APIError(
+        `Failed to fetch smart offer recommendations: ${error.message}`,
+        500
+      );
+    }
+  }
+
+  /**
+   * Analyze if an offer is recommended for a user based on their cart
+   * @param {Object} offer - The offer to analyze
+   * @param {number} cartTotal - User's current cart total
+   * @param {Array} cartItems - User's cart items
+   * @returns {Object} Analysis result
+   */
+  analyzeOfferForUser(offer, cartTotal, cartItems) {
+    let isRecommended = false;
+    let reason = "";
+    let potentialSavings = 0;
+    let eligibilityStatus = "eligible";
+    let recommendation = "";
+
+    // Check minimum order value eligibility
+    const minOrderValue = offer.minOrderValue || 0;
+    if (cartTotal < minOrderValue) {
+      eligibilityStatus = "not_eligible";
+      reason = `Add ₹${minOrderValue - cartTotal} more to qualify`;
+      recommendation = `Add items worth ₹${
+        minOrderValue - cartTotal
+      } to unlock this offer`;
+    } else {
+      eligibilityStatus = "eligible";
+
+      // Calculate potential savings
+      if (offer.discountType === "percent") {
+        potentialSavings = (cartTotal * offer.discountValue) / 100;
+        if (offer.maxDiscountAmount) {
+          potentialSavings = Math.min(
+            potentialSavings,
+            offer.maxDiscountAmount
+          );
+        }
+      } else if (offer.discountType === "fixed") {
+        potentialSavings = Math.min(offer.discountValue, cartTotal);
+      }
+
+      // Determine if offer is recommended
+      if (cartTotal > 0) {
+        // For users with items in cart
+        if (cartTotal >= minOrderValue) {
+          isRecommended = true;
+          reason = `Save ₹${Math.round(
+            potentialSavings
+          )} on your current order`;
+          recommendation = `Apply this offer to save ₹${Math.round(
+            potentialSavings
+          )} immediately`;
+        }
+      } else {
+        // For users with empty cart
+        if (minOrderValue <= 500) {
+          // Recommend low minimum value offers for empty carts
+          isRecommended = true;
+          reason = "Great for your next order";
+          recommendation = `Add items worth ₹${minOrderValue} to use this offer`;
+        } else {
+          reason = "High minimum order required";
+          recommendation = `This offer requires a minimum order of ₹${minOrderValue}`;
+        }
+      }
+
+      // Check item/category specific offers
+      if (offer.foodCategory || offer.foodItem) {
+        const hasMatchingItems = cartItems.some((item) => {
+          if (
+            offer.foodItem &&
+            item.foodItem === offer.foodItem._id?.toString()
+          ) {
+            return true;
+          }
+          if (
+            offer.foodCategory &&
+            item.foodCategory === offer.foodCategory._id?.toString()
+          ) {
+            return true;
+          }
+          return false;
+        });
+
+        if (!hasMatchingItems && cartTotal > 0) {
+          isRecommended = false;
+          reason = "Not applicable to your current items";
+          recommendation = offer.foodItem
+            ? `Add ${offer.foodItem.name} to use this offer`
+            : `Add items from ${offer.foodCategory?.name} category to use this offer`;
+        }
+      }
+    }
+
+    return {
+      isRecommended,
+      eligibilityStatus,
+      reason,
+      recommendation,
+      potentialSavings: Math.round(potentialSavings * 100) / 100,
+      minOrderValue,
+      shortfall: Math.max(0, minOrderValue - cartTotal),
+    };
   }
 }
 

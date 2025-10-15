@@ -232,4 +232,18 @@ router.get(
 // Validate offer code for a specific hotel/branch
 router.get("/offers/validate/:code", userOfferController.validateOfferCode);
 
+// Get smart offer recommendations based on user's cart (requires authentication)
+router.get(
+  "/offers/recommendations/:hotelId",
+  authenticateUser,
+  userOfferController.getSmartOfferRecommendations
+);
+
+// Get smart offer recommendations for specific branch (requires authentication)
+router.get(
+  "/offers/recommendations/:hotelId/:branchId",
+  authenticateUser,
+  userOfferController.getSmartOfferRecommendations
+);
+
 export default router;
