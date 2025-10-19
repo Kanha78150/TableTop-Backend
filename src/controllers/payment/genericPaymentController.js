@@ -51,12 +51,46 @@ export const initiatePayment = async (req, res) => {
 export const handlePaymentCallback = async (req, res) => {
   try {
     // Handle both GET (redirect) and POST (form submission) callbacks
-    const callbackData = req.method === "GET" ? req.query : req.body;
+    // FIXED: Always check both query and body, prioritize query if it has data
+    let callbackData = {};
 
+    // Check if query has callback data
+    if (req.query && Object.keys(req.query).length > 0) {
+      callbackData = req.query;
+    }
+    // Check if body has callback data (fallback)
+    else if (req.body && Object.keys(req.body).length > 0) {
+      callbackData = req.body;
+    }
+
+    // Enhanced debugging for callback data
     logger.info("Payment callback received", {
       method: req.method,
-      data: callbackData,
+      headers: {
+        "content-type": req.get("content-type"),
+        "user-agent": req.get("user-agent"),
+      },
+      query: req.query,
+      body: req.body,
+      callbackData: callbackData,
+      hasQuery: Object.keys(req.query || {}).length > 0,
+      hasBody: Object.keys(req.body || {}).length > 0,
+      dataSource: callbackData === req.query ? "query" : "body",
     });
+
+    // Check if callback data is empty
+    if (!callbackData || Object.keys(callbackData).length === 0) {
+      logger.warn("Empty callback data received", {
+        method: req.method,
+        query: req.query,
+        body: req.body,
+        rawBody: req.rawBody,
+      });
+
+      const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+      const redirectUrl = `${frontendUrl}/payment/failed?reason=empty_callback`;
+      return res.redirect(redirectUrl);
+    }
 
     const result = await paymentService.handlePaymentCallback(callbackData);
 
@@ -260,15 +294,46 @@ export const getPaymentHistory = async (req, res) => {
  */
 export const getAllPayments = async (req, res) => {
   try {
-    const { page = 1, limit = 10, status, method } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      method,
+      startDate,
+      endDate,
+    } = req.query;
 
-    logger.info("All payments request", { page, limit, status, method });
+    logger.info("All payments request", {
+      page,
+      limit,
+      status,
+      method,
+      startDate,
+      endDate,
+    });
 
-    // TODO: Implement all payments retrieval
-    throw new APIError(501, "All payments retrieval not implemented");
+    const paymentsResponse = await paymentService.getAllPayments({
+      page: parseInt(page),
+      limit: parseInt(limit),
+      status,
+      method,
+      startDate,
+      endDate,
+    });
+
+    return res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          paymentsResponse,
+          "Payments retrieved successfully"
+        )
+      );
   } catch (error) {
     logger.error("All payments retrieval failed", {
       error: error.message,
+      stack: error.stack,
     });
 
     if (error instanceof APIError) {
@@ -290,15 +355,33 @@ export const getAllPayments = async (req, res) => {
  */
 export const getPaymentAnalytics = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy } = req.query;
+    const { startDate, endDate, branchId } = req.query;
 
-    logger.info("Payment analytics request", { startDate, endDate, groupBy });
+    logger.info("Payment analytics request", {
+      startDate,
+      endDate,
+      branchId,
+    });
 
-    // TODO: Implement payment analytics
-    throw new APIError(501, "Payment analytics not implemented");
+    const analyticsResponse = await paymentService.getPaymentAnalytics({
+      startDate,
+      endDate,
+      branchId,
+    });
+
+    return res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          analyticsResponse,
+          "Payment analytics retrieved successfully"
+        )
+      );
   } catch (error) {
     logger.error("Payment analytics retrieval failed", {
       error: error.message,
+      stack: error.stack,
     });
 
     if (error instanceof APIError) {
@@ -342,5 +425,81 @@ export const debugOrdersData = async (req, res) => {
     return res
       .status(500)
       .json(new APIResponse(500, null, "Debug orders failed"));
+  }
+};
+
+/**
+ * @desc    Debug payment callback (Development only)
+ * @route   POST /api/v1/payment/debug/callback
+ * @access  Public - Development only
+ */
+export const debugPaymentCallback = async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === "production") {
+      return res
+        .status(403)
+        .json(
+          new APIResponse(
+            403,
+            null,
+            "Debug endpoints not available in production"
+          )
+        );
+    }
+
+    logger.info("Debug payment callback request", {
+      method: req.method,
+      headers: req.headers,
+      query: req.query,
+      body: req.body,
+      params: req.params,
+    });
+
+    // Test callback with sample data
+    const testCallbackData = {
+      razorpay_order_id: req.body.razorpay_order_id || "order_test123",
+      razorpay_payment_id: req.body.razorpay_payment_id || "pay_test123",
+      razorpay_signature: req.body.razorpay_signature || "test_signature",
+    };
+
+    logger.info("Testing callback with data", testCallbackData);
+
+    const result = await paymentService.handlePaymentCallback(testCallbackData);
+
+    return res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          result,
+          originalRequest: {
+            method: req.method,
+            query: req.query,
+            body: req.body,
+          },
+          testData: testCallbackData,
+        },
+        "Debug callback processed"
+      )
+    );
+  } catch (error) {
+    logger.error("Debug callback failed", {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    return res.status(500).json(
+      new APIResponse(
+        500,
+        {
+          error: error.message,
+          originalRequest: {
+            method: req.method,
+            query: req.query,
+            body: req.body,
+          },
+        },
+        "Debug callback failed"
+      )
+    );
   }
 };

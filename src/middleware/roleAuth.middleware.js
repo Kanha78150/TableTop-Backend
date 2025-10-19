@@ -33,7 +33,17 @@ export const authenticate = async (req, res, next) => {
         .populate("branch", "name branchId location")
         .select("-password -refreshToken");
       userType = "manager";
-    } else if (decoded.role === "staff") {
+    } else if (
+      [
+        "waiter",
+        "kitchen_staff",
+        "cleaning_staff",
+        "cashier",
+        "receptionist",
+        "security",
+      ].includes(decoded.role)
+    ) {
+      // Handle all staff roles (waiter, kitchen_staff, etc.)
       user = await Staff.findById(decoded.id)
         .populate("branch", "name branchId location")
         .populate("manager", "name email")
@@ -129,7 +139,24 @@ export const authenticateAdmin = async (req, res, next) => {
 // Role-based access control for the 3-tier structure
 export const requireRole = (allowedRoles) => {
   return (req, res, next) => {
-    if (!req.userRole || !allowedRoles.includes(req.userRole)) {
+    // Define all staff role types
+    const staffRoles = [
+      "waiter",
+      "kitchen_staff",
+      "cleaning_staff",
+      "cashier",
+      "receptionist",
+      "security",
+    ];
+
+    // Check if "staff" is in allowedRoles and current user has any staff role
+    const hasStaffAccess =
+      allowedRoles.includes("staff") && staffRoles.includes(req.userRole);
+
+    // Check if user's specific role is in allowedRoles
+    const hasRoleAccess = allowedRoles.includes(req.userRole);
+
+    if (!req.userRole || (!hasRoleAccess && !hasStaffAccess)) {
       return next(
         new APIError(403, `Required roles: ${allowedRoles.join(", ")}`)
       );

@@ -1,8 +1,11 @@
 import orderService from "../../services/orderService.js";
+import assignmentService from "../../services/assignmentService.js";
+import timeTracker from "../../services/timeTracker.js";
 import { validateOrder } from "../../models/Order.model.js";
 import { User } from "../../models/User.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import { logger } from "../../utils/logger.js";
 import Joi from "joi";
 
 /**
@@ -55,11 +58,37 @@ export const placeOrder = async (req, res, next) => {
       }
     );
 
-    res
-      .status(201)
-      .json(
-        new APIResponse(201, { order }, "Order placed successfully from cart")
-      );
+    // Automatically assign waiter to the new order
+    let assignmentResult = null;
+    try {
+      assignmentResult = await assignmentService.assignOrder(order);
+      logger.info(`Order ${order._id} assigned successfully`);
+    } catch (assignmentError) {
+      logger.error(`Failed to assign order ${order._id}:`, assignmentError);
+      // Order is placed but assignment failed - it will be handled by timeTracker
+    }
+
+    // Prepare response data
+    const responseData = {
+      order,
+      assignment: assignmentResult
+        ? {
+            waiter: assignmentResult.waiter,
+            assignmentMethod: assignmentResult.assignmentMethod,
+            queuePosition: assignmentResult.queuePosition,
+            estimatedWaitTime: assignmentResult.estimatedWaitTime,
+            assignedAt: assignmentResult.assignedAt,
+          }
+        : null,
+    };
+
+    const message = assignmentResult?.queued
+      ? "Order placed and added to queue - will be assigned when a waiter becomes available"
+      : assignmentResult
+      ? "Order placed and assigned to waiter successfully"
+      : "Order placed successfully - assignment pending";
+
+    res.status(201).json(new APIResponse(201, responseData, message));
   } catch (error) {
     next(error);
   }
@@ -147,9 +176,34 @@ export const cancelOrder = async (req, res, next) => {
 
     const order = await orderService.cancelOrder(orderId, userId, reason);
 
+    // Handle waiter reassignment after cancellation
+    let reassignmentResult = null;
+    try {
+      reassignmentResult = await timeTracker.handleOrderCancellation(orderId);
+      if (reassignmentResult) {
+        logger.info(`Order reassigned after cancellation of ${orderId}`);
+      }
+    } catch (reassignmentError) {
+      logger.error(
+        `Failed to handle reassignment after cancellation of ${orderId}:`,
+        reassignmentError
+      );
+      // Continue with response even if reassignment fails
+    }
+
+    const responseData = {
+      order,
+      reassignment: reassignmentResult
+        ? {
+            newOrderAssigned: reassignmentResult.order._id,
+            waiter: reassignmentResult.waiter?.name,
+          }
+        : null,
+    };
+
     res
       .status(200)
-      .json(new APIResponse(200, { order }, "Order cancelled successfully"));
+      .json(new APIResponse(200, responseData, "Order cancelled successfully"));
   } catch (error) {
     next(error);
   }
@@ -286,29 +340,56 @@ export const getActiveOrders = async (req, res, next) => {
 export const getOrderHistory = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { limit, skip } = req.query;
+    const { limit, skip, debug } = req.query;
 
+    // Debug mode: show all orders with their statuses
+    if (debug === "true") {
+      const allOrders = await orderService.getUserOrders(userId, {
+        limit: 50,
+        skip: 0,
+        sortBy: "createdAt",
+        sortOrder: "desc",
+      });
+
+      const statusSummary = {};
+      allOrders.orders.forEach((order) => {
+        statusSummary[order.status] = (statusSummary[order.status] || 0) + 1;
+      });
+
+      return res.status(200).json(
+        new APIResponse(
+          200,
+          {
+            debug: true,
+            totalOrders: allOrders.orders.length,
+            statusSummary,
+            orders: allOrders.orders.map((order) => ({
+              _id: order._id,
+              status: order.status,
+              createdAt: order.createdAt,
+              totalPrice: order.totalPrice,
+            })),
+          },
+          "Debug: All orders retrieved"
+        )
+      );
+    }
+
+    // Get order history directly from database with proper filtering
     const result = await orderService.getUserOrders(userId, {
+      status: { $in: ["completed", "cancelled", "served"] }, // Filter at database level
       limit: limit || 20,
       skip: skip || 0,
       sortBy: "createdAt",
       sortOrder: "desc",
     });
 
-    // Filter for completed/cancelled orders
-    const historyOrders = result.orders.filter((order) =>
-      ["completed", "cancelled", "served"].includes(order.status)
-    );
-
     res.status(200).json(
       new APIResponse(
         200,
         {
-          orders: historyOrders,
-          pagination: {
-            ...result.pagination,
-            total: historyOrders.length,
-          },
+          orders: result.orders,
+          pagination: result.pagination,
         },
         "Order history retrieved successfully"
       )

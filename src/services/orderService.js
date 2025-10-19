@@ -7,6 +7,7 @@ import { Table } from "../models/Table.model.js";
 import { User } from "../models/User.model.js";
 import { APIError } from "../utils/APIError.js";
 import coinService from "./rewardService.js";
+import assignmentService from "./assignmentService.js";
 
 /**
  * Place order from user's cart
@@ -216,6 +217,28 @@ export const placeOrderFromCart = async (
         select: "name price image foodType preparationTime",
       });
 
+    // 12.5. Automatically assign order to a waiter
+    try {
+      const assignmentResult = await assignmentService.assignOrder(
+        order._id.toString()
+      );
+
+      // If assignment was successful, populate the assigned staff
+      if (assignmentResult.success && assignmentResult.assignment.waiter) {
+        await populatedOrder.populate({
+          path: "staff",
+          select: "name staffId role",
+        });
+      }
+    } catch (assignmentError) {
+      // Log assignment error but don't fail the order creation
+      console.error(
+        `[PLACE-ORDER] Assignment failed for order ${order._id}:`,
+        assignmentError.message
+      );
+      // The order is still valid even if assignment fails - it can be manually assigned later
+    }
+
     // Add coin transaction details to response
     populatedOrder._doc.coinDetails = {
       coinsUsed: coinsToUse,
@@ -255,6 +278,7 @@ export const getUserOrders = async (userId, filters = {}) => {
     const query = { user: userId };
 
     if (status && status !== "all") {
+      // Handle both string and object (like $in operator)
       query.status = status;
     }
 
@@ -493,6 +517,28 @@ export const reorderFromPrevious = async (
         path: "items.foodItem",
         select: "name price image foodType",
       });
+
+    // Automatically assign order to a waiter
+    try {
+      const assignmentResult = await assignmentService.assignOrder(
+        newOrder._id.toString()
+      );
+
+      // If assignment was successful, populate the assigned staff
+      if (assignmentResult.success && assignmentResult.assignment.waiter) {
+        await populatedOrder.populate({
+          path: "staff",
+          select: "name staffId role",
+        });
+      }
+    } catch (assignmentError) {
+      // Log assignment error but don't fail the reorder
+      console.error(
+        `[REORDER] Assignment failed for order ${newOrder._id}:`,
+        assignmentError.message
+      );
+      // The order is still valid even if assignment fails - it can be manually assigned later
+    }
 
     return {
       order: populatedOrder,

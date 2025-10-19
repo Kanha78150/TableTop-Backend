@@ -90,31 +90,31 @@ const staffSchema = new mongoose.Schema(
     // Staff-specific permissions
     permissions: {
       // Order Management
-      takeOrders: { type: Boolean, default: false },
-      updateOrderStatus: { type: Boolean, default: false },
-      viewOrders: { type: Boolean, default: false },
-      processPayments: { type: Boolean, default: false },
+      takeOrders: { type: Boolean, default: true },
+      updateOrderStatus: { type: Boolean, default: true },
+      viewOrders: { type: Boolean, default: true },
+      processPayments: { type: Boolean, default: true },
 
       // Table Management
-      manageTableStatus: { type: Boolean, default: false },
-      viewTableReservations: { type: Boolean, default: false },
+      manageTableStatus: { type: Boolean, default: true },
+      viewTableReservations: { type: Boolean, default: true },
 
       // Menu Access
       viewMenu: { type: Boolean, default: true },
-      suggestMenuItems: { type: Boolean, default: false },
+      suggestMenuItems: { type: Boolean, default: true },
 
       // Customer Service
-      handleComplaints: { type: Boolean, default: false },
-      accessCustomerInfo: { type: Boolean, default: false },
+      handleComplaints: { type: Boolean, default: true },
+      accessCustomerInfo: { type: Boolean, default: true },
 
       // Kitchen Operations
-      viewKitchenOrders: { type: Boolean, default: false },
-      updateKitchenStatus: { type: Boolean, default: false },
-      manageInventory: { type: Boolean, default: false },
+      viewKitchenOrders: { type: Boolean, default: true },
+      updateKitchenStatus: { type: Boolean, default: true },
+      manageInventory: { type: Boolean, default: true },
 
       // Housekeeping
-      manageRoomStatus: { type: Boolean, default: false },
-      viewCleaningSchedule: { type: Boolean, default: false },
+      manageRoomStatus: { type: Boolean, default: true },
+      viewCleaningSchedule: { type: Boolean, default: true },
 
       // Communication
       internalChat: { type: Boolean, default: true },
@@ -193,6 +193,58 @@ const staffSchema = new mongoose.Schema(
         module: String,
         completedAt: Date,
         score: Number,
+      },
+    ],
+
+    // Waiter Assignment System Fields
+    // Active order count for load balancing (calculated dynamically)
+    activeOrdersCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Maximum orders this waiter can handle simultaneously
+    maxOrdersCapacity: {
+      type: Number,
+      default: 5,
+      min: 1,
+      max: 10,
+    },
+
+    // Round-robin assignment tracking
+    lastAssignedAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Assignment statistics for performance tracking
+    assignmentStats: {
+      totalAssignments: { type: Number, default: 0 },
+      completedOrders: { type: Number, default: 0 },
+      averageCompletionTime: { type: Number, default: 0 }, // in minutes
+      customerRating: { type: Number, default: 0, min: 0, max: 5 },
+      lastStatsUpdate: { type: Date, default: Date.now },
+    },
+
+    // Waiter availability preferences
+    preferredAssignmentType: {
+      type: String,
+      enum: ["any", "dine_in", "takeaway", "delivery"],
+      default: "any",
+    },
+
+    // Skills and specializations for smart assignment
+    specializations: [
+      {
+        type: String,
+        enum: [
+          "vip_service",
+          "large_groups",
+          "quick_service",
+          "beverage_expert",
+          "multilingual",
+        ],
       },
     ],
   },
@@ -310,66 +362,107 @@ staffSchema.pre("save", function (next) {
   next();
 });
 
+// Method to update assignment statistics
+staffSchema.methods.updateAssignmentStats = function (orderData) {
+  if (this.role !== "waiter") return;
+
+  const stats = this.assignmentStats;
+
+  // Increment completed orders
+  if (orderData.status === "completed") {
+    stats.completedOrders += 1;
+
+    // Update average completion time
+    if (orderData.completionTime) {
+      const currentAvg = stats.averageCompletionTime || 0;
+      const newAvg =
+        (currentAvg * (stats.completedOrders - 1) + orderData.completionTime) /
+        stats.completedOrders;
+      stats.averageCompletionTime = Math.round(newAvg);
+    }
+
+    // Update customer rating if provided
+    if (orderData.customerRating) {
+      const currentRating = stats.customerRating || 0;
+      const newRating =
+        (currentRating * (stats.completedOrders - 1) +
+          orderData.customerRating) /
+        stats.completedOrders;
+      stats.customerRating = parseFloat(newRating.toFixed(2));
+    }
+  }
+
+  stats.lastStatsUpdate = new Date();
+  this.assignmentStats = stats;
+};
+
+// Method to check if waiter can take more orders
+staffSchema.methods.canTakeMoreOrders = function () {
+  if (this.role !== "waiter" || !this.isAvailable || this.status !== "active") {
+    return false;
+  }
+
+  return this.activeOrdersCount < this.maxOrdersCapacity;
+};
+
+// Method to increment active orders count
+staffSchema.methods.incrementActiveOrders = function () {
+  if (this.role === "waiter") {
+    this.activeOrdersCount = Math.min(
+      this.activeOrdersCount + 1,
+      this.maxOrdersCapacity
+    );
+    this.lastAssignedAt = new Date();
+    this.assignmentStats.totalAssignments += 1;
+  }
+};
+
+// Method to decrement active orders count
+staffSchema.methods.decrementActiveOrders = function () {
+  if (this.role === "waiter") {
+    this.activeOrdersCount = Math.max(this.activeOrdersCount - 1, 0);
+  }
+};
+
 // Method to set default permissions based on role
 staffSchema.methods.setDefaultPermissions = function () {
-  const rolePermissions = {
-    waiter: {
-      takeOrders: true,
-      updateOrderStatus: true,
-      viewOrders: true,
-      manageTableStatus: true,
-      viewTableReservations: true,
-      viewMenu: true,
-      suggestMenuItems: true,
-      handleComplaints: true,
-      accessCustomerInfo: true,
-      internalChat: true,
-      emergencyAlerts: true,
-    },
-    kitchen_staff: {
-      viewOrders: true,
-      viewKitchenOrders: true,
-      updateKitchenStatus: true,
-      manageInventory: true,
-      viewMenu: true,
-      internalChat: true,
-      emergencyAlerts: true,
-    },
-    cleaning_staff: {
-      manageRoomStatus: true,
-      viewCleaningSchedule: true,
-      internalChat: true,
-      emergencyAlerts: true,
-    },
-    cashier: {
-      processPayments: true,
-      viewOrders: true,
-      accessCustomerInfo: true,
-      handleComplaints: true,
-      internalChat: true,
-      emergencyAlerts: true,
-    },
-    receptionist: {
-      viewTableReservations: true,
-      accessCustomerInfo: true,
-      handleComplaints: true,
-      manageTableStatus: true,
-      internalChat: true,
-      emergencyAlerts: true,
-    },
-    security: {
-      emergencyAlerts: true,
-      internalChat: true,
-    },
+  // All permissions set to true for all roles
+  const allPermissions = {
+    // Order Management
+    takeOrders: true,
+    updateOrderStatus: true,
+    viewOrders: true,
+    processPayments: true,
+
+    // Table Management
+    manageTableStatus: true,
+    viewTableReservations: true,
+
+    // Menu Access
+    viewMenu: true,
+    suggestMenuItems: true,
+
+    // Customer Service
+    handleComplaints: true,
+    accessCustomerInfo: true,
+
+    // Kitchen Operations
+    viewKitchenOrders: true,
+    updateKitchenStatus: true,
+    manageInventory: true,
+
+    // Housekeeping
+    manageRoomStatus: true,
+    viewCleaningSchedule: true,
+
+    // Communication
+    internalChat: true,
+    emergencyAlerts: true,
   };
 
-  const defaultPermissions = rolePermissions[this.role] || {};
-
-  // Merge with existing permissions, but don't override explicitly set permissions
-  for (const [key, value] of Object.entries(defaultPermissions)) {
-    if (this.permissions[key] === undefined) {
-      this.permissions[key] = value;
-    }
+  // Set all permissions to true for any role
+  for (const [key, value] of Object.entries(allPermissions)) {
+    this.permissions[key] = value;
   }
 
   // Set department based on role if not set

@@ -60,6 +60,7 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: [
         "pending",
+        "confirmed",
         "preparing",
         "ready",
         "served",
@@ -147,6 +148,53 @@ const orderSchema = new mongoose.Schema(
     preparedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" },
     servedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" },
 
+    // Waiter Assignment System Fields
+    // Assignment tracking
+    assignedAt: { type: Date },
+    assignmentMethod: {
+      type: String,
+      enum: ["round-robin", "load-balancing", "manual", "queue"],
+      default: "round-robin",
+    },
+
+    // Queue management
+    queuePosition: { type: Number },
+    queuedAt: { type: Date },
+    priority: {
+      type: String,
+      enum: ["low", "normal", "high"],
+      default: "normal",
+    },
+    priorityValue: { type: Number, default: 2 }, // For sorting
+    estimatedAssignmentTime: { type: Date },
+
+    // Assignment history for tracking reassignments
+    assignmentHistory: [
+      {
+        waiter: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Staff",
+          required: true,
+        },
+        assignedAt: { type: Date, default: Date.now },
+        method: {
+          type: String,
+          enum: ["round-robin", "load-balancing", "manual", "queue"],
+          required: true,
+        },
+        reason: { type: String }, // manual assignment reason or system reason
+        unassignedAt: { type: Date },
+        unassignReason: { type: String },
+      },
+    ],
+
+    // Performance tracking
+    isTimeout: { type: Boolean, default: false },
+    timeoutDetectedAt: { type: Date },
+    actualServiceTime: { type: Number }, // in minutes from assignment to completion
+    customerRating: { type: Number, min: 1, max: 5 }, // Optional customer feedback
+    serviceNotes: { type: String }, // Internal notes about service quality
+
     // Timestamps for status changes
     statusHistory: [
       {
@@ -172,6 +220,15 @@ orderSchema.index({ createdAt: -1 });
 orderSchema.index({ "items.foodItem": 1 });
 orderSchema.index({ table: 1 });
 
+// Assignment system indexes
+orderSchema.index({ staff: 1 });
+orderSchema.index({ assignedAt: -1 });
+orderSchema.index({ queuePosition: 1 });
+orderSchema.index({ queuedAt: 1 });
+orderSchema.index({ status: 1, hotel: 1, branch: 1 });
+orderSchema.index({ priorityValue: -1, queuePosition: 1 });
+orderSchema.index({ status: 1, staff: 1 }); // For counting active orders per waiter
+
 // Virtual for order duration
 orderSchema.virtual("orderDuration").get(function () {
   if (this.status === "completed" || this.status === "cancelled") {
@@ -187,6 +244,63 @@ orderSchema.virtual("totalItems").get(function () {
   }
   return this.items.reduce((total, item) => total + item.quantity, 0);
 });
+
+// Virtual for current assigned waiter
+orderSchema.virtual("currentWaiter").get(function () {
+  if (this.assignmentHistory && this.assignmentHistory.length > 0) {
+    const lastAssignment =
+      this.assignmentHistory[this.assignmentHistory.length - 1];
+    if (!lastAssignment.unassignedAt) {
+      return lastAssignment.waiter;
+    }
+  }
+  return this.staff;
+});
+
+// Method to calculate actual service time
+orderSchema.methods.calculateServiceTime = function () {
+  if (
+    this.assignedAt &&
+    (this.status === "completed" || this.status === "served")
+  ) {
+    const endTime =
+      this.status === "completed"
+        ? this.updatedAt
+        : this.statusHistory.find((s) => s.status === "served")?.timestamp ||
+          this.updatedAt;
+    return Math.ceil((endTime - this.assignedAt) / (1000 * 60)); // in minutes
+  }
+  return null;
+};
+
+// Method to update assignment history
+orderSchema.methods.addAssignmentHistory = function (
+  waiterId,
+  method,
+  reason = null
+) {
+  // Unassign previous waiter if exists
+  if (this.assignmentHistory.length > 0) {
+    const lastAssignment =
+      this.assignmentHistory[this.assignmentHistory.length - 1];
+    if (!lastAssignment.unassignedAt) {
+      lastAssignment.unassignedAt = new Date();
+      lastAssignment.unassignReason = reason || "reassignment";
+    }
+  }
+
+  // Add new assignment
+  this.assignmentHistory.push({
+    waiter: waiterId,
+    assignedAt: new Date(),
+    method: method,
+    reason: reason,
+  });
+
+  this.assignedAt = new Date();
+  this.assignmentMethod = method;
+  this.staff = waiterId;
+};
 
 // Pre-save middleware to update status history
 orderSchema.pre("save", function (next) {

@@ -5,7 +5,9 @@ import { Branch } from "../models/Branch.model.js";
 import { CoinTransaction } from "../models/CoinTransaction.model.js";
 import { APIError } from "../utils/APIError.js";
 import { APIResponse } from "../utils/APIResponse.js";
+import { logger } from "../utils/logger.js";
 import { coinService } from "./rewardService.js";
+import assignmentService from "./assignmentService.js";
 
 class CartService {
   /**
@@ -689,13 +691,23 @@ class CartService {
       // Normalize branchId
       const normalizedBranchId = branchId && branchId !== "" ? branchId : null;
 
-      // 1. Get user's active cart
-      const cart = await Cart.findOne({
-        user: userId,
-        hotel: hotelId,
-        branch: normalizedBranchId,
-        status: "active",
-      }).populate([
+      // 1. Atomically find and update cart to prevent concurrent checkouts
+      const cart = await Cart.findOneAndUpdate(
+        {
+          user: userId,
+          hotel: hotelId,
+          branch: normalizedBranchId,
+          status: "active", // Only allow checkout if cart is still active
+        },
+        {
+          status: "processing", // Immediately change status to prevent concurrent checkouts
+          $set: { processingStartedAt: new Date() },
+        },
+        {
+          new: true, // Return updated document
+          runValidators: true,
+        }
+      ).populate([
         {
           path: "items.foodItem",
           select:
@@ -712,7 +724,10 @@ class CartService {
       ]);
 
       if (!cart || cart.items.length === 0) {
-        throw new APIError(404, "Active cart not found or empty");
+        throw new APIError(
+          404,
+          "Active cart not found, empty, or already being processed"
+        );
       }
 
       // 2. Validate cart items
@@ -953,6 +968,9 @@ class CartService {
         },
       ]);
 
+      // 12.5. Staff assignment will happen AFTER payment confirmation
+      // No longer assigning staff during checkout - prevents assigning staff to unpaid orders
+
       // 13. Handle cart based on payment method
       if (paymentMethod === "cash") {
         // For cash orders: Complete order immediately, clear cart, deduct coins
@@ -1084,10 +1102,91 @@ class CartService {
           : "Order created successfully. Complete payment to confirm."
       );
     } catch (error) {
+      // Reset cart status if checkout fails
+      try {
+        if (cart && cart._id) {
+          await Cart.findByIdAndUpdate(cart._id, {
+            status: "active",
+            $unset: { processingStartedAt: 1 },
+          });
+        }
+      } catch (resetError) {
+        logger.error(
+          "Failed to reset cart status after checkout error:",
+          resetError
+        );
+      }
+
       if (error instanceof APIError) {
         throw error;
       }
       throw new APIError(500, "Failed to process checkout", [error.message]);
+    }
+  }
+
+  /**
+   * Get cart by checkout order ID
+   * @param {String} orderId - Order ID
+   * @returns {Object} Cart object
+   */
+  async getCartByOrderId(orderId) {
+    try {
+      const cart = await Cart.findOne({
+        checkoutOrderId: orderId,
+        status: "checkout",
+      }).populate([
+        {
+          path: "items.foodItem",
+          select: "name price image category",
+        },
+        {
+          path: "user",
+          select: "name email phone",
+        },
+      ]);
+
+      return cart;
+    } catch (error) {
+      logger.error("Error getting cart by order ID:", error);
+      throw new APIError(500, "Failed to get cart");
+    }
+  }
+
+  /**
+   * Restore cart to active status (used when payment fails)
+   * @param {String} orderId - Order ID
+   * @returns {Object} API Response
+   */
+  async restoreCartAfterPaymentFailure(orderId) {
+    try {
+      const cart = await Cart.findOne({
+        checkoutOrderId: orderId,
+        status: "checkout",
+      });
+
+      if (!cart) {
+        return new APIResponse(404, null, "Cart not found for the order");
+      }
+
+      // Restore cart to active status
+      cart.status = "active";
+      cart.checkoutOrderId = undefined;
+      await cart.save();
+
+      logger.info("Cart restored after payment failure", {
+        cartId: cart._id,
+        orderId: orderId,
+        itemCount: cart.items.length,
+      });
+
+      return new APIResponse(
+        200,
+        { cart },
+        "Cart restored successfully. You can modify your order and try again."
+      );
+    } catch (error) {
+      logger.error("Error restoring cart after payment failure:", error);
+      throw new APIError(500, "Failed to restore cart");
     }
   }
 }

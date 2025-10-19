@@ -9,6 +9,7 @@ import {
   getAllPayments,
   getPaymentAnalytics,
   debugOrdersData,
+  debugPaymentCallback,
 } from "../controllers/payment/genericPaymentController.js";
 import {
   createRefundRequest,
@@ -94,9 +95,26 @@ router.post(
   initiatePayment
 );
 
+// Request logging middleware for callback debugging
+const logCallbackRequest = (req, res, next) => {
+  console.log("=== PAYMENT CALLBACK DEBUG ===");
+  console.log("Method:", req.method);
+  console.log("URL:", req.url);
+  console.log("Headers:", JSON.stringify(req.headers, null, 2));
+  console.log("Query:", JSON.stringify(req.query, null, 2));
+  console.log("Body:", JSON.stringify(req.body, null, 2));
+  console.log("Content-Type:", req.get("content-type"));
+  console.log(
+    "Raw Body Length:",
+    req.rawBody ? req.rawBody.length : "No raw body"
+  );
+  console.log("===============================");
+  next();
+};
+
 // Payment callback/redirect (public route) - supports both GET and POST
-router.get("/razorpay/callback", handlePaymentCallback);
-router.post("/razorpay/callback", handlePaymentCallback);
+router.get("/razorpay/callback", logCallbackRequest, handlePaymentCallback);
+router.post("/razorpay/callback", logCallbackRequest, handlePaymentCallback);
 
 // Payment webhook (public route) - Razorpay will call this
 router.post("/razorpay/webhook", handlePaymentWebhook);
@@ -232,6 +250,9 @@ router.put(
 
 // Debug orders data (temporary)
 router.get("/debug/orders", authenticateAdmin, debugOrdersData);
+
+// Debug payment callback (temporary)
+router.post("/debug/callback", debugPaymentCallback);
 
 // Health check route for payment service
 router.get("/health", (req, res) => {

@@ -99,8 +99,20 @@ const cartSchema = new mongoose.Schema(
     // Status for checkout process
     status: {
       type: String,
-      enum: ["active", "checkout", "abandoned", "converted", "completed"],
+      enum: [
+        "active",
+        "processing",
+        "checkout",
+        "abandoned",
+        "converted",
+        "completed",
+      ],
       default: "active",
+    },
+    // Processing timestamp to track checkout start
+    processingStartedAt: {
+      type: Date,
+      default: null,
     },
     // Link to order created during checkout
     checkoutOrderId: {
