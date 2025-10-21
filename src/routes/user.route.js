@@ -27,6 +27,7 @@ import {
   placeOrder,
   getMyOrders,
   getOrderDetails,
+  getOrderPaymentInfo,
   cancelOrder,
   reorder,
   getOrderStatus,
@@ -154,6 +155,13 @@ router.get("/orders/history", authenticateUser, getOrderHistory);
 
 // Get table order history
 router.get("/orders/table-history", authenticateUser, getTableOrderHistory);
+
+// Get order payment information (for payment page) - MUST be before :orderId route
+router.get(
+  "/orders/:orderId/payment-info",
+  authenticateUser,
+  getOrderPaymentInfo
+);
 
 // Get specific order details
 router.get("/orders/:orderId", authenticateUser, getOrderDetails);

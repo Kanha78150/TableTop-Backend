@@ -757,7 +757,7 @@ Get statistics about order assignments in the system.
 
 **Endpoint:** `GET /assignment/stats`
 
-**Access:** Staff, Manager, Admin
+**Access:** Staff-not show, Manager, Admin
 
 **Query Parameters:**
 
@@ -922,7 +922,7 @@ Get details of orders currently in the assignment queue.
 
 **Endpoint:** `GET /assignment/queue`
 
-**Access:** Staff, Manager, Admin
+**Access:** Staff-not show, Manager, Admin
 
 **Query Parameters:**
 
@@ -1030,7 +1030,7 @@ Get list of available waiters who can accept new orders.
 
 **Endpoint:** `GET /assignment/waiters/available`
 
-**Access:** Staff, Manager, Admin
+**Access:** Staff-not show, Manager, Admin
 
 **Query Parameters:**
 
@@ -1196,7 +1196,7 @@ Authorization: Bearer <token>
 Reset the round-robin tracking (useful for testing or daily resets).
 
 **Endpoint:** `POST /assignment/system/reset-round-robin`
-
+Everyday at 5:00-6:00 AM reset automatically.
 **Access:** Manager, Admin
 
 **Request Body (optional):**

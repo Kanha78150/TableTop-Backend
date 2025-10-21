@@ -33,7 +33,7 @@ export const addToCart = asyncHandler(async (req, res) => {
 
 /**
  * @desc    Get user's cart
- * @route   GET /api/user/cart/:hotelId/:branchId
+ * @route   GET /api/user/cart/:hotelId/:branchId?includeCheckout=true
  * @access  Private (User)
  */
 export const getCart = asyncHandler(async (req, res) => {
@@ -43,6 +43,7 @@ export const getCart = asyncHandler(async (req, res) => {
   }
 
   const { hotelId, branchId } = req.params;
+  const { includeCheckout } = req.query;
   const userId = req.user._id;
 
   if (!hotelId) {
@@ -50,7 +51,16 @@ export const getCart = asyncHandler(async (req, res) => {
   }
 
   // branchId is optional - can be null/undefined for hotels without branches
-  const result = await cartService.getCart(userId, hotelId, branchId || null);
+  const options = {
+    includeCheckout: includeCheckout === "true", // Convert string to boolean
+  };
+
+  const result = await cartService.getCart(
+    userId,
+    hotelId,
+    branchId || null,
+    options
+  );
 
   res.status(result.statusCode).json(result);
 });

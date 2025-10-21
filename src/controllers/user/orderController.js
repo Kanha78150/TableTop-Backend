@@ -154,6 +154,111 @@ export const getOrderDetails = async (req, res, next) => {
 };
 
 /**
+ * Get order payment information (for payment page)
+ * GET /api/v1/user/orders/:orderId/payment-info
+ */
+export const getOrderPaymentInfo = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { orderId } = req.params;
+
+    // Validate order ID
+    if (!orderId || !orderId.match(/^[0-9a-fA-F]{24}$/)) {
+      return next(new APIError(400, "Invalid order ID"));
+    }
+
+    const { Order } = await import("../../models/Order.model.js");
+    const { Cart } = await import("../../models/Cart.model.js");
+
+    // Find order and verify ownership
+    const order = await Order.findOne({
+      _id: orderId,
+      user: userId,
+    })
+      .populate("items.foodItem", "name price image category foodType")
+      .populate("table", "tableNumber seatingCapacity")
+      .populate("hotel", "name")
+      .populate("branch", "name address")
+      .select(
+        "orderId items totalPrice subtotal taxes serviceCharge offerDiscount coinDiscount coinsUsed payment createdAt status"
+      );
+
+    if (!order) {
+      return next(new APIError(404, "Order not found or access denied"));
+    }
+
+    // Only allow access to pending/unpaid orders
+    if (order.payment.paymentStatus !== "pending") {
+      return next(
+        new APIError(
+          400,
+          `This order has already been ${order.payment.paymentStatus}. Payment status: ${order.payment.paymentStatus}`
+        )
+      );
+    }
+
+    // Check if order is not too old (30 minutes timeout)
+    const orderAge = Date.now() - new Date(order.createdAt).getTime();
+    const TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
+    if (orderAge > TIMEOUT) {
+      return next(
+        new APIError(
+          410,
+          "Order has expired. Please create a new order from your cart."
+        )
+      );
+    }
+
+    // Get cart status for debugging
+    const cart = await Cart.findOne({
+      user: userId,
+      checkoutOrderId: orderId,
+    }).select("status items");
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          orderId: order._id,
+          orderNumber: order.orderId,
+          items: order.items,
+          pricing: {
+            subtotal: order.subtotal,
+            taxes: order.taxes,
+            serviceCharge: order.serviceCharge,
+            offerDiscount: order.offerDiscount,
+            coinDiscount: order.coinDiscount,
+            totalPrice: order.totalPrice,
+          },
+          coinsUsed: order.coinsUsed,
+          payment: {
+            paymentStatus: order.payment.paymentStatus,
+            paymentMethod: order.payment.paymentMethod,
+            razorpay_order_id: order.payment.razorpay_order_id,
+          },
+          table: order.table,
+          hotel: order.hotel,
+          branch: order.branch,
+          status: order.status,
+          cartStatus: cart?.status || "unknown",
+          cartItemCount: cart?.items?.length || 0,
+          canModify: false,
+          expiresIn: Math.max(0, TIMEOUT - orderAge),
+          expiresAt: new Date(
+            new Date(order.createdAt).getTime() + TIMEOUT
+          ).toISOString(),
+        },
+        "Order payment information retrieved successfully"
+      )
+    );
+  } catch (error) {
+    logger.error("Error getting order payment info:", error);
+    next(error);
+  }
+};
+
+/**
  * Cancel order
  * PUT /api/v1/user/orders/:orderId/cancel
  */
@@ -300,31 +405,27 @@ export const getOrderStatus = async (req, res, next) => {
 };
 
 /**
- * Get active orders (pending, preparing, ready)
+ * Get active orders (pending, confirmed, preparing, ready)
  * GET /api/v1/user/orders/active
  */
 export const getActiveOrders = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
+    // Pass $in query to get orders with multiple statuses
     const result = await orderService.getUserOrders(userId, {
-      status: "active", // This will be handled in service to include pending, preparing, ready
+      status: { $in: ["pending", "confirmed", "preparing", "ready"] },
       limit: 50,
       sortBy: "createdAt",
       sortOrder: "desc",
     });
-
-    // Filter for truly active orders
-    const activeOrders = result.orders.filter((order) =>
-      ["pending", "preparing", "ready"].includes(order.status)
-    );
 
     res
       .status(200)
       .json(
         new APIResponse(
           200,
-          { orders: activeOrders, count: activeOrders.length },
+          { orders: result.orders, count: result.orders.length },
           "Active orders retrieved successfully"
         )
       );

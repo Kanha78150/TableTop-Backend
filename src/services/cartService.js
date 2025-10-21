@@ -144,18 +144,33 @@ class CartService {
 
   /**
    * Get user's cart with all items
+   * @param {String} userId - User ID
+   * @param {String} hotelId - Hotel ID
+   * @param {String} branchId - Branch ID
+   * @param {Object} options - Additional options
+   * @param {Boolean} options.includeCheckout - Include carts in checkout status (default: false)
    */
-  async getCart(userId, hotelId, branchId) {
+  async getCart(userId, hotelId, branchId, options = {}) {
     try {
       // Normalize branchId - convert empty string or null to null
       const normalizedBranchId = branchId && branchId !== "" ? branchId : null;
 
-      const cart = await Cart.findOne({
+      // Build query - allow fetching checkout carts if requested
+      const query = {
         user: userId,
         hotel: hotelId,
         branch: normalizedBranchId,
-        status: "active",
-      }).populate([
+      };
+
+      // Only filter by status if not including checkout carts
+      if (!options.includeCheckout) {
+        query.status = "active";
+      } else {
+        // Include both active and checkout carts
+        query.status = { $in: ["active", "checkout"] };
+      }
+
+      const cart = await Cart.findOne(query).populate([
         {
           path: "items.foodItem",
           select:
@@ -186,12 +201,25 @@ class CartService {
             branch: null,
             isValidated: true,
             validationErrors: [],
+            status: "empty",
           },
           "Cart is empty"
         );
       }
 
-      return new APIResponse(200, cart, "Cart retrieved successfully");
+      // Add additional info for checkout carts
+      const responseData = {
+        ...cart.toObject(),
+        isLocked: cart.status === "checkout",
+        canModify: cart.status === "active",
+      };
+
+      const message =
+        cart.status === "checkout"
+          ? "Cart is in checkout. Complete payment or cancel to modify."
+          : "Cart retrieved successfully";
+
+      return new APIResponse(200, responseData, message);
     } catch (error) {
       throw new APIError(500, "Failed to retrieve cart", [error.message]);
     }
