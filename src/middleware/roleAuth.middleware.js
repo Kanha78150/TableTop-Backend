@@ -23,7 +23,7 @@ export const authenticate = async (req, res, next) => {
     let userType = null;
 
     // Determine user type from token and fetch from appropriate model
-    if (decoded.role === "super_admin") {
+    if (decoded.role === "admin" || decoded.role === "super_admin") {
       user = await Admin.findById(decoded.id)
         .populate("assignedBranches", "name branchId location")
         .select("-password -refreshToken -passwordResetToken -twoFactorSecret");

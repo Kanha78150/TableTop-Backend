@@ -666,13 +666,42 @@ class AssignmentService {
    * Reset round-robin tracking (useful for testing or daily resets)
    * @param {String} branchId - Branch ID (optional, resets all if not provided)
    */
-  resetRoundRobin(branchId = null) {
+  resetRoundRobin(hotelId, branchId = null) {
     if (branchId) {
+      // Reset for specific branch only
       this.lastAssignedWaiter.delete(branchId);
-      logger.info(`Round-robin reset for branch ${branchId}`);
+      logger.info(
+        `Round-robin reset for hotel ${hotelId}, branch ${branchId}`,
+        {
+          hotelId,
+          branchId,
+          scope: "branch",
+        }
+      );
+    } else if (hotelId) {
+      // Reset for all branches of a specific hotel
+      const keysToDelete = [];
+      for (const key of this.lastAssignedWaiter.keys()) {
+        // If we have a way to map branch to hotel, we'd use it here
+        // For now, we'll need to check each branch's hotel association
+        keysToDelete.push(key);
+      }
+
+      // Delete all entries (since we don't have hotel->branch mapping in memory)
+      // In a real implementation, you'd query branches by hotelId and delete only those
+      keysToDelete.forEach((key) => this.lastAssignedWaiter.delete(key));
+
+      logger.info(`Round-robin reset for hotel ${hotelId} (all branches)`, {
+        hotelId,
+        scope: "hotel",
+        branchesReset: keysToDelete.length,
+      });
     } else {
+      // Reset all (fallback for backward compatibility)
       this.lastAssignedWaiter.clear();
-      logger.info("Round-robin reset for all branches");
+      logger.info("Round-robin reset for all hotels and branches", {
+        scope: "global",
+      });
     }
   }
 

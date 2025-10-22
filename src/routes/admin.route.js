@@ -699,4 +699,48 @@ router.post(
   reverseCoinTransaction
 );
 
+// ===== SCHEDULED JOBS MANAGEMENT =====
+import {
+  getJobsStatus,
+  scheduleOneTimeReset,
+  stopJob,
+  startJob,
+  stopAllJobs,
+} from "../controllers/scheduledJobsController.js";
+
+// Get status of all scheduled jobs
+router.get(
+  "/scheduled-jobs/status",
+  rbac({ permissions: ["manageSystem"] }),
+  getJobsStatus
+);
+
+// Schedule a one-time round-robin reset
+router.post(
+  "/scheduled-jobs/reset-round-robin",
+  rbac({ permissions: ["manageSystem"] }),
+  scheduleOneTimeReset
+);
+
+// Stop a scheduled job
+router.post(
+  "/scheduled-jobs/:jobName/stop",
+  rbac({ permissions: ["manageSystem"] }),
+  stopJob
+);
+
+// Start a scheduled job
+router.post(
+  "/scheduled-jobs/:jobName/start",
+  rbac({ permissions: ["manageSystem"] }),
+  startJob
+);
+
+// Stop all scheduled jobs
+router.post(
+  "/scheduled-jobs/stop-all",
+  rbac({ permissions: ["manageSystem"] }),
+  stopAllJobs
+);
+
 export default router;

@@ -31,10 +31,10 @@ router.post(
  * Statistics and Monitoring Routes
  */
 
-// Get assignment statistics
+// Get assignment statistics (Manager/Admin only)
 router.get(
   "/stats",
-  requireRole(["branch_manager", "admin", "staff"]),
+  requireRole(["branch_manager", "admin"]),
   assignmentController.getAssignmentStats
 );
 
@@ -63,10 +63,10 @@ router.post(
  * Queue Management Routes
  */
 
-// Get queue details
+// Get queue details (Manager/Admin only)
 router.get(
   "/queue",
-  requireRole(["branch_manager", "admin", "staff"]),
+  requireRole(["branch_manager", "admin"]),
   assignmentController.getQueueDetails
 );
 
@@ -81,10 +81,10 @@ router.put(
  * Waiter Management Routes
  */
 
-// Get available waiters
+// Get available waiters (Manager/Admin only)
 router.get(
   "/waiters/available",
-  requireRole(["branch_manager", "admin", "staff"]),
+  requireRole(["branch_manager", "admin"]),
   assignmentController.getAvailableWaiters
 );
 

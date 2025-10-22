@@ -96,7 +96,7 @@ export const getAssignmentStats = async (req, res, next) => {
 /**
  * Get queue details and statistics
  * GET /api/v1/assignment/queue
- * @access Manager/Admin/Staff
+ * @access Manager/Admin
  */
 export const getQueueDetails = async (req, res, next) => {
   try {
@@ -166,7 +166,7 @@ export const updateQueuePriority = async (req, res, next) => {
 /**
  * Get available waiters for assignment
  * GET /api/v1/assignment/waiters/available
- * @access Manager/Admin/Staff
+ * @access Manager/Admin
  */
 export const getAvailableWaiters = async (req, res, next) => {
   try {
@@ -378,20 +378,30 @@ export const forceMonitoring = async (req, res, next) => {
  */
 export const resetRoundRobin = async (req, res, next) => {
   try {
-    const { branchId } = req.body;
+    const { hotelId, branchId } = req.body;
 
-    assignmentService.resetRoundRobin(branchId);
+    // Validate request body
+    const { error } = validateRoundRobinReset(req.body);
+    if (error) {
+      return next(
+        new APIError(400, "Invalid request parameters", error.details)
+      );
+    }
 
-    logger.info(
-      `Round-robin reset for branch ${branchId || "all"} by ${req.user.name}`
-    );
+    // Reset round-robin with hotel and branch context
+    assignmentService.resetRoundRobin(hotelId, branchId);
+
+    const scope = branchId
+      ? `hotel ${hotelId}, branch ${branchId}`
+      : `hotel ${hotelId} (all branches)`;
+    logger.info(`Round-robin reset for ${scope} by ${req.user.name}`);
 
     res
       .status(200)
       .json(
         new APIResponse(
           200,
-          { branchId, resetAt: new Date() },
+          { hotelId, branchId, resetAt: new Date(), scope },
           "Round-robin tracking reset successfully"
         )
       );
@@ -548,6 +558,12 @@ const validateStatsQuery = (data) => {
       "string.length": "Branch ID must be 24 characters",
       "string.hex": "Branch ID must be valid",
     }),
+    startDate: Joi.string().optional().messages({
+      "string.base": "Start date must be a string",
+    }),
+    endDate: Joi.string().optional().messages({
+      "string.base": "End date must be a string",
+    }),
   });
   return schema.validate(data);
 };
@@ -585,6 +601,21 @@ const validateAvailabilityUpdate = (data) => {
       .valid("active", "inactive", "on_break", "on_leave")
       .optional(),
     maxOrdersCapacity: Joi.number().integer().min(1).max(10).optional(),
+  });
+  return schema.validate(data);
+};
+
+const validateRoundRobinReset = (data) => {
+  const schema = Joi.object({
+    hotelId: Joi.string().length(24).hex().required().messages({
+      "string.length": "Hotel ID must be 24 characters",
+      "string.hex": "Hotel ID must be valid",
+      "any.required": "Hotel ID is required",
+    }),
+    branchId: Joi.string().length(24).hex().optional().messages({
+      "string.length": "Branch ID must be 24 characters",
+      "string.hex": "Branch ID must be valid",
+    }),
   });
   return schema.validate(data);
 };

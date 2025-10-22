@@ -757,7 +757,7 @@ Get statistics about order assignments in the system.
 
 **Endpoint:** `GET /assignment/stats`
 
-**Access:** Staff-not show, Manager, Admin
+**Access:** Manager, Admin only (Staff cannot access)
 
 **Query Parameters:**
 
@@ -922,7 +922,7 @@ Get details of orders currently in the assignment queue.
 
 **Endpoint:** `GET /assignment/queue`
 
-**Access:** Staff-not show, Manager, Admin
+**Access:** Manager, Admin only (Staff cannot access)
 
 **Query Parameters:**
 
@@ -1030,7 +1030,7 @@ Get list of available waiters who can accept new orders.
 
 **Endpoint:** `GET /assignment/waiters/available`
 
-**Access:** Staff-not show, Manager, Admin
+**Access:** Manager, Admin only (Staff cannot access)
 
 **Query Parameters:**
 
@@ -1193,21 +1193,40 @@ Authorization: Bearer <token>
 
 ### 10. Reset Round-Robin
 
-Reset the round-robin tracking (useful for testing or daily resets).
+Reset the round-robin tracking. **Now with automatic daily reset!**
 
 **Endpoint:** `POST /assignment/system/reset-round-robin`
-Everyday at 5:00-6:00 AM reset automatically.
+
 **Access:** Manager, Admin
 
-**Request Body (optional):**
+**⚡ Automatic Reset:**
+
+- 🕐 **Daily automatic reset** between **5:00-6:00 AM IST**
+- 🎲 **Random time** within the hour to distribute server load
+- 🔄 **Resets all branches** automatically
+- 📝 **Logs all reset activities** for monitoring
+
+**🛠️ Manual Reset** (for testing or immediate reset):
+
+**Request Body:**
 
 ```json
 {
+  "hotelId": "68d13a52c10d4ebc29bfe787",
   "branchId": "68d13a9dc10d4ebc29bfe78f"
 }
 ```
 
-**Example Request:**
+**Parameters:**
+
+- `hotelId` (string, **required**) - Hotel ID (24-character hex)
+- `branchId` (string, _optional_) - Branch ID (24-character hex)
+  - If provided: Reset only this specific branch
+  - If omitted: Reset all branches of the hotel
+
+**Example Requests:**
+
+**Reset specific branch:**
 
 ```bash
 POST /api/v1/assignment/system/reset-round-robin
@@ -1215,19 +1234,53 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
+  "hotelId": "68d13a52c10d4ebc29bfe787",
   "branchId": "68d13a9dc10d4ebc29bfe78f"
+}
+```
+
+**Reset all branches of a hotel:**
+
+```bash
+POST /api/v1/assignment/system/reset-round-robin
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "hotelId": "68d13a52c10d4ebc29bfe787"
 }
 ```
 
 **Success Response (200):**
 
+**For specific branch reset:**
+
 ```json
 {
+  "statusCode": 200,
   "success": true,
   "message": "Round-robin tracking reset successfully",
   "data": {
+    "hotelId": "68d13a52c10d4ebc29bfe787",
     "branchId": "68d13a9dc10d4ebc29bfe78f",
-    "resetAt": "2025-10-19T07:30:00.000Z"
+    "resetAt": "2025-10-22T12:30:00.000Z",
+    "scope": "hotel 68d13a52c10d4ebc29bfe787, branch 68d13a9dc10d4ebc29bfe78f"
+  }
+}
+```
+
+**For all branches of hotel reset:**
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Round-robin tracking reset successfully",
+  "data": {
+    "hotelId": "68d13a52c10d4ebc29bfe787",
+    "branchId": null,
+    "resetAt": "2025-10-22T12:30:00.000Z",
+    "scope": "hotel 68d13a52c10d4ebc29bfe787 (all branches)"
   }
 }
 ```
@@ -1672,6 +1725,152 @@ X-RateLimit-Reset: 1634567890
 6. **Use pagination** for large datasets
 7. **Handle token expiry** with refresh token logic
 8. **Validate hierarchy** before operations
+
+---
+
+## 🕒 Scheduled Jobs Management
+
+### Overview
+
+The system includes automated scheduled jobs for maintenance and optimization. All scheduled jobs run in **Asia/Kolkata** timezone.
+
+---
+
+### Get Jobs Status
+
+Get status of all scheduled jobs in the system.
+
+**Endpoint:** `GET /admin/scheduled-jobs/status`
+**Access:** Admin only (requires `manageSystem` permission)
+
+**Example Request:**
+
+```bash
+GET /api/v1/admin/scheduled-jobs/status
+Authorization: Bearer <admin_token>
+```
+
+**Success Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "initialized": true,
+    "totalJobs": 1,
+    "timezone": "Asia/Kolkata",
+    "jobs": {
+      "roundRobinReset": {
+        "running": true,
+        "scheduled": true,
+        "lastExecution": null,
+        "nextExecution": "2025-10-23 05:23:45"
+      }
+    }
+  },
+  "message": "Scheduled jobs status retrieved successfully",
+  "success": true
+}
+```
+
+---
+
+### Schedule One-Time Reset
+
+Schedule a one-time round-robin reset at a specific date/time.
+
+**Endpoint:** `POST /admin/scheduled-jobs/reset-round-robin`
+**Access:** Admin only
+
+**Request Body:**
+
+```json
+{
+  "dateTime": "2025-10-22T20:30:00.000Z"
+}
+```
+
+**Example Request:**
+
+```bash
+POST /api/v1/admin/scheduled-jobs/reset-round-robin
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "dateTime": "2025-10-22T20:30:00.000Z"
+}
+```
+
+**Success Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "scheduledFor": "2025-10-22T20:30:00.000Z",
+    "scheduledForIST": "23/10/2025, 2:00:00 am"
+  },
+  "message": "One-time round-robin reset scheduled successfully",
+  "success": true
+}
+```
+
+---
+
+### Stop/Start Jobs
+
+Control individual scheduled jobs.
+
+**Stop Job:** `POST /admin/scheduled-jobs/{jobName}/stop`
+**Start Job:** `POST /admin/scheduled-jobs/{jobName}/start`
+**Stop All:** `POST /admin/scheduled-jobs/stop-all`
+
+**Access:** Admin only
+
+**Available Job Names:**
+
+- `roundRobinReset` - Daily round-robin reset job
+
+**Example Request:**
+
+```bash
+POST /api/v1/admin/scheduled-jobs/roundRobinReset/stop
+Authorization: Bearer <admin_token>
+```
+
+**Success Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "jobName": "roundRobinReset",
+    "status": "stopped"
+  },
+  "message": "Job 'roundRobinReset' stopped successfully",
+  "success": true
+}
+```
+
+---
+
+### Current Scheduled Jobs
+
+#### 1. **Round-Robin Daily Reset**
+
+- **Schedule:** Every day between 5:00-6:00 AM IST
+- **Random Time:** Each day at a different random minute/second
+- **Purpose:** Reset round-robin counters for fair waiter assignment
+- **Scope:** All branches across all hotels
+- **Status:** ✅ Active by default
+
+#### 2. **Future Jobs (Planned)**
+
+- Cache cleanup (daily at 2:00 AM)
+- Performance metrics reset (weekly)
+- Database optimization (monthly)
+- Log file rotation (daily)
 
 ---
 

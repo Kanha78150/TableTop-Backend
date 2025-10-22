@@ -4,6 +4,7 @@ import { Server } from "socket.io";
 import app from "./src/app.js";
 import connectDB from "./src/config/database.js";
 import assignmentSystemInit from "./src/services/assignmentSystemInit.js";
+import scheduledJobsService from "./src/services/scheduledJobs.js";
 import { logger } from "./src/utils/logger.js";
 
 // Load env variables
@@ -23,6 +24,9 @@ const initializeServer = async () => {
       skipTimeTracker: false,
       autoRepairData: true,
     });
+
+    // Initialize scheduled jobs
+    await scheduledJobsService.initialize();
 
     logger.info("✅ All systems initialized successfully");
   } catch (error) {
