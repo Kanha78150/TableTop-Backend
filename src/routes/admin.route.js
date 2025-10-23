@@ -743,4 +743,10 @@ router.post(
   stopAllJobs
 );
 
+// ===== ACCOUNTING & TRANSACTIONS =====
+import accountingRoutes from "./admin/accounting.route.js";
+
+// Mount accounting routes
+router.use("/accounting", accountingRoutes);
+
 export default router;
