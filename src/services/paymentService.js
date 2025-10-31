@@ -66,7 +66,7 @@ class PaymentService {
 
       return {
         transactionId: transactionId,
-        orderId: razorpayOrder.id,
+        orderId: orderId,
         amount: amountInPaise,
         currency: "INR",
         key: this.config.keyId,

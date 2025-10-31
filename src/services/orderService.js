@@ -377,9 +377,7 @@ export const cancelOrder = async (
     if (!order) {
       throw new APIError(404, "Order not found");
     }
-
-    // Check if order can be cancelled
-    if (!["pending", "preparing"].includes(order.status)) {
+    if (!["pending", "confirmed", "preparing"].includes(order.status)) {
       throw new APIError(400, "Order cannot be cancelled at this stage");
     }
 
@@ -424,11 +422,11 @@ export const cancelOrder = async (
 };
 
 /**
- * Reorder - create new order from previous order
+ * Reorder - add items from previous order to cart for review and modification
  * @param {string} orderId - Original order ID
  * @param {string} userId - User ID
- * @param {Object} orderDetails - New order details
- * @returns {Object} - New order created from previous order
+ * @param {Object} orderDetails - Order details (tableId, specialInstructions)
+ * @returns {Object} - Cart populated with reorder items for user review
  */
 export const reorderFromPrevious = async (
   orderId,
@@ -445,17 +443,81 @@ export const reorderFromPrevious = async (
       throw new APIError(404, "Original order not found");
     }
 
-    // Validate items are still available and get current prices
+    // Always use cart mode for reorder - allows review and modification
+    return await reorderToCart(originalOrder, userId, orderDetails);
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(500, "Failed to reorder", error.message);
+  }
+};
+/**
+ * Add reorder items to cart for user review and modification
+ * @param {Object} originalOrder - Original order object
+ * @param {string} userId - User ID
+ * @param {Object} orderDetails - Order details
+ * @returns {Object} - Cart with reorder items
+ */
+const reorderToCart = async (originalOrder, userId, orderDetails) => {
+  try {
+    const { Cart } = await import("../models/Cart.model.js");
+
+    // Find or create cart for the same hotel/branch
+    let cart = await Cart.findOne({
+      user: userId,
+      hotel: originalOrder.hotel,
+      branch: originalOrder.branch,
+      status: "active",
+    });
+
+    if (!cart) {
+      cart = new Cart({
+        user: userId,
+        hotel: originalOrder.hotel,
+        branch: originalOrder.branch,
+        status: "active",
+        items: [],
+      });
+    }
+
+    // Validate items and prepare cart items
     const availableItems = [];
     const unavailableItems = [];
 
     for (const item of originalOrder.items) {
       if (item.foodItem && item.foodItem.isAvailable) {
         const currentPrice = item.foodItem.discountPrice || item.foodItem.price;
+
+        // Check if item already exists in cart
+        const existingItemIndex = cart.items.findIndex(
+          (cartItem) =>
+            cartItem.foodItem.toString() === item.foodItem._id.toString()
+        );
+
+        if (existingItemIndex > -1) {
+          // Update existing item quantity
+          cart.items[existingItemIndex].quantity += item.quantity;
+          cart.items[existingItemIndex].totalPrice =
+            cart.items[existingItemIndex].quantity * currentPrice;
+        } else {
+          // Add new item to cart
+          cart.items.push({
+            foodItem: item.foodItem._id,
+            quantity: item.quantity,
+            price: currentPrice,
+            totalPrice: currentPrice * item.quantity,
+            customizations: item.customizations || {},
+            addedFrom: "reorder",
+          });
+        }
+
         availableItems.push({
-          ...item.toObject(),
-          price: currentPrice,
-          totalPrice: currentPrice * item.quantity,
+          name: item.foodItemName || item.foodItem.name,
+          quantity: item.quantity,
+          oldPrice: item.price,
+          newPrice: currentPrice,
+          priceChanged: item.price !== currentPrice,
         });
       } else {
         unavailableItems.push({
@@ -472,87 +534,54 @@ export const reorderFromPrevious = async (
       );
     }
 
-    // Calculate new totals
-    const subtotal = availableItems.reduce(
-      (sum, item) => sum + item.totalPrice,
-      0
-    );
-    const orderCalculation = {
-      subtotal,
-      taxes: calculateTaxes(subtotal),
-      total: subtotal + calculateTaxes(subtotal),
-    };
+    // Recalculate cart totals
+    cart.subtotal = cart.items.reduce((sum, item) => sum + item.totalPrice, 0);
+    cart.totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
 
-    // Create new order
-    const newOrderData = {
-      user: userId,
-      hotel: originalOrder.hotel,
-      branch: originalOrder.branch,
-      table: orderDetails.tableId || null,
-      items: availableItems,
-      subtotal: orderCalculation.subtotal,
-      taxes: orderCalculation.taxes,
-      totalPrice: orderCalculation.total,
-      payment: {
-        paymentMethod: orderDetails.paymentMethod || "cash",
-        paymentStatus: "pending", // All reorders start as pending until payment is confirmed
-      },
-      status: "pending",
-      estimatedTime: calculateEstimatedTime(availableItems),
-      specialInstructions: orderDetails.specialInstructions || "",
-      orderSource: "reorder",
-      reorderedFrom: orderId,
-    };
+    await cart.save();
 
-    const newOrder = new Order(newOrderData);
-    await newOrder.save();
-
-    // Populate the new order
-    const populatedOrder = await Order.findById(newOrder._id)
-      .populate("user", "name email phone")
-      .populate("hotel", "name hotelId location")
-      .populate("branch", "name branchId location address")
-      .populate("table", "tableNumber")
-      .populate({
+    // Populate cart for response
+    await cart.populate([
+      {
         path: "items.foodItem",
-        select: "name price image foodType",
-      });
-
-    // Automatically assign order to a waiter
-    try {
-      const assignmentResult = await assignmentService.assignOrder(
-        newOrder._id.toString()
-      );
-
-      // If assignment was successful, populate the assigned staff
-      if (assignmentResult.success && assignmentResult.assignment.waiter) {
-        await populatedOrder.populate({
-          path: "staff",
-          select: "name staffId role",
-        });
-      }
-    } catch (assignmentError) {
-      // Log assignment error but don't fail the reorder
-      console.error(
-        `[REORDER] Assignment failed for order ${newOrder._id}:`,
-        assignmentError.message
-      );
-      // The order is still valid even if assignment fails - it can be manually assigned later
-    }
+        select: "name price discountPrice image category foodType",
+      },
+      {
+        path: "hotel",
+        select: "name location",
+      },
+      {
+        path: "branch",
+        select: "name address",
+      },
+    ]);
 
     return {
-      order: populatedOrder,
+      cart,
+      availableItems,
       unavailableItems,
+      summary: {
+        totalItemsAdded: availableItems.length,
+        totalItemsUnavailable: unavailableItems.length,
+        cartTotal: cart.subtotal,
+        priceChanges: availableItems.filter((item) => item.priceChanged).length,
+      },
       message:
         unavailableItems.length > 0
-          ? `Order placed successfully. ${unavailableItems.length} items were unavailable and excluded.`
-          : "Order placed successfully.",
+          ? `${availableItems.length} items added to cart for review. ${unavailableItems.length} items were unavailable.`
+          : `All ${availableItems.length} items added to cart for review.`,
+      nextSteps: {
+        review: "GET /api/v1/user/cart",
+        modify: "PUT /api/v1/user/cart/item/:itemId",
+        checkout: "POST /api/v1/user/cart/checkout",
+      },
     };
   } catch (error) {
-    if (error instanceof APIError) {
-      throw error;
-    }
-    throw new APIError(500, "Failed to reorder", error.message);
+    throw new APIError(
+      500,
+      "Failed to add reorder items to cart",
+      error.message
+    );
   }
 };
 

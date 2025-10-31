@@ -322,7 +322,7 @@ export const reorder = async (req, res, next) => {
   try {
     const userId = req.user._id;
     const { orderId } = req.params;
-    const { tableId, paymentMethod, specialInstructions } = req.body;
+    const { tableId, specialInstructions } = req.body;
 
     // Validate order ID
     if (!orderId || !orderId.match(/^[0-9a-fA-F]{24}$/)) {
@@ -337,17 +337,17 @@ export const reorder = async (req, res, next) => {
 
     const result = await orderService.reorderFromPrevious(orderId, userId, {
       tableId,
-      paymentMethod,
       specialInstructions,
     });
 
+    // Always returns cart mode response (200 OK)
     res
-      .status(201)
+      .status(200)
       .json(
         new APIResponse(
-          201,
+          200,
           result,
-          result.message || "Reorder placed successfully"
+          result.message || "Items added to cart for review"
         )
       );
   } catch (error) {
@@ -667,11 +667,13 @@ const validateCancelOrder = (data) => {
 
 const validateReorder = (data) => {
   const schema = Joi.object({
-    tableId: Joi.string().length(24).hex().optional(),
-    paymentMethod: Joi.string()
-      .valid("cash", "card", "upi", "wallet")
-      .default("cash"),
-    specialInstructions: Joi.string().max(500).optional(),
+    tableId: Joi.string().length(24).hex().optional().messages({
+      "string.length": "Table ID must be a valid 24-character ID",
+      "string.hex": "Table ID must be a valid hexadecimal string",
+    }),
+    specialInstructions: Joi.string().max(500).optional().messages({
+      "string.max": "Special instructions cannot exceed 500 characters",
+    }),
   });
   return schema.validate(data);
 };
