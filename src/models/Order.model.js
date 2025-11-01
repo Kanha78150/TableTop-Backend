@@ -105,6 +105,14 @@ const orderSchema = new mongoose.Schema(
         type: String,
         sparse: true,
       },
+      razorpayOrderId: {
+        type: String,
+        sparse: true, // Razorpay order ID (order_xxxxx)
+      },
+      razorpayPaymentId: {
+        type: String,
+        sparse: true, // Razorpay payment ID (pay_xxxxx) - needed for refunds
+      },
       paidAt: {
         type: Date,
       },
@@ -386,6 +394,8 @@ export const validateOrder = (data) => {
         .optional(),
       transactionId: Joi.string().optional(),
       gatewayTransactionId: Joi.string().optional(),
+      razorpayOrderId: Joi.string().optional(),
+      razorpayPaymentId: Joi.string().optional(),
       paidAt: Joi.date().optional(),
       gatewayResponse: Joi.object().optional(),
       refund: Joi.object({

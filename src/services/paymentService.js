@@ -67,12 +67,12 @@ class PaymentService {
       return {
         transactionId: transactionId,
         orderId: orderId,
+        order_id: razorpayOrder.id,
         amount: amountInPaise,
         currency: "INR",
         key: this.config.keyId,
         name: "Hotel Management System",
         description: `Payment for Order #${orderId}`,
-        order_id: razorpayOrder.id,
         callback_url: this.config.callbackUrl,
         prefill: {
           name: paymentData.customerName || "",
@@ -177,6 +177,7 @@ class PaymentService {
 
             if (
               assignmentResult.success &&
+              assignmentResult.assignment &&
               assignmentResult.assignment.waiter
             ) {
               logger.info(
@@ -370,7 +371,11 @@ class PaymentService {
         order._id.toString()
       );
 
-      if (assignmentResult.success && assignmentResult.assignment.waiter) {
+      if (
+        assignmentResult.success &&
+        assignmentResult.assignment &&
+        assignmentResult.assignment.waiter
+      ) {
         logger.info("Staff assignment successful after payment", {
           orderId: order._id,
           waiterId: assignmentResult.assignment.waiter._id,
@@ -381,6 +386,7 @@ class PaymentService {
         logger.warn("Staff assignment failed after payment", {
           orderId: order._id,
           reason: assignmentResult.message || "No available staff",
+          assignmentResult: assignmentResult, // Log full result for debugging
         });
       }
     } catch (assignmentError) {
@@ -477,7 +483,11 @@ class PaymentService {
         order._id.toString()
       );
 
-      if (assignmentResult.success && assignmentResult.assignment.waiter) {
+      if (
+        assignmentResult.success &&
+        assignmentResult.assignment &&
+        assignmentResult.assignment.waiter
+      ) {
         logger.info("Staff assignment successful after success callback", {
           orderId: order._id,
           waiterId: assignmentResult.assignment.waiter._id,
@@ -488,6 +498,7 @@ class PaymentService {
         logger.warn("Staff assignment failed after success callback", {
           orderId: order._id,
           reason: assignmentResult.message || "No available staff",
+          assignmentResult: assignmentResult, // Log full result for debugging
         });
       }
     } catch (assignmentError) {
@@ -596,12 +607,67 @@ class PaymentService {
         throw new APIError(404, "Order not found");
       }
 
-      if (!order.payment.razorpayPaymentId) {
-        throw new APIError(400, "No payment found for this order");
+      logger.info("Order payment details", {
+        orderId,
+        paymentStatus: order.payment?.paymentStatus,
+        razorpayPaymentId: order.payment?.razorpayPaymentId,
+        gatewayTransactionId: order.payment?.gatewayTransactionId,
+        transactionId: order.payment?.transactionId,
+      });
+
+      // Allow refund for paid or refund_pending orders
+      const eligibleStatuses = ["paid", "refund_pending"];
+      if (!eligibleStatuses.includes(order.payment.paymentStatus)) {
+        throw new APIError(
+          400,
+          "Cannot refund order with current payment status"
+        );
       }
 
-      if (order.payment.paymentStatus !== "paid") {
-        throw new APIError(400, "Cannot refund unpaid order");
+      // Get payment ID - try different sources
+      let paymentId = order.payment.razorpayPaymentId;
+
+      if (!paymentId && order.payment.gatewayTransactionId) {
+        // If we have gatewayTransactionId (Razorpay order ID), get payments for this order
+        try {
+          const razorpayOrderId = order.payment.gatewayTransactionId;
+          const razorpayOrder = await this.razorpay.orders.fetch(
+            razorpayOrderId
+          );
+
+          // Get payments for this order
+          const payments = await this.razorpay.orders.fetchPayments(
+            razorpayOrderId
+          );
+
+          if (payments.items && payments.items.length > 0) {
+            // Find the successful payment
+            const successfulPayment = payments.items.find(
+              (p) => p.status === "captured" || p.status === "authorized"
+            );
+            if (successfulPayment) {
+              paymentId = successfulPayment.id;
+
+              // Update order with payment ID for future use
+              await Order.findByIdAndUpdate(orderId, {
+                "payment.razorpayPaymentId": paymentId,
+              });
+            }
+          }
+        } catch (fetchError) {
+          logger.error("Failed to fetch payment details from Razorpay", {
+            orderId,
+            gatewayTransactionId: order.payment.gatewayTransactionId,
+            error: fetchError.message,
+          });
+        }
+      }
+
+      if (!paymentId) {
+        throw new APIError(
+          400,
+          "No payment ID found for this order. Cannot process refund."
+        );
       }
 
       // Calculate refund amount (in paise)
@@ -610,24 +676,26 @@ class PaymentService {
         : Math.round(order.totalPrice * 100);
 
       // Create refund in Razorpay
-      const refund = await this.razorpay.payments.refund(
-        order.payment.razorpayPaymentId,
-        {
-          amount: refundAmount,
-          notes: {
-            orderId: orderId,
-            reason: refundData.reason || "Refund requested",
-            initiatedBy: refundData.initiatedBy,
-          },
-        }
-      );
+      const refund = await this.razorpay.payments.refund(paymentId, {
+        amount: refundAmount,
+        notes: {
+          orderId: orderId,
+          reason: refundData.reason || "Refund requested",
+          initiatedBy: refundData.initiatedBy,
+        },
+      });
 
-      // Update order status
+      // Update order status to refunded (since Razorpay refund was successful)
       await Order.findByIdAndUpdate(orderId, {
-        "payment.paymentStatus": "refund_pending",
-        "payment.refundId": refund.id,
-        "payment.refundAmount": refundAmount / 100,
-        "payment.refundInitiatedAt": new Date(),
+        "payment.paymentStatus": "refunded",
+        "payment.refund": {
+          refundId: refund.id,
+          amount: refundAmount / 100,
+          reason: refundData.reason || "Refund requested",
+          initiatedAt: new Date(),
+          completedAt: new Date(),
+          gatewayResponse: refund,
+        },
       });
 
       logger.info("Refund initiated successfully", {
@@ -637,10 +705,11 @@ class PaymentService {
       });
 
       return {
+        refundTransactionId: refund.id,
         refundId: refund.id,
         orderId: orderId,
         amount: refundAmount / 100,
-        status: refund.status,
+        status: "refunded",
         estimatedSettlement: "5-7 business days",
       };
     } catch (error) {

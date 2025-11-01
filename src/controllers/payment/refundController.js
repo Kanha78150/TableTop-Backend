@@ -41,9 +41,13 @@ export const createRefundRequest = asyncHandler(async (req, res) => {
     throw new APIError(403, "You can only request refunds for your own orders");
   }
 
-  // Check if order is paid
-  if (order.payment.paymentStatus !== "paid") {
-    throw new APIError(400, "Can only request refund for paid orders");
+  // Check if order is eligible for refund (paid or already refund pending)
+  const eligibleStatuses = ["paid", "refund_pending"];
+  if (!eligibleStatuses.includes(order.payment.paymentStatus)) {
+    throw new APIError(
+      400,
+      "Can only request refund for paid or refund pending orders"
+    );
   }
 
   // Check if refund amount is valid
@@ -153,7 +157,21 @@ export const getRefundRequestDetails = asyncHandler(async (req, res) => {
 
   const refundRequest = await RefundRequest.findById(requestId).populate([
     { path: "user", select: "name email phone" },
-    { path: "order", select: "orderNumber totalPrice createdAt payment" },
+    {
+      path: "order",
+      select:
+        "orderNumber totalPrice createdAt payment items cancelledAt subtotal taxes serviceCharge status branch hotel",
+      populate: [
+        {
+          path: "branch",
+          select: "name address phone email location coordinates",
+        },
+        {
+          path: "hotel",
+          select: "name description address phone email website logo",
+        },
+      ],
+    },
     { path: "processedBy", select: "name email role" },
   ]);
 
@@ -161,8 +179,52 @@ export const getRefundRequestDetails = asyncHandler(async (req, res) => {
     throw new APIError(404, "Refund request not found");
   }
 
+  // Convert to plain object to avoid Mongoose document issues
+  const refundRequestObj = refundRequest.toObject();
+
+  // Transform order data to include totalItems and orderDuration
+  if (refundRequestObj.order) {
+    const order = refundRequestObj.order;
+
+    // Calculate order duration if cancelled
+    let orderDuration = null;
+    if (order.cancelledAt && order.createdAt) {
+      orderDuration = Math.round(
+        (new Date(order.cancelledAt) - new Date(order.createdAt)) / (1000 * 60)
+      ); // in minutes
+    }
+
+    // Transform order object with only the fields we want
+    refundRequestObj.order = {
+      _id: order._id,
+      orderNumber: order.orderNumber,
+      totalPrice: order.totalPrice,
+      createdAt: order.createdAt,
+      payment: order.payment,
+      totalItems: order.items ? order.items.length : 0,
+      orderDuration: orderDuration,
+      subtotal: order.subtotal,
+      taxes: order.taxes,
+      serviceCharge: order.serviceCharge,
+      status: order.status,
+      branch: order.branch, // This will contain full branch details
+      hotel: order.hotel, // This will contain full hotel details
+      id: order._id,
+    };
+  }
+
+  // Debug logging for access control
+  logger.info("Refund request access check", {
+    requestId,
+    requestUserId: refundRequestObj.user?._id || refundRequestObj.user,
+    currentUserId: userId,
+    userMatch: refundRequestObj.user?.toString() === userId.toString(),
+  });
+
   // Check if user owns this refund request
-  if (refundRequest.user.toString() !== userId.toString()) {
+  const refundRequestUserId =
+    refundRequestObj.user?._id || refundRequestObj.user;
+  if (refundRequestUserId.toString() !== userId.toString()) {
     throw new APIError(403, "Access denied");
   }
 
@@ -171,7 +233,7 @@ export const getRefundRequestDetails = asyncHandler(async (req, res) => {
     .json(
       new APIResponse(
         200,
-        refundRequest,
+        refundRequestObj,
         "Refund request details retrieved successfully"
       )
     );
@@ -250,13 +312,64 @@ export const getAllRefundRequests = asyncHandler(async (req, res) => {
       { path: "user", select: "name email phone" },
       {
         path: "order",
-        select: "orderNumber totalPrice createdAt payment.paymentMethod",
+        select:
+          "orderNumber totalPrice createdAt payment items cancelledAt subtotal taxes serviceCharge status branch hotel",
+        populate: [
+          {
+            path: "branch",
+            select: "name address phone email location coordinates",
+          },
+          {
+            path: "hotel",
+            select: "name description address phone email website logo",
+          },
+        ],
       },
       { path: "processedBy", select: "name email" },
     ],
   };
 
   const refundRequests = await RefundRequest.paginate(query, options);
+
+  if (refundRequests.docs && refundRequests.docs.length > 0) {
+    refundRequests.docs = refundRequests.docs.map((doc) => {
+      const refundRequestObj = doc.toObject();
+
+      // Transform order data if exists
+      if (refundRequestObj.order) {
+        const order = refundRequestObj.order;
+
+        // Calculate order duration if cancelled
+        let orderDuration = null;
+        if (order.cancelledAt && order.createdAt) {
+          orderDuration = Math.round(
+            (new Date(order.cancelledAt) - new Date(order.createdAt)) /
+              (1000 * 60)
+          ); // in minutes
+        }
+
+        // Transform order object with only the fields we want
+        refundRequestObj.order = {
+          _id: order._id,
+          orderNumber: order.orderNumber,
+          totalPrice: order.totalPrice,
+          createdAt: order.createdAt,
+          payment: order.payment,
+          totalItems: order.items ? order.items.length : 0,
+          orderDuration: orderDuration,
+          subtotal: order.subtotal,
+          taxes: order.taxes,
+          serviceCharge: order.serviceCharge,
+          status: order.status,
+          branch: order.branch,
+          hotel: order.hotel,
+          id: order._id,
+        };
+      }
+
+      return refundRequestObj;
+    });
+  }
 
   res
     .status(200)
@@ -329,12 +442,14 @@ export const updateRefundRequestStatus = asyncHandler(async (req, res) => {
       }
 
       // Process payment refund
-      const refundResponse = await paymentService.initiateRefund({
-        orderId: refundRequest.order._id.toString(),
-        merchantTransactionId: refundRequest.order.payment.transactionId,
-        amount: refundRequest.amount,
-        reason: refundRequest.reason,
-      });
+      const refundResponse = await paymentService.initiateRefund(
+        refundRequest.order._id.toString(),
+        {
+          amount: refundRequest.amount,
+          reason: refundRequest.reason,
+          initiatedBy: adminId,
+        }
+      );
 
       // Update refund request with transaction ID
       refundRequest.refundTransactionId = refundResponse.refundTransactionId;
@@ -363,7 +478,32 @@ export const updateRefundRequestStatus = asyncHandler(async (req, res) => {
 
   await refundRequest.populate([
     { path: "user", select: "name email phone" },
-    { path: "order", select: "orderNumber totalPrice" },
+    {
+      path: "order",
+      select: "orderNumber totalPrice items createdAt cancelledAt",
+      transform: (doc) => {
+        if (doc) {
+          // Calculate order duration if cancelled
+          let orderDuration = null;
+          if (doc.cancelledAt && doc.createdAt) {
+            orderDuration = Math.round(
+              (new Date(doc.cancelledAt) - new Date(doc.createdAt)) /
+                (1000 * 60)
+            ); // in minutes
+          }
+
+          return {
+            _id: doc._id,
+            orderNumber: doc.orderNumber,
+            totalPrice: doc.totalPrice,
+            totalItems: doc.items ? doc.items.length : 0,
+            orderDuration: orderDuration,
+            id: doc._id,
+          };
+        }
+        return doc;
+      },
+    },
     { path: "processedBy", select: "name email" },
   ]);
 
