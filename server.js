@@ -5,6 +5,7 @@ import app from "./src/app.js";
 import connectDB from "./src/config/database.js";
 import assignmentSystemInit from "./src/services/assignmentSystemInit.js";
 import scheduledJobsService from "./src/services/scheduledJobs.js";
+import { startAllJobs } from "./src/services/subscriptionJobs.js";
 import { logger } from "./src/utils/logger.js";
 
 // Load env variables
@@ -27,6 +28,16 @@ const initializeServer = async () => {
 
     // Initialize scheduled jobs
     await scheduledJobsService.initialize();
+
+    // Initialize subscription background jobs
+    if (process.env.ENABLE_SUBSCRIPTION_JOBS !== "false") {
+      startAllJobs();
+      logger.info("✅ Subscription background jobs started");
+    } else {
+      logger.info(
+        "⚠️ Subscription jobs disabled (ENABLE_SUBSCRIPTION_JOBS=false)"
+      );
+    }
 
     logger.info("✅ All systems initialized successfully");
   } catch (error) {

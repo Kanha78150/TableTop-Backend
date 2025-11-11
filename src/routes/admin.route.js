@@ -118,6 +118,11 @@ import {
   requireFinancialAccess,
   rbac,
 } from "../middleware/roleAuth.middleware.js";
+import {
+  requireActiveSubscription,
+  checkResourceLimit,
+  requireFeature,
+} from "../middleware/subscriptionAuth.middleware.js";
 
 const router = express.Router();
 
@@ -127,54 +132,73 @@ router.use(authenticateAdmin);
 // ======================
 // HOTEL MANAGEMENT ROUTES
 // ======================
-router.post("/hotels", rbac({ permissions: ["manageBranches"] }), createHotel);
+router.post(
+  "/hotels",
+  rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
+  checkResourceLimit("hotels"),
+  createHotel
+);
 
-router.get("/hotels", rbac({ permissions: ["manageBranches"] }), getAllHotels);
+router.get(
+  "/hotels",
+  rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
+  getAllHotels
+);
 
 router.get(
   "/hotels/search",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   searchHotels
 );
 
 router.get(
   "/hotels/search-by-location",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   searchHotelsByLocation
 );
 
 router.get(
   "/hotels/:hotelId",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   getHotelById
 );
 
 router.put(
   "/hotels/:hotelId",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   updateHotel
 );
 
 router.delete(
   "/hotels/:hotelId",
   rbac({ roles: ["admin", "super_admin"] }),
+  requireActiveSubscription,
   deleteHotel
 );
 router.patch(
   "/hotels/:hotelId/deactivate",
   rbac({ roles: ["admin", "super_admin"] }),
+  requireActiveSubscription,
   deactivateHotel
 );
 
 router.patch(
   "/hotels/:hotelId/reactivate",
   rbac({ roles: ["admin", "super_admin"] }),
+  requireActiveSubscription,
   reactivateHotel
 );
 
 router.get(
   "/hotels/:hotelId/branches",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   getHotelBranchesByLocation
 );
 
@@ -184,36 +208,43 @@ router.get(
 router.post(
   "/branches",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
+  checkResourceLimit("branches"),
   createBranch
 );
 
 router.get(
   "/branches",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   getAllBranches
 );
 
 router.get(
   "/branches/search-by-location",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   searchBranchesByLocation
 );
 
 router.get(
   "/branches/hotel/:hotelId",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   getBranchesByHotel
 );
 
 router.get(
   "/branches/:branchId",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   getBranchById
 );
 
 router.put(
   "/branches/:branchId",
   rbac({ permissions: ["manageBranches"] }),
+  requireActiveSubscription,
   updateBranch
 );
 
@@ -223,6 +254,7 @@ router.delete(
     roles: ["admin", "super_admin", "branch_admin"],
     permissions: ["manageBranches"],
   }),
+  requireActiveSubscription,
   deleteBranch
 );
 
@@ -233,6 +265,7 @@ router.patch(
     roles: ["admin", "super_admin", "branch_admin"],
     permissions: ["manageBranches"],
   }),
+  requireActiveSubscription,
   deactivateBranch
 );
 
@@ -242,6 +275,7 @@ router.patch(
     roles: ["admin", "super_admin", "branch_admin"],
     permissions: ["manageBranches"],
   }),
+  requireActiveSubscription,
   reactivateBranch
 );
 
@@ -282,30 +316,36 @@ router.delete("/users/:userId", requireSuperAdmin, deleteUser);
 router.get(
   "/managers",
   rbac({ permissions: ["manageManagers"] }),
+  requireActiveSubscription,
   getAllManagers
 );
 
 router.get(
   "/managers/:managerId",
   rbac({ permissions: ["manageManagers"] }),
+  requireActiveSubscription,
   getManagerById
 );
 
 router.post(
   "/managers",
   rbac({ permissions: ["manageManagers"] }),
+  requireActiveSubscription,
+  checkResourceLimit("managers"),
   createManager
 );
 
 router.put(
   "/managers/:managerId",
   rbac({ permissions: ["manageManagers"] }),
+  requireActiveSubscription,
   updateManager
 );
 
 router.delete(
   "/managers/:managerId",
   rbac({ permissions: ["manageManagers"] }),
+  requireActiveSubscription,
   deleteManager
 );
 
@@ -313,12 +353,14 @@ router.delete(
 router.patch(
   "/managers/:managerId/deactivate",
   rbac({ permissions: ["manageManagers"] }),
+  requireActiveSubscription,
   deactivateManager
 );
 
 router.patch(
   "/managers/:managerId/reactivate",
   rbac({ permissions: ["manageManagers"] }),
+  requireActiveSubscription,
   reactivateManager
 );
 
@@ -329,19 +371,32 @@ router.put(
 );
 
 // Staff Management
-router.get("/staff", rbac({ permissions: ["manageStaff"] }), getAllStaff);
+router.get(
+  "/staff",
+  rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
+  getAllStaff
+);
 
 router.get(
   "/staff/:staffId",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   getStaffById
 );
 
-router.post("/staff", rbac({ permissions: ["manageStaff"] }), createStaff);
+router.post(
+  "/staff",
+  rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
+  checkResourceLimit("staff"),
+  createStaff
+);
 
 router.put(
   "/staff/:staffId",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   updateStaff
 );
 
@@ -349,12 +404,14 @@ router.put(
 router.put(
   "/staff/:staffId/permissions",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   updateStaffPermissions
 );
 
 router.delete(
   "/staff/:staffId",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   deleteStaff
 );
 
@@ -362,12 +419,14 @@ router.delete(
 router.patch(
   "/staff/:staffId/deactivate",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   deactivateStaff
 );
 
 router.patch(
   "/staff/:staffId/reactivate",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   reactivateStaff
 );
 
@@ -375,12 +434,14 @@ router.patch(
 router.put(
   "/staff/:staffId/assign-manager",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   assignStaffToManager
 );
 
 router.get(
   "/managers/:managerId/staff",
   rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
   getStaffByManager
 );
 
@@ -464,16 +525,24 @@ router.patch(
 router.post(
   "/tables/generate-qr",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
+  checkResourceLimit("tables"),
   generateTableQRCodes
 );
 
 // Get all tables
-router.get("/tables", rbac({ permissions: ["manageTables"] }), getTables);
+router.get(
+  "/tables",
+  rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
+  getTables
+);
 
 // Get available tables
 router.get(
   "/tables/available",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
   getAvailableTables
 );
 
@@ -481,6 +550,7 @@ router.get(
 router.get(
   "/tables/stats",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
   getTableStats
 );
 
@@ -488,6 +558,7 @@ router.get(
 router.put(
   "/tables/bulk-status",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
   bulkUpdateTableStatus
 );
 
@@ -495,6 +566,7 @@ router.put(
 router.get(
   "/tables/:tableId",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
   getTableById
 );
 
@@ -502,6 +574,7 @@ router.get(
 router.put(
   "/tables/:tableId",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
   updateTable
 );
 
@@ -509,6 +582,7 @@ router.put(
 router.delete(
   "/tables/:tableId",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
   deleteTable
 );
 
@@ -516,6 +590,7 @@ router.delete(
 router.post(
   "/tables/:tableId/regenerate-qr",
   rbac({ permissions: ["manageTables"] }),
+  requireActiveSubscription,
   regenerateTableQR
 );
 
@@ -523,54 +598,72 @@ router.post(
 router.get(
   "/offers",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.getAllOffers
 );
 
 router.get(
   "/offers/stats",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.getOfferStats
 );
 
 router.get(
   "/offers/active",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.getActiveOffersFor
 );
 
 router.post(
   "/offers",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.createOffer
 );
 
 router.get(
   "/offers/code/:code",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.getOfferByCode
 );
 
 router.get(
   "/offers/:offerId",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.getOfferById
 );
 
 router.put(
   "/offers/:offerId",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.updateOffer
 );
 
 router.patch(
   "/offers/:offerId/toggle",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.toggleOfferStatus
 );
 
 router.delete(
   "/offers/:offerId",
   rbac({ permissions: ["manageOffers"] }),
+  requireActiveSubscription,
+  requireFeature("offerManagement"),
   offerController.deleteOffer
 );
 
@@ -594,6 +687,8 @@ router.post(
 router.get(
   "/dashboard",
   rbac({ permissions: ["viewAnalytics"] }),
+  requireActiveSubscription,
+  requireFeature("analyticsAccess"),
   getDashboardOverview
 );
 
@@ -601,6 +696,8 @@ router.get(
 router.get(
   "/reports/sales",
   rbac({ permissions: ["viewReports"] }),
+  requireActiveSubscription,
+  requireFeature("analyticsAccess"),
   getSalesReport
 );
 
@@ -608,6 +705,8 @@ router.get(
 router.get(
   "/reports/profit-loss",
   rbac({ permissions: ["viewFinancials"] }),
+  requireActiveSubscription,
+  requireFeature("analyticsAccess"),
   getProfitLossReport
 );
 
@@ -615,6 +714,8 @@ router.get(
 router.get(
   "/analytics/customers",
   rbac({ permissions: ["viewAnalytics"] }),
+  requireActiveSubscription,
+  requireFeature("analyticsAccess"),
   getCustomerAnalytics
 );
 
@@ -633,6 +734,8 @@ router.get(
 router.get(
   "/coins/settings",
   rbac({ permissions: ["managePricing"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   getCoinSettings
 );
 
@@ -640,6 +743,8 @@ router.get(
 router.post(
   "/coins/settings",
   rbac({ permissions: ["managePricing"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   createCoinSettings
 );
 
@@ -647,6 +752,8 @@ router.post(
 router.put(
   "/coins/settings",
   rbac({ permissions: ["managePricing"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   updateCoinSettings
 );
 
@@ -654,6 +761,8 @@ router.put(
 router.get(
   "/coins/debug",
   rbac({ permissions: ["managePricing"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   debugCoinSettings
 );
 
@@ -661,6 +770,8 @@ router.get(
 router.get(
   "/coins/settings/history",
   rbac({ permissions: ["managePricing"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   getCoinSettingsHistory
 );
 
@@ -668,6 +779,8 @@ router.get(
 router.get(
   "/coins/analytics",
   rbac({ permissions: ["viewAnalytics"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   getCoinAnalytics
 );
 
@@ -675,6 +788,8 @@ router.get(
 router.post(
   "/coins/adjust",
   rbac({ permissions: ["manageUsers"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   makeManualCoinAdjustment
 );
 
@@ -682,6 +797,8 @@ router.post(
 router.get(
   "/coins/users",
   rbac({ permissions: ["manageUsers"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   getUsersWithCoins
 );
 
@@ -689,6 +806,8 @@ router.get(
 router.get(
   "/coins/transactions",
   rbac({ permissions: ["viewAnalytics"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   getCoinTransactionHistory
 );
 
@@ -696,6 +815,8 @@ router.get(
 router.post(
   "/coins/transactions/:transactionId/reverse",
   rbac({ permissions: ["manageUsers"] }),
+  requireActiveSubscription,
+  requireFeature("coinSystem"),
   reverseCoinTransaction
 );
 

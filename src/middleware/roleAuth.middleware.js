@@ -17,19 +17,22 @@ export const authenticate = async (req, res, next) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
+    );
 
     let user = null;
     let userType = null;
 
     // Determine user type from token and fetch from appropriate model
     if (decoded.role === "admin" || decoded.role === "super_admin") {
-      user = await Admin.findById(decoded.id)
+      user = await Admin.findById(decoded._id || decoded.id)
         .populate("assignedBranches", "name branchId location")
         .select("-password -refreshToken -passwordResetToken -twoFactorSecret");
       userType = "admin";
     } else if (decoded.role === "branch_manager") {
-      user = await Manager.findById(decoded.id)
+      user = await Manager.findById(decoded._id || decoded.id)
         .populate("branch", "name branchId location")
         .select("-password -refreshToken");
       userType = "manager";
@@ -44,7 +47,7 @@ export const authenticate = async (req, res, next) => {
       ].includes(decoded.role)
     ) {
       // Handle all staff roles (waiter, kitchen_staff, etc.)
-      user = await Staff.findById(decoded.id)
+      user = await Staff.findById(decoded._id || decoded.id)
         .populate("branch", "name branchId location")
         .populate("manager", "name email")
         .select("-password -refreshToken");
@@ -98,13 +101,16 @@ export const authenticateAdmin = async (req, res, next) => {
       return next(new APIError(401, "Access token is required"));
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
+    );
 
     if (!["admin", "super_admin"].includes(decoded.role)) {
       return next(new APIError(403, "Admin access required"));
     }
 
-    const admin = await Admin.findById(decoded.id)
+    const admin = await Admin.findById(decoded._id || decoded.id)
       .populate("assignedBranches", "name branchId location")
       .select("-password -refreshToken -passwordResetToken -twoFactorSecret");
 
@@ -169,6 +175,22 @@ export const requireRole = (allowedRoles) => {
 export const requireSuperAdmin = (req, res, next) => {
   if (req.userRole !== "super_admin") {
     return next(new APIError(403, "Super admin access required"));
+  }
+  next();
+};
+
+// Admin only access (excludes super_admin, only regular admins)
+export const requireAdmin = (req, res, next) => {
+  if (req.userRole !== "admin") {
+    return next(new APIError(403, "Admin access required"));
+  }
+  next();
+};
+
+// Admin or Super Admin access (any admin level)
+export const requireAdminOrSuperAdmin = (req, res, next) => {
+  if (!["admin", "super_admin"].includes(req.userRole)) {
+    return next(new APIError(403, "Admin or Super Admin access required"));
   }
   next();
 };

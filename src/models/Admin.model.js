@@ -28,6 +28,12 @@ const adminSchema = new mongoose.Schema(
       required: [true, "Password is required"],
       minlength: [6, "Password must be at least 6 characters"],
     },
+    dateOfBirth: {
+      type: Date,
+      required: function () {
+        return this.role === "super_admin";
+      },
+    },
     profileImage: {
       type: String,
       default: null,
@@ -35,10 +41,15 @@ const adminSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: {
-        values: ["admin"],
-        message: "Role must be admin",
+        values: ["admin", "super_admin", "branch_admin"],
+        message: "Role must be admin, super_admin, or branch_admin",
       },
       default: "admin",
+    },
+    subscription: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AdminSubscription",
+      default: null,
     },
     permissions: {
       // Branch Management
@@ -369,6 +380,39 @@ export const validateEmailVerification = (data) => {
 export const validateResendOtp = (data) => {
   const schema = Joi.object({
     email: Joi.string().email().required(),
+  });
+  return schema.validate(data);
+};
+
+// Super Admin Validation Schemas
+export const validateSuperAdminRegistration = (data) => {
+  const schema = Joi.object({
+    name: Joi.string().min(2).max(100).required(),
+    email: Joi.string().email().required(),
+    password: Joi.string().min(8).required().messages({
+      "string.min": "Password must be at least 8 characters for super admin",
+    }),
+    dateOfBirth: Joi.date().max("now").required().messages({
+      "date.max": "Date of birth cannot be in the future",
+    }),
+    phone: Joi.string()
+      .pattern(/^[+]?[0-9\s\-\(\)]{10,15}$/)
+      .optional()
+      .messages({
+        "string.pattern.base":
+          "Phone number must be between 10-15 digits and can include +, spaces, -, (, )",
+      }),
+  });
+  return schema.validate(data);
+};
+
+export const validateSuperAdminLogin = (data) => {
+  const schema = Joi.object({
+    email: Joi.string().email().required(),
+    password: Joi.string().required(),
+    dateOfBirth: Joi.date().required().messages({
+      "date.base": "Date of birth is required for super admin login",
+    }),
   });
   return schema.validate(data);
 };

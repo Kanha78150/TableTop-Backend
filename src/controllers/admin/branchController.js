@@ -11,6 +11,10 @@ import {
   addServiceStatusToBranches,
   addBranchServiceStatus,
 } from "../../utils/hotelStatusHelper.js";
+import {
+  updateResourceUsage,
+  decreaseResourceUsage,
+} from "../../middleware/subscriptionAuth.middleware.js";
 
 // Create a new branch (admin-specific)
 export const createBranch = async (req, res, next) => {
@@ -64,6 +68,17 @@ export const createBranch = async (req, res, next) => {
       createdBy: req.admin._id, // Associate with current admin
     });
     await branch.save();
+
+    // Update subscription usage counter for branches (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      try {
+        await updateResourceUsage(req.admin._id, "branches");
+      } catch (usageError) {
+        // If usage update fails, delete the created branch and throw error
+        await Branch.findByIdAndDelete(branch._id);
+        throw usageError;
+      }
+    }
 
     // Populate hotel information
     await branch.populate("hotel", "name hotelId");
@@ -306,6 +321,16 @@ export const deleteBranch = async (req, res, next) => {
 
     // Completely delete the branch from database
     await Branch.findOneAndDelete(query);
+
+    // Decrease subscription usage counter for branches (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      try {
+        await decreaseResourceUsage(req.admin._id, "branches");
+      } catch (usageError) {
+        console.error("Failed to decrease branch usage counter:", usageError);
+        // Log error but don't fail the deletion
+      }
+    }
 
     res
       .status(200)

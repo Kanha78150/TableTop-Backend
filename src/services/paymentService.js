@@ -1388,6 +1388,72 @@ class PaymentService {
       throw new APIError(500, "Failed to generate payment analytics");
     }
   }
+
+  /**
+   * Create Subscription Payment Order
+   * Creates a payment order for subscription
+   * @param {Object} subscriptionData - Subscription payment data
+   * @returns {Object} Payment order details
+   */
+  async createSubscriptionPaymentOrder(subscriptionData) {
+    try {
+      const { subscriptionId, amount, planName, billingCycle } =
+        subscriptionData;
+
+      logger.info("Creating subscription payment order", {
+        subscriptionId,
+        amount,
+        planName,
+      });
+
+      // Convert amount to paise
+      const amountInPaise = Math.round(amount * 100);
+
+      // Create Razorpay order
+      const razorpayOrder = await this.razorpay.orders.create({
+        amount: amountInPaise,
+        currency: "INR",
+        receipt: `subscription_${subscriptionId}`,
+        notes: {
+          subscriptionId: subscriptionId,
+          planName: planName,
+          billingCycle: billingCycle,
+          type: "subscription",
+        },
+      });
+
+      logger.info("Subscription payment order created successfully", {
+        subscriptionId,
+        razorpayOrderId: razorpayOrder.id,
+      });
+
+      return {
+        orderId: razorpayOrder.id,
+        amount: amountInPaise,
+        currency: "INR",
+        key: this.config.keyId,
+        name: "Hotel Management System",
+        description: `${planName} - ${billingCycle} subscription`,
+        subscriptionId: subscriptionId,
+      };
+    } catch (error) {
+      logger.error("Subscription payment order creation failed", {
+        error: error.message,
+        subscriptionData,
+      });
+      throw new APIError(500, "Failed to create subscription payment order");
+    }
+  }
+
+  /**
+   * Verify Subscription Payment
+   * Verifies subscription payment signature
+   * @param {Object} paymentData - Payment verification data
+   * @returns {Boolean} True if payment is verified
+   */
+  verifySubscriptionPayment(paymentData) {
+    return this.verifyPaymentSignature(paymentData);
+  }
 }
 
 export const paymentService = new PaymentService();

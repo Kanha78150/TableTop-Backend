@@ -18,6 +18,10 @@ import {
   addServiceStatusToStaff,
   addStaffServiceStatus,
 } from "../../utils/hotelStatusHelper.js";
+import {
+  updateResourceUsage,
+  decreaseResourceUsage,
+} from "../../middleware/subscriptionAuth.middleware.js";
 
 // User Management
 export const getAllUsers = async (req, res, next) => {
@@ -472,6 +476,17 @@ export const createManager = async (req, res, next) => {
 
     await manager.save();
 
+    // Update subscription usage counter for managers (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      try {
+        await updateResourceUsage(req.admin._id, "managers");
+      } catch (usageError) {
+        // If usage update fails, delete the created manager and throw error
+        await Manager.findByIdAndDelete(manager._id);
+        throw usageError;
+      }
+    }
+
     const populatedManager = await Manager.findById(manager._id)
       .populate("hotel", "name hotelId email")
       .populate("branch", "name branchId location")
@@ -612,6 +627,16 @@ export const deleteManager = async (req, res, next) => {
 
     // Delete manager using the same query to ensure admin restriction
     await Manager.findOneAndDelete(query);
+
+    // Decrease subscription usage counter for managers (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      try {
+        await decreaseResourceUsage(req.admin._id, "managers");
+      } catch (usageError) {
+        console.error("Failed to decrease manager usage counter:", usageError);
+        // Log error but don't fail the deletion
+      }
+    }
 
     res
       .status(200)
@@ -1213,6 +1238,17 @@ export const createStaff = async (req, res, next) => {
       await staff.save();
 
       console.log("Staff saved successfully with staffId:", staff.staffId);
+
+      // Update subscription usage counter for staff (skip for super_admin)
+      if (req.admin && req.admin.role !== "super_admin") {
+        try {
+          await updateResourceUsage(req.admin._id, "staff");
+        } catch (usageError) {
+          // If usage update fails, delete the created staff and throw error
+          await Staff.findByIdAndDelete(staff._id);
+          throw usageError;
+        }
+      }
     } catch (saveError) {
       console.error("Save error details:", {
         code: saveError.code,
@@ -1468,6 +1504,16 @@ export const deleteStaff = async (req, res, next) => {
 
     // Delete using the MongoDB ObjectId
     await Staff.findByIdAndDelete(staff._id);
+
+    // Decrease subscription usage counter for staff (skip for super_admin)
+    if (req.admin && req.admin.role !== "super_admin") {
+      try {
+        await decreaseResourceUsage(req.admin._id, "staff");
+      } catch (usageError) {
+        console.error("Failed to decrease staff usage counter:", usageError);
+        // Log error but don't fail the deletion
+      }
+    }
 
     res
       .status(200)

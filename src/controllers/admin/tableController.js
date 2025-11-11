@@ -5,6 +5,10 @@ import { Branch } from "../../models/Branch.model.js";
 import qrCodeService from "../../services/qrCodeService.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import {
+  updateResourceUsage,
+  decreaseResourceUsage,
+} from "../../middleware/subscriptionAuth.middleware.js";
 
 /**
  * Generate QR codes for multiple tables
@@ -124,6 +128,20 @@ export const generateTableQRCodes = async (req, res, next) => {
           tableNumber: (startingNumber + i).toString(),
           error: error.message,
         });
+      }
+    }
+
+    // Update subscription usage counter ONCE after all tables are created (skip for super_admin)
+    if (req.admin.role !== "super_admin" && tables.length > 0) {
+      try {
+        // Sync actual table count from database instead of incrementing
+        const { syncResourceUsage } = await import(
+          "../../middleware/subscriptionAuth.middleware.js"
+        );
+        await syncResourceUsage(req.admin._id, "tables");
+      } catch (usageError) {
+        console.error("Failed to update table usage counter:", usageError);
+        // Log error but don't fail the request
       }
     }
 
@@ -327,6 +345,16 @@ export const deleteTable = async (req, res, next) => {
     }
 
     await Table.findByIdAndDelete(tableId);
+
+    // Decrease subscription usage counter for tables (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      try {
+        await decreaseResourceUsage(req.admin._id, "tables");
+      } catch (usageError) {
+        console.error("Failed to decrease table usage counter:", usageError);
+        // Log error but don't fail the deletion
+      }
+    }
 
     res
       .status(200)

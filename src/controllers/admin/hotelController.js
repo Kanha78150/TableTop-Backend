@@ -10,6 +10,10 @@ import {
   addServiceStatusToHotels,
   categorizeHotelsByStatus,
 } from "../../utils/hotelStatusHelper.js";
+import {
+  updateResourceUsage,
+  decreaseResourceUsage,
+} from "../../middleware/subscriptionAuth.middleware.js";
 
 // Create a new hotel
 export const createHotel = async (req, res, next) => {
@@ -33,6 +37,17 @@ export const createHotel = async (req, res, next) => {
       createdBy: req.admin._id, // Associate with current admin
     });
     await hotel.save();
+
+    // Update subscription usage counter for hotels (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      try {
+        await updateResourceUsage(req.admin._id, "hotels");
+      } catch (usageError) {
+        // If usage update fails, delete the created hotel and throw error
+        await Hotel.findByIdAndDelete(hotel._id);
+        throw usageError;
+      }
+    }
 
     res
       .status(201)
@@ -288,6 +303,16 @@ export const deleteHotel = async (req, res, next) => {
 
     // Also permanently delete all branches of this hotel
     await Branch.deleteMany({ hotel: hotel._id });
+
+    // Decrease subscription usage counter for hotels (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      try {
+        await decreaseResourceUsage(req.admin._id, "hotels");
+      } catch (usageError) {
+        console.error("Failed to decrease hotel usage counter:", usageError);
+        // Log error but don't fail the deletion
+      }
+    }
 
     res
       .status(200)
