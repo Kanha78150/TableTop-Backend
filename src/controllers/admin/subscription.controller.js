@@ -356,10 +356,10 @@ export const getMyUsageStats = async (req, res, next) => {
   try {
     const adminId = req.user._id;
 
-    // Find active subscription
+    // Find active or pending subscription
     const subscription = await AdminSubscription.findOne({
       admin: adminId,
-      status: "active",
+      status: { $in: ["active", "pending_payment"] },
     }).populate("plan");
 
     if (!subscription) {

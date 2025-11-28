@@ -179,7 +179,10 @@ adminSubscriptionSchema.index({ admin: 1, status: 1 }); // Compound index
 
 // Static method to find active subscription for admin
 adminSubscriptionSchema.statics.findActiveSubscription = function (adminId) {
-  return this.findOne({ admin: adminId, status: "active" }).populate("plan");
+  return this.findOne({
+    admin: adminId,
+    status: { $in: ["active", "pending_payment"] },
+  }).populate("plan");
 };
 
 // Static method to find expiring subscriptions
