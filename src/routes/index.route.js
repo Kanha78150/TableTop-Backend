@@ -15,8 +15,12 @@ import superAdminDashboardRoutes from "./superAdmin/dashboard.route.js";
 import superAdminSubscriptionPlanRoutes from "./superAdmin/subscriptionPlan.route.js";
 import superAdminSubscriptionJobsRoutes from "./superAdmin/subscriptionJobs.route.js";
 import adminSubscriptionRoutes from "./admin/subscription.route.js";
+import { getPublicSubscriptionPlans } from "../controllers/superAdmin/subscriptionPlan.controller.js";
 
 const router = Router();
+
+// Public routes (no authentication required)
+router.get("/public/subscription-plans", getPublicSubscriptionPlans);
 
 // Authentication routes
 router.use("/auth/user", userAuthRoutes);

@@ -30,6 +30,34 @@ export const generateTableQRCodes = async (req, res, next) => {
       return next(new APIError(400, "Validation failed", error.details));
     }
 
+    // Check if creating totalTables would exceed subscription limit (skip for super_admin)
+    if (req.admin.role !== "super_admin") {
+      const { AdminSubscription } = await import(
+        "../../models/AdminSubscription.model.js"
+      );
+      const subscription = await AdminSubscription.findActiveSubscription(
+        req.admin._id
+      );
+
+      if (subscription) {
+        await subscription.populate("plan");
+        const currentUsage = subscription.usage.tables || 0;
+        const limit = subscription.plan.features.maxTables;
+        const afterCreation = currentUsage + totalTables;
+
+        if (afterCreation > limit) {
+          return next(
+            new APIError(
+              403,
+              `Cannot create ${totalTables} tables. Current usage: ${currentUsage}/${limit}. Creating ${totalTables} would exceed limit (${afterCreation}/${limit}). Available: ${
+                limit - currentUsage
+              }`
+            )
+          );
+        }
+      }
+    }
+
     // Verify hotel exists, is active, and belongs to current admin
     const hotelDoc = await Hotel.findOne({
       _id: hotel,
@@ -346,12 +374,15 @@ export const deleteTable = async (req, res, next) => {
 
     await Table.findByIdAndDelete(tableId);
 
-    // Decrease subscription usage counter for tables (skip for super_admin)
+    // Sync table usage counter from actual database count (skip for super_admin)
     if (req.admin.role !== "super_admin") {
       try {
-        await decreaseResourceUsage(req.admin._id, "tables");
+        const { syncResourceUsage } = await import(
+          "../../middleware/subscriptionAuth.middleware.js"
+        );
+        await syncResourceUsage(req.admin._id, "tables");
       } catch (usageError) {
-        console.error("Failed to decrease table usage counter:", usageError);
+        console.error("Failed to sync table usage counter:", usageError);
         // Log error but don't fail the deletion
       }
     }

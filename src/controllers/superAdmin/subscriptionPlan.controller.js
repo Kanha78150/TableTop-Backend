@@ -553,3 +553,38 @@ export const getAdminsByPlan = async (req, res, next) => {
     next(error);
   }
 };
+
+// Public endpoint - No authentication required
+export const getPublicSubscriptionPlans = async (req, res, next) => {
+  try {
+    // Get only active plans
+    const plans = await SubscriptionPlan.find({ isActive: true })
+      .select("-createdBy -__v -createdAt -updatedAt") // Exclude sensitive fields
+      .sort({ displayOrder: 1, "price.monthly": 1 })
+      .lean();
+
+    // Format response for public consumption
+    const publicPlans = plans.map((plan) => ({
+      id: plan._id,
+      planId: plan.planId,
+      name: plan.name,
+      description: plan.description,
+      price: plan.price,
+      features: plan.features,
+      limitations: plan.limitations,
+      displayOrder: plan.displayOrder,
+    }));
+
+    return res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { plans: publicPlans, totalPlans: publicPlans.length },
+          "Public subscription plans retrieved successfully"
+        )
+      );
+  } catch (error) {
+    next(error);
+  }
+};
