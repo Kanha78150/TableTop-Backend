@@ -53,7 +53,7 @@ export const handleQRScan = async (req, res, next) => {
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        user = await User.findById(decoded.id);
+        user = await User.findById(decoded._id);
         if (user) {
           isAuthenticated = true;
         }

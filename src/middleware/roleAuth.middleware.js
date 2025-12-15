@@ -27,12 +27,12 @@ export const authenticate = async (req, res, next) => {
 
     // Determine user type from token and fetch from appropriate model
     if (decoded.role === "admin" || decoded.role === "super_admin") {
-      user = await Admin.findById(decoded._id || decoded.id)
+      user = await Admin.findById(decoded._id)
         .populate("assignedBranches", "name branchId location")
         .select("-password -refreshToken -passwordResetToken -twoFactorSecret");
       userType = "admin";
     } else if (decoded.role === "branch_manager") {
-      user = await Manager.findById(decoded._id || decoded.id)
+      user = await Manager.findById(decoded._id)
         .populate("branch", "name branchId location")
         .select("-password -refreshToken");
       userType = "manager";
@@ -47,7 +47,7 @@ export const authenticate = async (req, res, next) => {
       ].includes(decoded.role)
     ) {
       // Handle all staff roles (waiter, kitchen_staff, etc.)
-      user = await Staff.findById(decoded._id || decoded.id)
+      user = await Staff.findById(decoded._id)
         .populate("branch", "name branchId location")
         .populate("manager", "name email")
         .select("-password -refreshToken");
@@ -110,7 +110,7 @@ export const authenticateAdmin = async (req, res, next) => {
       return next(new APIError(403, "Admin access required"));
     }
 
-    const admin = await Admin.findById(decoded._id || decoded.id)
+    const admin = await Admin.findById(decoded._id)
       .populate("assignedBranches", "name branchId location")
       .select("-password -refreshToken -passwordResetToken -twoFactorSecret");
 

@@ -20,7 +20,7 @@ export const authenticateUser = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Get user from database
-    const user = await User.findById(decoded.id).select(
+    const user = await User.findById(decoded._id).select(
       "-password -refreshToken"
     );
     if (!user) {
@@ -65,7 +65,7 @@ export const authenticateOAuthUser = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Get user from database
-    const user = await User.findById(decoded.id).select(
+    const user = await User.findById(decoded._id).select(
       "-password -refreshToken"
     );
     if (!user) {
@@ -109,7 +109,7 @@ export const optionalAuth = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Get user from database
-    const user = await User.findById(decoded.id).select(
+    const user = await User.findById(decoded._id).select(
       "-password -refreshToken"
     );
     if (user && user.isEmailVerified) {
@@ -138,8 +138,8 @@ export const authenticateManager = async (req, res, next) => {
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Get manager from database using the correct field (id, not _id)
-    const manager = await Manager.findById(decoded.id)
+    // Get manager from database using the correct field
+    const manager = await Manager.findById(decoded._id)
       .populate("hotel", "name hotelId")
       .populate("branch", "name branchId location")
       .select("-password -refreshToken");
@@ -182,8 +182,8 @@ export const authenticateStaff = async (req, res, next) => {
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Get staff from database using the correct field (id, not _id)
-    const staff = await Staff.findById(decoded.id)
+    // Get staff from database using the correct field
+    const staff = await Staff.findById(decoded._id)
       .populate("hotel", "name hotelId")
       .populate("branch", "name branchId location")
       .populate("manager", "name employeeId")

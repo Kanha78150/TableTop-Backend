@@ -288,7 +288,7 @@ export const refreshToken = async (req, res, next) => {
       incomingRefreshToken,
       process.env.JWT_REFRESH_SECRET
     );
-    const admin = await Admin.findById(decoded.id);
+    const admin = await Admin.findById(decoded._id);
 
     if (!admin || admin.refreshToken !== incomingRefreshToken) {
       return next(new APIError(401, "Invalid refresh token"));
