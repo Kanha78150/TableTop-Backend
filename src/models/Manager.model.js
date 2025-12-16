@@ -82,6 +82,7 @@ const managerSchema = new mongoose.Schema(
 
       // Menu Management
       manageMenu: { type: Boolean, default: true },
+      viewMenu: { type: Boolean, default: true },
       updateMenuItems: { type: Boolean, default: true },
 
       // Order Management
@@ -300,6 +301,7 @@ export const managerValidationSchemas = {
       manageStaff: Joi.boolean().default(true),
       viewStaff: Joi.boolean().default(true),
       manageMenu: Joi.boolean().default(true),
+      viewMenu: Joi.boolean().default(true),
       updateMenuItems: Joi.boolean().default(true),
       processOrders: Joi.boolean().default(true),
       updateOrderStatus: Joi.boolean().default(true),
@@ -390,6 +392,7 @@ export const managerValidationSchemas = {
       manageStaff: Joi.boolean(),
       viewStaff: Joi.boolean(),
       manageMenu: Joi.boolean(),
+      viewMenu: Joi.boolean(),
       updateMenuItems: Joi.boolean(),
       processOrders: Joi.boolean(),
       updateOrderStatus: Joi.boolean(),
