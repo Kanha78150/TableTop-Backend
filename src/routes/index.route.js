@@ -4,6 +4,7 @@ import adminAuthRoutes from "./auth/adminAuth.route.js";
 import managerAuthRoutes from "./auth/managerAuth.route.js";
 import staffAuthRoutes from "./auth/staffAuth.route.js";
 import superAdminAuthRoutes from "./auth/superAdminAuth.route.js";
+import unifiedAuthRoutes from "./auth/unifiedAuth.route.js";
 import adminRoutes from "./admin.route.js";
 import managerRoutes from "./manager.route.js";
 import staffRoutes from "./staff.route.js";
@@ -23,6 +24,7 @@ const router = Router();
 router.get("/public/subscription-plans", getPublicSubscriptionPlans);
 
 // Authentication routes
+router.use("/auth", unifiedAuthRoutes); // Unified login endpoint
 router.use("/auth/user", userAuthRoutes);
 router.use("/auth/admin", adminAuthRoutes);
 router.use("/auth/manager", managerAuthRoutes);
