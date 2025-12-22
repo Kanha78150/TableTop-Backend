@@ -22,6 +22,9 @@ router.get("/orders/my-orders", staffOrderController.getMyOrders);
 // Get active orders count for current staff
 router.get("/orders/active-count", staffOrderController.getActiveOrdersCount);
 
+// Get all tables with their status
+router.get("/tables/status", staffOrderController.getAllTablesStatus);
+
 // Get specific order details (MUST BE AFTER all specific routes)
 router.get("/orders/:orderId", staffOrderController.getOrderDetails);
 

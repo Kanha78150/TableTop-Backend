@@ -1,6 +1,7 @@
 // src/controllers/staff/orderController.js - Staff Order Management Controller
 import { Order } from "../../models/Order.model.js";
 import { Staff } from "../../models/Staff.model.js";
+import { Table } from "../../models/Table.model.js";
 import assignmentService from "../../services/assignmentService.js";
 import timeTracker from "../../services/timeTracker.js";
 import { APIResponse } from "../../utils/APIResponse.js";
@@ -262,8 +263,27 @@ export const getActiveOrdersCount = async (req, res, next) => {
 
     // Get staff info
     const staff = await Staff.findById(staffId).select(
-      "maxOrdersCapacity assignmentStats"
+      "maxOrdersCapacity assignmentStats hotel branch"
     );
+
+    // Get table counts for the staff's hotel/branch
+    const tableQuery = {
+      hotel: staff.hotel,
+      isActive: true,
+    };
+    
+    // Add branch filter if staff has a branch assigned
+    if (staff.branch) {
+      tableQuery.branch = staff.branch;
+    }
+
+    const [totalTables, activeTables] = await Promise.all([
+      Table.countDocuments(tableQuery),
+      Table.countDocuments({
+        ...tableQuery,
+        status: "available",
+      }),
+    ]);
 
     const responseData = {
       activeOrdersCount: activeCount,
@@ -273,6 +293,8 @@ export const getActiveOrdersCount = async (req, res, next) => {
         (activeCount / (staff?.maxOrdersCapacity || 5)) *
         100
       ).toFixed(2),
+      totalTables,
+      activeTables,
       assignmentStats: staff?.assignmentStats,
     };
 
@@ -287,6 +309,107 @@ export const getActiveOrdersCount = async (req, res, next) => {
       );
   } catch (error) {
     logger.error("Error getting active orders count:", error);
+    next(error);
+  }
+};
+
+/**
+ * Get all tables with their status
+ * GET /api/v1/staff/tables/status
+ * @access Staff
+ */
+export const getAllTablesStatus = async (req, res, next) => {
+  try {
+    const staffId = req.user._id;
+    const { status, limit, page, sortBy, sortOrder } = req.query;
+
+    // Get staff info to determine hotel/branch
+    const staff = await Staff.findById(staffId).select("hotel branch");
+
+    if (!staff) {
+      return next(new APIError(404, "Staff not found"));
+    }
+
+    // Build query for tables
+    const tableQuery = {
+      hotel: staff.hotel,
+      isActive: true,
+    };
+
+    // Add branch filter if staff has a branch assigned
+    if (staff.branch) {
+      tableQuery.branch = staff.branch;
+    }
+
+    // Add status filter if provided
+    if (status && status !== "all") {
+      tableQuery.status = status;
+    }
+
+    // Calculate pagination
+    const pageNumber = parseInt(page) || 1;
+    const limitNumber = parseInt(limit) || 50;
+    const skip = (pageNumber - 1) * limitNumber;
+
+    // Determine sort options
+    const sortField = sortBy || "tableNumber";
+    const sortDirection = sortOrder === "desc" ? -1 : 1;
+    const sortOptions = { [sortField]: sortDirection };
+
+    // Get tables with pagination
+    const [tables, totalCount] = await Promise.all([
+      Table.find(tableQuery)
+        .select("tableNumber uniqueId status capacity currentOrder currentCustomer lastUsed totalOrders totalRevenue")
+        .populate("currentOrder", "orderNumber status totalPrice")
+        .populate("currentCustomer", "name phone")
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limitNumber)
+        .lean(),
+      Table.countDocuments(tableQuery),
+    ]);
+
+    // Calculate status summary
+    const statusSummary = await Table.aggregate([
+      { $match: tableQuery },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const summary = statusSummary.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
+
+    const responseData = {
+      tables,
+      pagination: {
+        currentPage: pageNumber,
+        totalPages: Math.ceil(totalCount / limitNumber),
+        totalCount,
+        limit: limitNumber,
+      },
+      summary: {
+        available: summary.available || 0,
+        occupied: summary.occupied || 0,
+        reserved: summary.reserved || 0,
+        maintenance: summary.maintenance || 0,
+        inactive: summary.inactive || 0,
+        total: totalCount,
+      },
+    };
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(200, responseData, "Tables status retrieved successfully")
+      );
+  } catch (error) {
+    logger.error("Error getting tables status:", error);
     next(error);
   }
 };
@@ -333,4 +456,5 @@ export default {
   updateOrderStatus,
   getOrderDetails,
   getActiveOrdersCount,
+  getAllTablesStatus,
 };
