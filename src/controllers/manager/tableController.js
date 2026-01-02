@@ -41,7 +41,7 @@ export const getAllTables = async (req, res, next) => {
     // Get tables with current orders
     const tables = await Table.find(filter)
       .populate("currentOrder", "orderNumber status totalPrice createdAt")
-      .populate("currentReservation", "customerName reservationTime partySize")
+      .populate("currentCustomer", "name email phone")
       .sort(sort)
       .limit(parseInt(limit) || 50)
       .skip(parseInt(skip) || 0);
@@ -98,11 +98,7 @@ export const getTableDetails = async (req, res, next) => {
 
     const table = await Table.findById(tableId)
       .populate("currentOrder", "orderNumber status totalPrice items createdAt")
-      .populate(
-        "currentReservation",
-        "customerName reservationTime partySize contactNumber notes"
-      )
-      .populate("recentOrders", "orderNumber status totalPrice createdAt")
+      .populate("currentCustomer", "name email phone")
       .populate("branch", "name address");
 
     if (!table) {

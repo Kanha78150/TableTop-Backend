@@ -67,6 +67,7 @@ import {
   updateFoodItem,
   deleteFoodItem,
   updateFoodItemAvailability,
+  updateSingleFoodItemAvailability,
 } from "../controllers/admin/menuController.js";
 
 // Table Management Controllers
@@ -511,6 +512,14 @@ router.delete(
   deleteFoodItem
 );
 
+// Update single item availability
+router.patch(
+  "/menu/items/:itemId/availability",
+  rbac({ permissions: ["manageMenu"] }),
+  updateSingleFoodItemAvailability
+);
+
+// Bulk update items availability
 router.patch(
   "/menu/items/availability",
   rbac({ permissions: ["manageMenu"] }),

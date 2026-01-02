@@ -2,6 +2,7 @@ import { FoodCategory } from "../../models/FoodCategory.model.js";
 import { FoodItem } from "../../models/FoodItem.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import mongoose from "mongoose";
 
 // READ-ONLY OPERATIONS FOR MANAGERS
 // Managers can only view food categories and items, not create/update/delete them
@@ -76,23 +77,46 @@ export const getMenuItems = async (req, res, next) => {
       branch: req.manager.branch._id, // Manager can only see their branch items
     };
 
-    if (search) {
+    if (search && search.trim()) {
       query.$or = [
-        { name: new RegExp(search, "i") },
-        { description: new RegExp(search, "i") },
+        { name: new RegExp(search.trim(), "i") },
+        { description: new RegExp(search.trim(), "i") },
       ];
     }
 
-    if (categoryId) {
-      query.category = categoryId;
+    if (categoryId && categoryId.trim()) {
+      // Convert categoryId to ObjectId if it's a valid MongoDB ID
+      if (mongoose.Types.ObjectId.isValid(categoryId)) {
+        query.category = new mongoose.Types.ObjectId(categoryId);
+      } else {
+        // If not valid ObjectId, return empty result
+        return res.status(200).json(
+          new APIResponse(
+            200,
+            {
+              menuItems: [],
+              pagination: {
+                currentPage: parseInt(page),
+                totalPages: 0,
+                totalItems: 0,
+                hasNextPage: false,
+                hasPrevPage: false,
+              },
+            },
+            "Invalid category ID format"
+          )
+        );
+      }
     }
 
-    if (isAvailable !== undefined) {
-      query.isAvailable = isAvailable === "true";
+    if (isAvailable !== undefined && isAvailable !== null && isAvailable !== "") {
+      // Handle both boolean and string values
+      query.isAvailable = isAvailable === true || isAvailable === "true";
     }
 
-    if (foodType) {
-      query.foodType = foodType;
+    if (foodType && foodType.trim()) {
+      // Case-insensitive match for foodType
+      query.foodType = new RegExp(`^${foodType.trim()}$`, "i");
     }
 
     const skip = (page - 1) * limit;

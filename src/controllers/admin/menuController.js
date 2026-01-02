@@ -620,6 +620,62 @@ export const deleteFoodItem = async (req, res, next) => {
   }
 };
 
+// Update single food item availability
+export const updateSingleFoodItemAvailability = async (req, res, next) => {
+  try {
+    const { itemId } = req.params;
+    const { isAvailable, quantityAvailable } = req.body;
+
+    // Validate that isAvailable is provided
+    if (isAvailable === undefined) {
+      return next(new APIError(400, "isAvailable field is required"));
+    }
+
+    // Build query based on admin's ownership
+    let query = {
+      _id: itemId,
+      createdBy: req.admin._id,
+    };
+
+    // Branch admin can only update items in their assigned branches
+    if (req.admin.role === "branch_admin") {
+      query.branch = { $in: req.admin.assignedBranches };
+    }
+
+    const menuItem = await FoodItem.findOne(query);
+
+    if (!menuItem) {
+      return next(
+        new APIError(404, "Menu item not found or you don't have permission to update it")
+      );
+    }
+
+    // Build update object
+    const updates = { isAvailable };
+    if (quantityAvailable !== undefined) {
+      updates.quantityAvailable = quantityAvailable;
+    }
+
+    const updatedItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
+      new: true,
+      runValidators: true,
+    })
+      .populate("category", "name type")
+      .populate("branch", "name branchId location")
+      .populate("hotel", "name");
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        { menuItem: updatedItem },
+        "Menu item availability updated successfully"
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Bulk update food item availability
 export const updateFoodItemAvailability = async (req, res, next) => {
   try {
