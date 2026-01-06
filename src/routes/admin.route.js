@@ -109,6 +109,19 @@ import {
   debugCoinSettings,
 } from "../controllers/admin/coinController.js";
 
+// Complaint Management Controllers
+import {
+  getAllComplaints,
+  getComplaintDetails,
+  updateComplaintStatus,
+  assignComplaintToStaff,
+  reassignComplaint,
+  addComplaintResponse,
+  resolveComplaint,
+  getEscalatedComplaints,
+  getComplaintAnalytics,
+} from "../controllers/admin/complaintController.js";
+
 // Middleware
 import {
   authenticateAdmin,
@@ -871,6 +884,83 @@ router.post(
   "/scheduled-jobs/stop-all",
   rbac({ permissions: ["manageSystem"] }),
   stopAllJobs
+);
+
+// ======================
+// COMPLAINT MANAGEMENT ROUTES
+// ======================
+
+// Get all complaints (hotel-wide for branch admin, cross-hotel for super admin)
+router.get(
+  "/complaints",
+  rbac({ permissions: ["viewReports"] }),
+  requireActiveSubscription,
+  getAllComplaints
+);
+
+// Get escalated complaints
+router.get(
+  "/complaints/escalated",
+  rbac({ permissions: ["viewReports"] }),
+  requireActiveSubscription,
+  getEscalatedComplaints
+);
+
+// Get complaint analytics
+router.get(
+  "/complaints/analytics",
+  rbac({ permissions: ["viewAnalytics"] }),
+  requireActiveSubscription,
+  requireFeature("analyticsAccess"),
+  getComplaintAnalytics
+);
+
+// Get specific complaint details
+router.get(
+  "/complaints/:complaintId",
+  rbac({ permissions: ["viewReports"] }),
+  requireActiveSubscription,
+  getComplaintDetails
+);
+
+// Update complaint status
+router.put(
+  "/complaints/:complaintId/status",
+  rbac({ permissions: ["manageUsers"] }),
+  requireActiveSubscription,
+  updateComplaintStatus
+);
+
+// Assign complaint to staff
+router.put(
+  "/complaints/:complaintId/assign/:staffId",
+  rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
+  assignComplaintToStaff
+);
+
+// Reassign complaint to different staff
+router.put(
+  "/complaints/:complaintId/reassign/:staffId",
+  rbac({ permissions: ["manageStaff"] }),
+  requireActiveSubscription,
+  reassignComplaint
+);
+
+// Add response to complaint
+router.post(
+  "/complaints/:complaintId/response",
+  rbac({ permissions: ["manageUsers"] }),
+  requireActiveSubscription,
+  addComplaintResponse
+);
+
+// Resolve complaint
+router.put(
+  "/complaints/:complaintId/resolve",
+  rbac({ permissions: ["manageUsers"] }),
+  requireActiveSubscription,
+  resolveComplaint
 );
 
 // ===== ACCOUNTING & TRANSACTIONS =====

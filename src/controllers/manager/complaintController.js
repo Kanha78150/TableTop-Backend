@@ -1,6 +1,7 @@
 // src/controllers/manager/complaintController.js - Manager Complaint Management Controller
 import { Complaint } from "../../models/Complaint.model.js";
 import { Staff } from "../../models/Staff.model.js";
+import { CoinTransaction } from "../../models/CoinTransaction.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
@@ -190,6 +191,37 @@ export const updateComplaintStatus = async (req, res, next) => {
       updateData.resolution = resolution;
       updateData.resolvedBy = managerId;
       updateData.resolvedAt = new Date();
+
+      // Calculate and set coin compensation based on priority
+      const coinCompensationMap = {
+        low: 50,
+        medium: 100,
+        high: 200,
+        urgent: 500,
+      };
+      const coinAmount = coinCompensationMap[complaint.priority] || 100;
+      updateData.coinCompensation = coinAmount;
+
+      // Award coins to user
+      try {
+        await CoinTransaction.createTransaction({
+          userId: complaint.user,
+          type: "earned",
+          amount: coinAmount,
+          description: `Compensation for complaint #${complaint.complaintId}`,
+          metadata: {
+            complaintId: complaint._id,
+            priority: complaint.priority,
+            adminReason: "Complaint resolution compensation",
+          },
+        });
+        logger.info(
+          `Awarded ${coinAmount} coins to user ${complaint.user} for complaint ${complaint.complaintId}`
+        );
+      } catch (coinError) {
+        logger.error("Error awarding coins for complaint resolution:", coinError);
+        // Don't block resolution if coin award fails
+      }
     }
 
     // Add internal notes if provided
@@ -208,6 +240,14 @@ export const updateComplaintStatus = async (req, res, next) => {
     logger.info(
       `Complaint ${complaintId} status updated to ${status} by manager ${managerId}`
     );
+
+    // TODO: Notify assigned staff of status change (Phase 7)
+    // if (updatedComplaint.assignedTo) {
+    //   await notificationService.notifyStaffComplaintUpdated(updatedComplaint, req.user, "status_changed");
+    // }
+
+    // TODO: Notify user of status change (Phase 7)
+    // await notificationService.notifyUserComplaintUpdated(updatedComplaint, status);
 
     res
       .status(200)
@@ -232,7 +272,7 @@ export const updateComplaintStatus = async (req, res, next) => {
 export const assignComplaintToStaff = async (req, res, next) => {
   try {
     const { complaintId, staffId } = req.params;
-    const { notes } = req.body;
+    const { notes } = req.body || {};
     const managerId = req.user._id;
 
     // Validate IDs
@@ -306,6 +346,9 @@ export const assignComplaintToStaff = async (req, res, next) => {
       `Complaint ${complaintId} assigned to staff ${staffId} by manager ${managerId}`
     );
 
+    // TODO: Notify assigned staff (Phase 7 - notificationService)
+    // await notificationService.notifyStaffComplaintAssigned(updatedComplaint, staffId);
+
     res
       .status(200)
       .json(
@@ -317,6 +360,112 @@ export const assignComplaintToStaff = async (req, res, next) => {
       );
   } catch (error) {
     logger.error("Error assigning complaint:", error);
+    next(error);
+  }
+};
+
+/**
+ * Reassign complaint to different staff member
+ * PUT /api/v1/manager/complaints/:complaintId/reassign/:staffId
+ * @access Manager
+ */
+export const reassignComplaint = async (req, res, next) => {
+  try {
+    const { complaintId, staffId } = req.params;
+    const { notes } = req.body;
+    const managerId = req.user._id;
+
+    // Validate IDs
+    if (
+      !complaintId.match(/^[0-9a-fA-F]{24}$/) ||
+      !staffId.match(/^[0-9a-fA-F]{24}$/)
+    ) {
+      return next(new APIError(400, "Invalid complaint or staff ID"));
+    }
+
+    // Get complaint and new staff
+    const [complaint, newStaff] = await Promise.all([
+      Complaint.findById(complaintId),
+      Staff.findById(staffId),
+    ]);
+
+    if (!complaint) {
+      return next(new APIError(404, "Complaint not found"));
+    }
+
+    if (!newStaff) {
+      return next(new APIError(404, "Staff member not found"));
+    }
+
+    // Check branch access
+    if (complaint.branch?.toString() !== req.user.branch?.toString()) {
+      return next(
+        new APIError(403, "You can only reassign complaints from your branch")
+      );
+    }
+
+    if (newStaff.branch?.toString() !== req.user.branch?.toString()) {
+      return next(
+        new APIError(403, "You can only assign to staff from your branch")
+      );
+    }
+
+    // Check if staff has permission
+    if (!newStaff.permissions?.handleComplaints) {
+      return next(
+        new APIError(
+          400,
+          "Staff member doesn't have permission to handle complaints"
+        )
+      );
+    }
+
+    const oldStaffId = complaint.assignedTo;
+
+    // Update assignment
+    complaint.assignedTo = staffId;
+    complaint.assignedBy = managerId;
+    complaint.assignedAt = new Date();
+    complaint.staffViewedAt = null; // Reset viewed status
+    complaint.staffNotified = false;
+    
+    complaint.statusHistory.push({
+      status: complaint.status,
+      updatedBy: managerId,
+      updatedByModel: "Manager",
+      timestamp: new Date(),
+      notes: `Reassigned to ${newStaff.name}${notes ? ` - ${notes}` : ""}`,
+    });
+
+    complaint.updatedBy = {
+      userType: "manager",
+      userId: managerId,
+      timestamp: new Date(),
+    };
+
+    await complaint.save();
+
+    logger.info(
+      `Complaint ${complaintId} reassigned from ${oldStaffId} to ${staffId} by manager ${managerId}`
+    );
+
+    // TODO: Notify old staff (Phase 7)
+    // if (oldStaffId) {
+    //   await notificationService.notifyStaffComplaintReassigned(complaint, oldStaffId, "removed");
+    // }
+    
+    // TODO: Notify new staff (Phase 7)
+    // await notificationService.notifyStaffComplaintAssigned(complaint, staffId);
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        { complaint },
+        `Complaint reassigned to ${newStaff.name} successfully`
+      )
+    );
+  } catch (error) {
+    logger.error("Error reassigning complaint:", error);
     next(error);
   }
 };
@@ -590,6 +739,7 @@ export default {
   getComplaintDetails,
   updateComplaintStatus,
   assignComplaintToStaff,
+  reassignComplaint,
   addComplaintResponse,
   getComplaintAnalytics,
 };

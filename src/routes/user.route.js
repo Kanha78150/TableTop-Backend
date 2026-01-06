@@ -9,6 +9,15 @@ import {
 
 import userMenuController from "../controllers/user/menuController.js";
 import {
+  submitComplaint,
+  getMyComplaints,
+  getComplaintDetails,
+  addFollowUpMessage,
+  rateResolution,
+  reopenComplaint,
+  getMyComplaintsDashboard,
+} from "../controllers/user/complaintController.js";
+import {
   addToCart,
   getCart,
   updateItemQuantity,
@@ -51,6 +60,7 @@ import {
 } from "../controllers/user/coinController.js";
 import userOfferController from "../controllers/user/offerController.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
+import { upload } from "../middleware/multer.middleware.js";
 
 const router = express.Router();
 
@@ -253,5 +263,40 @@ router.get(
   authenticateUser,
   userOfferController.getSmartOfferRecommendations
 );
+
+// ======================
+// COMPLAINT ROUTES (PROTECTED - requires authentication)
+// ======================
+
+// Submit a new complaint
+router.post(
+  "/complaints",
+  authenticateUser,
+  upload.array("attachments", 5),
+  submitComplaint
+);
+
+// Get user's complaint dashboard summary
+router.get("/complaints/dashboard", authenticateUser, getMyComplaintsDashboard);
+
+// Get all complaints for logged-in user
+router.get("/complaints", authenticateUser, getMyComplaints);
+
+// Get specific complaint details
+router.get("/complaints/:complaintId", authenticateUser, getComplaintDetails);
+
+// Add follow-up message to complaint
+router.post(
+  "/complaints/:complaintId/followup",
+  authenticateUser,
+  upload.array("attachments", 3),
+  addFollowUpMessage
+);
+
+// Rate complaint resolution
+router.put("/complaints/:complaintId/rate", authenticateUser, rateResolution);
+
+// Reopen a resolved complaint
+router.put("/complaints/:complaintId/reopen", authenticateUser, reopenComplaint);
 
 export default router;

@@ -48,6 +48,7 @@ export const authenticate = async (req, res, next) => {
     ) {
       // Handle all staff roles (waiter, kitchen_staff, etc.)
       user = await Staff.findById(decoded._id)
+        .populate("hotel", "name hotelId location")
         .populate("branch", "name branchId location")
         .populate("manager", "name email")
         .select("-password -refreshToken");

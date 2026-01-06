@@ -120,3 +120,39 @@ dist
 .pnp.*
 
 # End of https://mrkandreev.name/snippets/gitignore-generator/#Node
+
+# Temporary files and uploads
+temp/
+public/temp/
+uploads/
+public/uploads/
+
+# Database dumps and backups
+*.sql
+*.dump
+*.mongodb
+
+# PM2 process files
+ecosystem.config.js
+.pm2/
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# SSL certificates and keys
+*.pem
+*.key
+*.cert
+*.crt
+
+# Additional logs
+combined.log
+error.log
+access.log

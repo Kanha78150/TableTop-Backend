@@ -1,6 +1,7 @@
 // src/services/scheduledJobs.js - Scheduled Jobs Service
 import cron from "node-cron";
 import assignmentService from "./assignmentService.js";
+import { Complaint } from "../models/Complaint.model.js";
 import { logger } from "../utils/logger.js";
 
 class ScheduledJobsService {
@@ -18,6 +19,9 @@ class ScheduledJobsService {
 
       // Schedule round-robin reset daily between 5:00-6:00 AM
       this.scheduleRoundRobinReset();
+
+      // Schedule complaint auto-escalation every 6 hours
+      this.scheduleComplaintEscalation();
 
       this.isInitialized = true;
       logger.info("✅ Scheduled jobs initialized successfully", {});
@@ -231,6 +235,133 @@ class ScheduledJobsService {
     this.jobs.clear();
     this.isInitialized = false;
     logger.info("🗑️ All scheduled jobs destroyed", {});
+  }
+
+  /**
+   * Schedule automatic complaint escalation every 6 hours
+   * Escalates unresolved high/urgent priority complaints older than 24 hours
+   */
+  scheduleComplaintEscalation() {
+    // Run every 6 hours: 0 */6 * * *
+    const cronPattern = "0 */6 * * *";
+
+    logger.info("📅 Scheduling complaint auto-escalation every 6 hours", {});
+
+    const job = cron.schedule(
+      cronPattern,
+      async () => {
+        try {
+          logger.info("🚨 Starting automatic complaint escalation check...", {});
+
+          await this.performComplaintEscalation();
+
+          logger.info("✅ Automatic complaint escalation check completed", {});
+        } catch (error) {
+          logger.error("❌ Failed to perform complaint escalation:", error);
+        }
+      },
+      {
+        scheduled: true,
+        timezone: "Asia/Kolkata",
+      }
+    );
+
+    this.jobs.set("complaintEscalation", job);
+    logger.info("✅ Complaint escalation job scheduled successfully", {});
+  }
+
+  /**
+   * Perform complaint escalation logic
+   * Escalates unresolved complaints that meet escalation criteria
+   */
+  async performComplaintEscalation() {
+    try {
+      const now = new Date();
+      const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+      // Find complaints that need escalation
+      const complaintsToEscalate = await Complaint.find({
+        status: { $in: ["pending", "in_progress"] },
+        priority: { $in: ["high", "urgent"] },
+        createdAt: { $lt: twentyFourHoursAgo },
+        $or: [
+          { escalatedAt: { $exists: false } },
+          { escalatedAt: null },
+          { escalatedAt: { $lt: fortyEightHoursAgo } }, // Re-escalate if not resolved in 48hrs
+        ],
+      }).populate("user branch hotel assignedTo");
+
+      logger.info(
+        `Found ${complaintsToEscalate.length} complaints requiring escalation`,
+        {}
+      );
+
+      let escalatedCount = 0;
+
+      for (const complaint of complaintsToEscalate) {
+        try {
+          // Calculate days pending
+          const daysPending = Math.floor(
+            (now - complaint.createdAt) / (1000 * 60 * 60 * 24)
+          );
+
+          // Update complaint status to escalated
+          complaint.status = "escalated";
+          complaint.escalatedAt = now;
+          complaint.escalationReason = `Auto-escalated: ${complaint.priority} priority complaint unresolved for ${daysPending} days`;
+
+          // Add to status history
+          complaint.statusHistory.push({
+            status: "escalated",
+            updatedBy: null,
+            updatedByModel: "Admin",
+            timestamp: now,
+            notes: `Auto-escalated by system after ${daysPending} days pending`,
+          });
+
+          complaint.updatedBy = {
+            userType: "admin",
+            userId: null,
+            timestamp: now,
+          };
+
+          await complaint.save();
+
+          // TODO: Send notifications (Phase 7 integration)
+          // await notificationService.notifyManagementComplaintEscalated(complaint);
+          // if (complaint.assignedTo) {
+          //   await notificationService.notifyStaffComplaintUpdated(complaint, { name: "System" }, "escalated");
+          // }
+
+          logger.warn(
+            `Escalated complaint ${complaint.complaintId} - ${daysPending} days pending`,
+            {
+              complaintId: complaint.complaintId,
+              priority: complaint.priority,
+              daysPending,
+            }
+          );
+
+          escalatedCount++;
+        } catch (error) {
+          logger.error(
+            `Error escalating complaint ${complaint.complaintId}:`,
+            error
+          );
+        }
+      }
+
+      logger.info(
+        `✅ Escalation complete: ${escalatedCount} complaints escalated`,
+        { escalatedCount, totalChecked: complaintsToEscalate.length }
+      );
+
+      return { escalatedCount, totalChecked: complaintsToEscalate.length };
+    } catch (error) {
+      logger.error("Error in performComplaintEscalation:", error);
+      throw error;
+    }
   }
 }
 
