@@ -7,6 +7,8 @@ import assignmentSystemInit from "./src/services/assignmentSystemInit.js";
 import scheduledJobsService from "./src/services/scheduledJobs.js";
 import { startAllJobs } from "./src/services/subscriptionJobs.js";
 import { logger } from "./src/utils/logger.js";
+import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
+import { setIO } from "./src/utils/socketService.js";
 
 // Load env variables
 dotenv.config({
@@ -59,6 +61,12 @@ const io = new Server(server, {
   credentials: true,
   methods: ["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE"],
 });
+
+// Initialize complaint socket events
+setupComplaintEvents(io);
+
+// Set global Socket.IO instance for use in controllers
+setIO(io);
 
 // Basic socket handler
 io.on("connection", (socket) => {

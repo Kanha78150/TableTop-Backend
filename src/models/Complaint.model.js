@@ -46,7 +46,14 @@ const complaintSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "in_progress", "resolved", "escalated", "cancelled", "reopened"],
+      enum: [
+        "pending",
+        "in_progress",
+        "resolved",
+        "escalated",
+        "cancelled",
+        "reopened",
+      ],
       default: "pending",
     },
 
@@ -115,7 +122,14 @@ const complaintSchema = new mongoose.Schema(
       {
         status: {
           type: String,
-          enum: ["pending", "in_progress", "resolved", "escalated", "cancelled", "reopened"],
+          enum: [
+            "pending",
+            "in_progress",
+            "resolved",
+            "escalated",
+            "cancelled",
+            "reopened",
+          ],
         },
         updatedBy: {
           type: mongoose.Schema.Types.ObjectId,
@@ -282,6 +296,12 @@ export const validateCreateComplaint = (data) => {
     orderId: Joi.string()
       .pattern(/^[0-9a-fA-F]{24}$/)
       .optional(),
+    branchId: Joi.string()
+      .pattern(/^[0-9a-fA-F]{24}$/)
+      .optional(),
+    hotelId: Joi.string()
+      .pattern(/^[0-9a-fA-F]{24}$/)
+      .optional(),
     contactMethod: Joi.string().valid("phone", "email", "in_person").optional(),
     requestRefund: Joi.boolean().optional(),
     refundAmount: Joi.number().positive().optional(),
@@ -331,7 +351,14 @@ export const validateStatusUpdate = (data) => {
       .pattern(/^[0-9a-fA-F]{24}$/)
       .required(),
     status: Joi.string()
-      .valid("pending", "in_progress", "resolved", "escalated", "cancelled", "reopened")
+      .valid(
+        "pending",
+        "in_progress",
+        "resolved",
+        "escalated",
+        "cancelled",
+        "reopened"
+      )
       .required(),
     resolution: Joi.string().min(10).max(1000).when("status", {
       is: "resolved",
@@ -356,9 +383,19 @@ export const validateComplaintResponse = (data) => {
 export const validateGetComplaintsQuery = (data) => {
   const schema = Joi.object({
     status: Joi.string()
-      .valid("all", "pending", "in_progress", "resolved", "escalated", "cancelled", "reopened")
+      .valid(
+        "all",
+        "pending",
+        "in_progress",
+        "resolved",
+        "escalated",
+        "cancelled",
+        "reopened"
+      )
       .optional(),
-    priority: Joi.string().valid("all", "low", "medium", "high", "urgent").optional(),
+    priority: Joi.string()
+      .valid("all", "low", "medium", "high", "urgent")
+      .optional(),
     category: Joi.string()
       .valid(
         "all",
@@ -382,6 +419,8 @@ export const validateGetComplaintsQuery = (data) => {
     search: Joi.string().max(200).optional(),
     startDate: Joi.date().iso().optional(),
     endDate: Joi.date().iso().optional(),
+    unassignedOnly: Joi.boolean().optional(),
+    unviewedOnly: Joi.boolean().optional(),
   });
   return schema.validate(data);
 };

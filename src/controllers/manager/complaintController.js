@@ -5,6 +5,12 @@ import { CoinTransaction } from "../../models/CoinTransaction.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
+import {
+  emitComplaintAssigned,
+  emitComplaintUpdate,
+  emitComplaintResolved,
+} from "../../socket/complaintEvents.js";
+import { getIO } from "../../utils/socketService.js";
 import Joi from "joi";
 
 /**
@@ -15,7 +21,20 @@ import Joi from "joi";
 export const getAllComplaints = async (req, res, next) => {
   try {
     const managerId = req.user._id;
-    const { status, priority, limit, skip, sortBy, sortOrder } = req.query;
+
+    const {
+      status,
+      priority,
+      category,
+      unassignedOnly,
+      unassigned,
+      search,
+      page,
+      limit,
+      skip,
+      sortBy,
+      sortOrder,
+    } = req.query;
 
     // Validate query parameters
     const { error } = validateGetComplaintsQuery(req.query);
@@ -36,18 +55,43 @@ export const getAllComplaints = async (req, res, next) => {
       filter.priority = priority;
     }
 
+    if (category && category !== "all") {
+      filter.category = category;
+    }
+
+    // Handle unassigned filter (support both parameter names)
+    const isUnassignedOnly = unassignedOnly === "true" || unassigned === "true";
+    if (isUnassignedOnly) {
+      filter.assignedTo = null;
+    }
+
+    // Handle search
+    if (search && search.trim()) {
+      filter.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+        { complaintId: { $regex: search, $options: "i" } },
+      ];
+    }
+
     // Build sort criteria
     const sort = {};
     sort[sortBy || "createdAt"] = sortOrder === "asc" ? 1 : -1;
 
+    // Calculate pagination
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 20;
+    const skipNum = parseInt(skip) || (pageNum - 1) * limitNum;
+
     // Get complaints with pagination
     const complaints = await Complaint.find(filter)
       .populate("user", "name phone email")
-      .populate("assignedTo", "name staffId")
+      .populate("assignedTo", "name email role staffId")
       .populate("resolvedBy", "name staffId")
+      .populate("branch", "name")
       .sort(sort)
-      .limit(parseInt(limit) || 20)
-      .skip(parseInt(skip) || 0);
+      .limit(limitNum)
+      .skip(skipNum);
 
     const totalCount = await Complaint.countDocuments(filter);
 
@@ -58,9 +102,13 @@ export const getAllComplaints = async (req, res, next) => {
           complaints,
           pagination: {
             total: totalCount,
-            limit: parseInt(limit) || 20,
-            skip: parseInt(skip) || 0,
-            hasMore: (parseInt(skip) || 0) + complaints.length < totalCount,
+            totalPages: Math.ceil(totalCount / limitNum),
+            currentPage: pageNum,
+            limit: limitNum,
+            skip: skipNum,
+            hasMore: skipNum + complaints.length < totalCount,
+            hasPrevPage: pageNum > 1,
+            hasNextPage: skipNum + complaints.length < totalCount,
           },
         },
         "Complaints retrieved successfully"
@@ -88,17 +136,21 @@ export const getComplaintDetails = async (req, res, next) => {
 
     const complaint = await Complaint.findById(complaintId)
       .populate("user", "name phone email")
-      .populate("order", "items totalPrice createdAt")
-      .populate("assignedTo", "name staffId role")
-      .populate("resolvedBy", "name staffId role")
-      .populate("responses.respondedBy", "name staffId role");
+      .populate("branch", "name")
+      .populate("hotel", "name")
+      .populate("assignedTo", "name email role staffId")
+      .populate("resolvedBy", "name email role staffId");
 
     if (!complaint) {
       return next(new APIError(404, "Complaint not found"));
     }
 
     // Check if complaint belongs to manager's branch
-    if (complaint.branch?.toString() !== req.user.branch?.toString()) {
+    const managerBranchId =
+      req.user.branch?._id?.toString() || req.user.branch?.toString();
+    const complaintBranchId = complaint.branch?._id?.toString();
+
+    if (complaintBranchId !== managerBranchId) {
       return next(
         new APIError(403, "You can only view complaints from your branch")
       );
@@ -148,7 +200,9 @@ export const updateComplaintStatus = async (req, res, next) => {
     }
 
     // Check branch access
-    if (complaint.branch?.toString() !== req.user.branch?.toString()) {
+    const managerBranchId =
+      req.user.branch?._id?.toString() || req.user.branch?.toString();
+    if (complaint.branch?.toString() !== managerBranchId) {
       return next(
         new APIError(403, "You can only update complaints from your branch")
       );
@@ -219,7 +273,10 @@ export const updateComplaintStatus = async (req, res, next) => {
           `Awarded ${coinAmount} coins to user ${complaint.user} for complaint ${complaint.complaintId}`
         );
       } catch (coinError) {
-        logger.error("Error awarding coins for complaint resolution:", coinError);
+        logger.error(
+          "Error awarding coins for complaint resolution:",
+          coinError
+        );
         // Don't block resolution if coin award fails
       }
     }
@@ -234,20 +291,48 @@ export const updateComplaintStatus = async (req, res, next) => {
       updateData,
       { new: true }
     )
-      .populate("assignedTo", "name staffId")
+      .populate("assignedTo", "name email role staffId")
       .populate("resolvedBy", "name staffId");
 
     logger.info(
       `Complaint ${complaintId} status updated to ${status} by manager ${managerId}`
     );
 
-    // TODO: Notify assigned staff of status change (Phase 7)
-    // if (updatedComplaint.assignedTo) {
-    //   await notificationService.notifyStaffComplaintUpdated(updatedComplaint, req.user, "status_changed");
-    // }
+    // Emit socket events to notify relevant parties
+    try {
+      const io = getIO();
 
-    // TODO: Notify user of status change (Phase 7)
-    // await notificationService.notifyUserComplaintUpdated(updatedComplaint, status);
+      // Notify user of status change
+      emitComplaintUpdate(io, complaintId, {
+        complaintId,
+        userId: updatedComplaint.user,
+        staffId: updatedComplaint.assignedTo?._id,
+        branchId: updatedComplaint.branch,
+        type: "status_updated",
+        status,
+        message: `Complaint status updated to ${status}`,
+        complaint: updatedComplaint.toObject(),
+      });
+
+      // If resolved, emit resolved event with coin compensation
+      if (status === "resolved" && updatedComplaint.coinCompensation) {
+        emitComplaintResolved(io, updatedComplaint.user, {
+          complaint: updatedComplaint.toObject(),
+          coinCompensation: updatedComplaint.coinCompensation,
+          message: `Complaint resolved with ${updatedComplaint.coinCompensation} coins compensation`,
+        });
+      }
+
+      logger.info(
+        `Socket events emitted for complaint ${complaintId} status update`
+      );
+    } catch (socketError) {
+      logger.error(
+        "Error emitting socket events for status update:",
+        socketError
+      );
+      // Don't block operation if socket emission fails
+    }
 
     res
       .status(200)
@@ -298,13 +383,16 @@ export const assignComplaintToStaff = async (req, res, next) => {
     }
 
     // Check branch access
-    if (complaint.branch?.toString() !== req.user.branch?.toString()) {
+    // req.user.branch is populated, complaint.branch and staff.branch are ObjectIds
+    const managerBranchId =
+      req.user.branch?._id?.toString() || req.user.branch?.toString();
+    if (complaint.branch?.toString() !== managerBranchId) {
       return next(
         new APIError(403, "You can only assign complaints from your branch")
       );
     }
 
-    if (staff.branch?.toString() !== req.user.branch?.toString()) {
+    if (staff.branch?.toString() !== managerBranchId) {
       return next(
         new APIError(403, "You can only assign to staff from your branch")
       );
@@ -346,9 +434,48 @@ export const assignComplaintToStaff = async (req, res, next) => {
       `Complaint ${complaintId} assigned to staff ${staffId} by manager ${managerId}`
     );
 
-    // TODO: Notify assigned staff (Phase 7 - notificationService)
-    // await notificationService.notifyStaffComplaintAssigned(updatedComplaint, staffId);
+    // Emit socket events to notify staff, user, and admin
+    try {
+      const io = getIO();
+      const socketData = {
+        complaintId: updatedComplaint._id,
+        complaint: updatedComplaint.toObject(),
+        type: "complaint_assigned",
+        assignedBy: "manager",
+        assignedTo: staff.name,
+      };
 
+      // Notify assigned staff
+      io.to(`staff_${staffId}`).emit("complaint:assigned", {
+        ...socketData,
+        staffId: staffId,
+        message: `You have been assigned complaint #${updatedComplaint.complaintId} by manager`,
+      });
+
+      // Notify user (customer)
+      io.to(`user_${updatedComplaint.user}`).emit("complaint:assigned", {
+        ...socketData,
+        userId: updatedComplaint.user,
+        message: `Your complaint has been assigned to ${staff.name}`,
+      });
+
+      // Notify admins in the hotel (not branch, to avoid duplicate for staff)
+      io.to(`hotel_${updatedComplaint.hotel}`).emit("complaint:assigned", {
+        ...socketData,
+        hotelId: updatedComplaint.hotel,
+        message: `Manager assigned complaint #${updatedComplaint.complaintId} to ${staff.name}`,
+      });
+
+      logger.info(
+        `Socket event emitted for complaint assignment to staff ${staffId}`
+      );
+    } catch (socketError) {
+      logger.error(
+        "Error emitting socket event for complaint assignment:",
+        socketError
+      );
+      // Don't block operation if socket emission fails
+    }
     res
       .status(200)
       .json(
@@ -398,13 +525,15 @@ export const reassignComplaint = async (req, res, next) => {
     }
 
     // Check branch access
-    if (complaint.branch?.toString() !== req.user.branch?.toString()) {
+    const managerBranchId =
+      req.user.branch?._id?.toString() || req.user.branch?.toString();
+    if (complaint.branch?.toString() !== managerBranchId) {
       return next(
         new APIError(403, "You can only reassign complaints from your branch")
       );
     }
 
-    if (newStaff.branch?.toString() !== req.user.branch?.toString()) {
+    if (newStaff.branch?.toString() !== managerBranchId) {
       return next(
         new APIError(403, "You can only assign to staff from your branch")
       );
@@ -428,7 +557,7 @@ export const reassignComplaint = async (req, res, next) => {
     complaint.assignedAt = new Date();
     complaint.staffViewedAt = null; // Reset viewed status
     complaint.staffNotified = false;
-    
+
     complaint.statusHistory.push({
       status: complaint.status,
       updatedBy: managerId,
@@ -449,21 +578,50 @@ export const reassignComplaint = async (req, res, next) => {
       `Complaint ${complaintId} reassigned from ${oldStaffId} to ${staffId} by manager ${managerId}`
     );
 
-    // TODO: Notify old staff (Phase 7)
-    // if (oldStaffId) {
-    //   await notificationService.notifyStaffComplaintReassigned(complaint, oldStaffId, "removed");
-    // }
-    
-    // TODO: Notify new staff (Phase 7)
-    // await notificationService.notifyStaffComplaintAssigned(complaint, staffId);
+    // Emit socket events to notify both old and new staff
+    try {
+      const io = getIO();
 
-    res.status(200).json(
-      new APIResponse(
-        200,
-        { complaint },
-        `Complaint reassigned to ${newStaff.name} successfully`
-      )
-    );
+      // Notify old staff (if any) that complaint was reassigned
+      if (oldStaffId) {
+        emitComplaintUpdate(io, complaintId, {
+          complaintId,
+          userId: complaint.user,
+          staffId: oldStaffId,
+          branchId: complaint.branch,
+          type: "reassigned_from",
+          message: "Complaint has been reassigned to another staff member",
+          complaint: complaint.toObject(),
+        });
+      }
+
+      // Notify new staff about the assignment
+      emitComplaintAssigned(io, staffId, {
+        complaint: complaint.toObject(),
+        readOnly: true,
+        message: `You have been assigned complaint #${complaint.complaintId}`,
+        assignedBy: { _id: managerId, name: req.user.name },
+        isReassignment: true,
+      });
+
+      logger.info(`Socket events emitted for complaint reassignment`);
+    } catch (socketError) {
+      logger.error(
+        "Error emitting socket events for reassignment:",
+        socketError
+      );
+      // Don't block operation if socket emission fails
+    }
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { complaint },
+          `Complaint reassigned to ${newStaff.name} successfully`
+        )
+      );
   } catch (error) {
     logger.error("Error reassigning complaint:", error);
     next(error);
@@ -483,7 +641,6 @@ export const addComplaintResponse = async (req, res, next) => {
 
     // Validate input
     const { error } = validateComplaintResponse({
-      complaintId,
       message,
       isPublic,
     });
@@ -498,7 +655,10 @@ export const addComplaintResponse = async (req, res, next) => {
     }
 
     // Check branch access
-    if (complaint.branch?.toString() !== req.user.branch?.toString()) {
+    // req.user.branch is populated, complaint.branch is ObjectId
+    const managerBranchId =
+      req.user.branch?._id?.toString() || req.user.branch?.toString();
+    if (complaint.branch?.toString() !== managerBranchId) {
       return next(
         new APIError(403, "You can only respond to complaints from your branch")
       );
@@ -507,9 +667,12 @@ export const addComplaintResponse = async (req, res, next) => {
     // Add response
     const response = {
       message,
-      respondedBy: managerId,
+      respondedBy: {
+        userType: "manager",
+        userId: managerId,
+      },
       respondedAt: new Date(),
-      isPublic: isPublic || false,
+      isPublic: isPublic !== undefined ? isPublic : false,
     };
 
     const updatedComplaint = await Complaint.findByIdAndUpdate(
@@ -519,7 +682,63 @@ export const addComplaintResponse = async (req, res, next) => {
         updatedAt: new Date(),
       },
       { new: true }
-    ).populate("responses.respondedBy", "name staffId role");
+    )
+      .populate("user", "name phone email")
+      .populate("branch", "name")
+      .populate("hotel", "name")
+      .populate("assignedTo", "name email role staffId")
+      .populate("resolvedBy", "name email role staffId");
+
+    // Emit socket event to notify admin, staff, and user
+    try {
+      const io = getIO();
+      const socketData = {
+        complaintId: updatedComplaint._id,
+        complaint: updatedComplaint.toObject(),
+        message:
+          isPublic !== false
+            ? "Manager added a response to your complaint"
+            : "Manager added an internal response",
+        respondedBy: "manager",
+        type: "response_added",
+      };
+
+      // Always notify admins and staff (even for internal responses)
+      // Notify admins in the hotel
+      io.to(`hotel_${updatedComplaint.hotel._id}`).emit("complaint:response", {
+        ...socketData,
+        hotelId: updatedComplaint.hotel._id,
+      });
+
+      // Notify assigned staff
+      if (updatedComplaint.assignedTo) {
+        io.to(`staff_${updatedComplaint.assignedTo._id}`).emit(
+          "complaint:response",
+          {
+            ...socketData,
+            staffId: updatedComplaint.assignedTo._id,
+          }
+        );
+      }
+
+      // Only notify user for public responses
+      if (isPublic !== false) {
+        io.to(`user_${updatedComplaint.user._id}`).emit("complaint:response", {
+          ...socketData,
+          userId: updatedComplaint.user._id,
+        });
+      }
+
+      logger.info(
+        `Socket event 'complaint:response' emitted for complaint ${updatedComplaint.complaintId}`
+      );
+    } catch (socketError) {
+      logger.error(
+        "Error emitting socket event for manager response:",
+        socketError
+      );
+      // Don't block the operation if socket emission fails
+    }
 
     logger.info(
       `Response added to complaint ${complaintId} by manager ${managerId}`
@@ -536,6 +755,229 @@ export const addComplaintResponse = async (req, res, next) => {
       );
   } catch (error) {
     logger.error("Error adding complaint response:", error);
+    next(error);
+  }
+};
+
+/**
+ * Resolve complaint with coin compensation
+ * PUT /api/v1/manager/complaints/:complaintId/resolve
+ * @access Manager
+ */
+export const resolveComplaint = async (req, res, next) => {
+  try {
+    const { complaintId } = req.params;
+    const { resolution, internalNotes } = req.body;
+    const managerId = req.user._id;
+    const managerName = req.user.name;
+
+    // Validate manager authentication
+    if (!managerId) {
+      return next(new APIError(401, "Manager authentication required"));
+    }
+
+    // Validate input
+    if (!resolution || resolution.trim().length < 10) {
+      return next(
+        new APIError(400, "Resolution must be at least 10 characters long")
+      );
+    }
+
+    // Get complaint
+    const complaint = await Complaint.findById(complaintId).populate("user");
+    if (!complaint) {
+      return next(new APIError(404, "Complaint not found"));
+    }
+
+    // Validate and clean existing responses to ensure all have proper respondedBy structure
+    if (complaint.responses && complaint.responses.length > 0) {
+      complaint.responses = complaint.responses.filter((resp) => {
+        if (
+          !resp.respondedBy ||
+          !resp.respondedBy.userType ||
+          !resp.respondedBy.userId
+        ) {
+          logger.warn(
+            `Removing malformed response from complaint ${complaintId}`
+          );
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Check branch access
+    // req.user.branch is populated, complaint.branch is ObjectId
+    const managerBranchId =
+      req.user.branch?._id?.toString() || req.user.branch?.toString();
+    if (complaint.branch?.toString() !== managerBranchId) {
+      return next(
+        new APIError(403, "You can only resolve complaints from your branch")
+      );
+    }
+
+    // Check if complaint can be resolved
+    if (
+      !["pending", "in_progress", "escalated", "reopened"].includes(
+        complaint.status
+      )
+    ) {
+      return next(
+        new APIError(
+          400,
+          `Cannot resolve complaint with status: ${complaint.status}`
+        )
+      );
+    }
+
+    // Update complaint
+    complaint.status = "resolved";
+    complaint.resolution = resolution;
+    if (internalNotes) {
+      complaint.internalNotes = internalNotes;
+    }
+    complaint.resolvedBy = managerId;
+    complaint.resolvedByModel = "Manager";
+    complaint.resolvedAt = new Date();
+    complaint.canReopen = true;
+
+    // Add resolution as a response with proper structure
+    const resolutionResponse = {
+      message: resolution,
+      respondedBy: {
+        userType: "manager",
+        userId: managerId,
+      },
+      respondedAt: new Date(),
+      isPublic: true,
+    };
+
+    logger.info(`Adding resolution response with respondedBy:`, {
+      userType: resolutionResponse.respondedBy.userType,
+      userId: resolutionResponse.respondedBy.userId,
+      managerId: managerId,
+    });
+
+    complaint.responses.push(resolutionResponse);
+
+    // Add to status history
+    complaint.statusHistory.push({
+      status: "resolved",
+      updatedBy: managerId,
+      updatedByModel: "Manager",
+      timestamp: new Date(),
+      notes: `Resolved by manager: ${resolution.substring(0, 100)}`,
+    });
+
+    complaint.updatedBy = {
+      userType: "manager",
+      userId: managerId,
+      timestamp: new Date(),
+    };
+
+    // Determine coin compensation based on priority
+    const coinAmounts = {
+      low: 50,
+      medium: 100,
+      high: 200,
+      urgent: 500,
+    };
+
+    const coinsToAward = coinAmounts[complaint.priority] || 100;
+    complaint.coinCompensation = coinsToAward;
+
+    await complaint.save();
+    await complaint.populate("assignedTo", "name email role staffId");
+
+    // Award coins to user
+    let coinTransaction = null;
+    try {
+      coinTransaction = await CoinTransaction.createTransaction({
+        user: complaint.user._id,
+        hotel: complaint.hotel,
+        branch: complaint.branch,
+        amount: coinsToAward,
+        type: "credit",
+        source: "complaint_resolution",
+        description: `Complaint resolved: ${complaint.title}`,
+        metadata: {
+          complaintId: complaint._id,
+          complaintNumber: complaint.complaintId,
+          priority: complaint.priority,
+          resolvedBy: "Manager",
+          managerId: managerId,
+        },
+        adminReason: "Complaint resolution compensation",
+      });
+
+      logger.info(
+        `Awarded ${coinsToAward} coins to user ${complaint.user._id} for complaint ${complaint.complaintId} resolution`
+      );
+    } catch (coinError) {
+      logger.error("Error awarding coins for complaint resolution:", coinError);
+      // Don't fail the resolution if coin award fails
+    }
+
+    // Emit socket events to notify admin, staff, and user about resolution
+    try {
+      const io = getIO();
+      const socketData = {
+        complaintId: complaint._id,
+        complaint: complaint.toObject(),
+        coinCompensation: coinsToAward,
+        type: "resolved",
+        resolvedBy: "manager",
+      };
+
+      // Notify user
+      io.to(`user_${complaint.user._id}`).emit("complaint:resolved", {
+        ...socketData,
+        userId: complaint.user._id,
+        message: `Your complaint has been resolved by manager. You received ${coinsToAward} coins as compensation.`,
+      });
+
+      // Notify assigned staff
+      if (complaint.assignedTo) {
+        io.to(`staff_${complaint.assignedTo._id}`).emit("complaint:resolved", {
+          ...socketData,
+          staffId: complaint.assignedTo._id,
+          message: `Manager resolved complaint #${complaint.complaintId}`,
+        });
+      }
+
+      // Notify admins in the hotel
+      io.to(`hotel_${complaint.hotel}`).emit("complaint:resolved", {
+        ...socketData,
+        hotelId: complaint.hotel,
+        message: `Manager resolved complaint #${complaint.complaintId}`,
+      });
+
+      logger.info(
+        `Socket events emitted for manager resolution of complaint ${complaint.complaintId}`
+      );
+    } catch (socketError) {
+      logger.error(
+        "Error emitting socket events for manager resolution:",
+        socketError
+      );
+      // Don't block operation if socket emission fails
+    }
+
+    logger.info(
+      `Complaint ${complaint.complaintId} resolved by manager ${managerName} with ${coinsToAward} coins compensation`
+    );
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { complaint, coinTransaction },
+          `Complaint resolved successfully. Customer rewarded with ${coinsToAward} coins.`
+        )
+      );
+  } catch (error) {
+    logger.error("Error resolving complaint:", error);
     next(error);
   }
 };
@@ -692,6 +1134,23 @@ const validateGetComplaintsQuery = (data) => {
     priority: Joi.string()
       .valid("all", "low", "medium", "high", "urgent")
       .optional(),
+    category: Joi.string()
+      .valid(
+        "all",
+        "service",
+        "food_quality",
+        "cleanliness",
+        "staff_behavior",
+        "billing",
+        "delivery",
+        "hygiene",
+        "other"
+      )
+      .optional(),
+    unassigned: Joi.boolean().optional(),
+    unassignedOnly: Joi.boolean().optional(),
+    search: Joi.string().optional(),
+    page: Joi.number().integer().min(1).optional(),
     limit: Joi.number().integer().min(1).max(100).optional(),
     skip: Joi.number().integer().min(0).optional(),
     sortBy: Joi.string()
@@ -727,7 +1186,6 @@ const validateStatusUpdate = (data) => {
 
 const validateComplaintResponse = (data) => {
   const schema = Joi.object({
-    complaintId: Joi.string().length(24).hex().required(),
     message: Joi.string().min(5).max(1000).required(),
     isPublic: Joi.boolean().optional(),
   });
@@ -741,5 +1199,6 @@ export default {
   assignComplaintToStaff,
   reassignComplaint,
   addComplaintResponse,
+  resolveComplaint,
   getComplaintAnalytics,
 };

@@ -251,7 +251,10 @@ class ScheduledJobsService {
       cronPattern,
       async () => {
         try {
-          logger.info("🚨 Starting automatic complaint escalation check...", {});
+          logger.info(
+            "🚨 Starting automatic complaint escalation check...",
+            {}
+          );
 
           await this.performComplaintEscalation();
 
@@ -328,11 +331,32 @@ class ScheduledJobsService {
 
           await complaint.save();
 
-          // TODO: Send notifications (Phase 7 integration)
-          // await notificationService.notifyManagementComplaintEscalated(complaint);
-          // if (complaint.assignedTo) {
-          //   await notificationService.notifyStaffComplaintUpdated(complaint, { name: "System" }, "escalated");
-          // }
+          // Emit socket event to notify managers and admins about escalation
+          try {
+            const { getIO } = await import("../utils/socketService.js");
+            const { emitComplaintEscalated } = await import(
+              "../socket/complaintEvents.js"
+            );
+
+            const io = getIO();
+            emitComplaintEscalated(io, complaint.branch, complaint.hotel, {
+              complaint: complaint.toObject(),
+              reason: "auto_escalation",
+              message: `${complaint.priority.toUpperCase()} priority complaint auto-escalated after ${daysPending} days`,
+              complaintId: complaint.complaintId,
+              priority: complaint.priority,
+              daysPending,
+            });
+            logger.info(
+              `Socket event emitted for escalated complaint ${complaint.complaintId}`
+            );
+          } catch (socketError) {
+            logger.error(
+              "Error emitting escalation socket event:",
+              socketError
+            );
+            // Don't block escalation if socket emission fails
+          }
 
           logger.warn(
             `Escalated complaint ${complaint.complaintId} - ${daysPending} days pending`,

@@ -31,17 +31,28 @@ export const setupComplaintEvents = (io) => {
       socket.emit("joined", { room: `manager_${managerId}`, type: "manager" });
     });
 
+    // Admin joins their personal room
+    socket.on("join:admin", (adminId) => {
+      socket.join(`admin_${adminId}`);
+      logger.info(`Admin ${adminId} joined complaint notifications room`);
+      socket.emit("joined", { room: `admin_${adminId}`, type: "admin" });
+    });
+
     // Branch room (all managers/staff in a branch)
     socket.on("join:branch", (branchId) => {
       socket.join(`branch_${branchId}`);
-      logger.info(`Socket joined branch ${branchId} complaint notifications room`);
+      logger.info(
+        `Socket joined branch ${branchId} complaint notifications room`
+      );
       socket.emit("joined", { room: `branch_${branchId}`, type: "branch" });
     });
 
     // Hotel room (hotel-wide notifications)
     socket.on("join:hotel", (hotelId) => {
       socket.join(`hotel_${hotelId}`);
-      logger.info(`Socket joined hotel ${hotelId} complaint notifications room`);
+      logger.info(
+        `Socket joined hotel ${hotelId} complaint notifications room`
+      );
       socket.emit("joined", { room: `hotel_${hotelId}`, type: "hotel" });
     });
 
@@ -63,7 +74,9 @@ export const setupComplaintEvents = (io) => {
 
     socket.on("leave:branch", (branchId) => {
       socket.leave(`branch_${branchId}`);
-      logger.info(`Socket left branch ${branchId} complaint notifications room`);
+      logger.info(
+        `Socket left branch ${branchId} complaint notifications room`
+      );
     });
 
     socket.on("leave:hotel", (hotelId) => {
@@ -73,7 +86,9 @@ export const setupComplaintEvents = (io) => {
 
     // Acknowledge notification receipt
     socket.on("complaint:notification:ack", (data) => {
-      logger.info(`Notification acknowledged for complaint ${data.complaintId} by ${socket.id}`);
+      logger.info(
+        `Notification acknowledged for complaint ${data.complaintId} by ${socket.id}`
+      );
       socket.emit("complaint:notification:confirmed", {
         complaintId: data.complaintId,
         timestamp: new Date(),
@@ -118,16 +133,21 @@ export const emitComplaintNew = (io, hotelId, data) => {
  * @param {Object} data - Update data
  */
 export const emitComplaintUpdate = (io, complaintId, data) => {
-  // Emit to all relevant parties
+  // Emit to user (customer who created the complaint)
   if (data.userId) {
     io.to(`user_${data.userId}`).emit("complaint:updated", data);
   }
+
+  // Emit to assigned staff ONLY (not all branch staff)
   if (data.staffId) {
     io.to(`staff_${data.staffId}`).emit("complaint:updated", data);
   }
+
+  // Emit to managers/admins in the branch
   if (data.branchId) {
     io.to(`branch_${data.branchId}`).emit("complaint:updated", data);
   }
+
   logger.info(`Emitted complaint update for ${complaintId}`);
 };
 
@@ -166,7 +186,9 @@ export const emitComplaintAssigned = (io, staffId, data) => {
 export const emitComplaintEscalated = (io, branchId, hotelId, data) => {
   io.to(`branch_${branchId}`).emit("complaint:escalated", data);
   io.to(`hotel_${hotelId}`).emit("complaint:escalated", data);
-  logger.info(`Emitted complaint escalated notification to branch ${branchId} and hotel ${hotelId}`);
+  logger.info(
+    `Emitted complaint escalated notification to branch ${branchId} and hotel ${hotelId}`
+  );
 };
 
 export default {

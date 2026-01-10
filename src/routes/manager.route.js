@@ -73,6 +73,7 @@ import {
   assignComplaintToStaff,
   reassignComplaint,
   addComplaintResponse,
+  resolveComplaint,
   getComplaintAnalytics,
 } from "../controllers/manager/complaintController.js";
 
@@ -393,6 +394,13 @@ router.post(
   requireManagerOrHigher,
   requirePermission("handleComplaints"),
   addComplaintResponse
+);
+
+router.put(
+  "/complaints/:complaintId/resolve",
+  requireRole(["branch_manager"]),
+  requirePermission("handleComplaints"),
+  resolveComplaint
 );
 
 router.get(

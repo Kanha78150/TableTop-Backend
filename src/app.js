@@ -18,7 +18,7 @@ app.use(express.urlencoded({ extended: true, limit: "20kb" }));
 app.use(express.static("public"));
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN, // 🔒
+    origin: process.env.CORS_ORIGIN?.split(",").map((origin) => origin.trim()), // 🔒
     credentials: true,
     methods: ["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE"],
   })

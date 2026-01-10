@@ -7,6 +7,8 @@ import { Branch } from "../../models/Branch.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
+import { emitComplaintAssigned, emitComplaintUpdate, emitComplaintResolved } from "../../socket/complaintEvents.js";
+import { getIO } from "../../utils/socketService.js";
 import Joi from "joi";
 
 /**
@@ -269,12 +271,24 @@ export const updateComplaintStatus = async (req, res, next) => {
     };
 
     await complaint.save();
+    await complaint.populate('assignedTo', 'name email role staffId');
 
-    // TODO: Send notifications
-    // await notificationService.notifyUserComplaintUpdated(complaint, { name: adminName }, "status_changed");
-    // if (complaint.assignedTo) {
-    //   await notificationService.notifyStaffComplaintUpdated(complaint, { name: adminName }, "status_changed");
-    // }
+    // Emit socket events to notify relevant parties (manager, staff, user)
+    try {
+      const io = getIO();
+      emitComplaintUpdate(io, complaintId, {
+        complaint: complaint.toObject(),
+        type: "status_updated",
+        status,
+        message: `Admin updated complaint status to ${status}`,
+        updatedBy: "admin",
+      });
+
+      logger.info(`Socket event emitted for admin status update on complaint ${complaint.complaintId}`);
+    } catch (socketError) {
+      logger.error("Error emitting socket event for admin status update:", socketError);
+      // Don't block operation if socket emission fails
+    }
 
     logger.info(`Admin ${adminName} updated complaint ${complaint.complaintId} status to ${status}`);
 
@@ -370,8 +384,46 @@ export const assignComplaintToStaff = async (req, res, next) => {
 
     await complaint.save();
 
-    // TODO: Send notification to staff
-    // await notificationService.notifyStaffComplaintAssigned(complaint, staff, { name: adminName });
+    // Populate assignedTo field to return staff details
+    await complaint.populate('assignedTo', 'name email role staffId');
+
+    // Emit socket events to notify staff, user, and manager
+    try {
+      const io = getIO();
+      const socketData = {
+        complaintId: complaint._id,
+        complaint: complaint.toObject(),
+        type: "complaint_assigned",
+        assignedBy: "admin",
+        assignedTo: staff.name,
+      };
+
+      // Notify assigned staff
+      io.to(`staff_${staffId}`).emit("complaint:assigned", {
+        ...socketData,
+        staffId: staffId,
+        message: `You have been assigned complaint #${complaint.complaintId} by admin`,
+      });
+
+      // Notify user (customer)
+      io.to(`user_${complaint.user}`).emit("complaint:assigned", {
+        ...socketData,
+        userId: complaint.user,
+        message: `Your complaint has been assigned to ${staff.name}`,
+      });
+
+      // Notify hotel admins (not branch, to avoid duplicate for staff)
+      io.to(`hotel_${complaint.hotel}`).emit("complaint:assigned", {
+        ...socketData,
+        hotelId: complaint.hotel,
+        message: `Admin assigned complaint #${complaint.complaintId} to ${staff.name}`,
+      });
+
+      logger.info(`Socket event emitted for admin assignment to staff ${staffId}`);
+    } catch (socketError) {
+      logger.error("Error emitting socket event for admin assignment:", socketError);
+      // Don't block operation if socket emission fails
+    }
 
     logger.info(`Admin ${adminName} assigned complaint ${complaint.complaintId} to staff ${staff.name}`);
 
@@ -469,10 +521,38 @@ export const reassignComplaint = async (req, res, next) => {
     };
 
     await complaint.save();
+    // Populate assignedTo field to return staff details
+    await complaint.populate('assignedTo', 'name email role staffId');
 
-    // TODO: Send notifications
-    // await notificationService.notifyStaffComplaintReassigned(complaint, oldStaff, "removed", { name: adminName });
-    // await notificationService.notifyStaffComplaintReassigned(complaint, newStaff, "assigned", { name: adminName });
+    // Emit socket events to notify both old and new staff
+    try {
+      const io = getIO();
+      
+      // Notify old staff that complaint was reassigned
+      if (oldStaff) {
+        emitComplaintUpdate(io, complaint._id, {
+          complaintId: complaint._id,
+          staffId: oldStaff._id,
+          type: "reassigned_from",
+          message: "Complaint has been reassigned by admin",
+          complaint: complaint.toObject(),
+        });
+      }
+      
+      // Notify new staff about the assignment
+      emitComplaintAssigned(io, staffId, {
+        complaint: complaint.toObject(),
+        readOnly: true,
+        message: `You have been assigned complaint #${complaint.complaintId} by admin`,
+        assignedBy: { _id: adminId, name: adminName, role: 'admin' },
+        isReassignment: true,
+      });
+      
+      logger.info(`Socket events emitted for admin complaint reassignment`);
+    } catch (socketError) {
+      logger.error("Error emitting socket events for admin reassignment:", socketError);
+      // Don't block operation if socket emission fails
+    }
 
     logger.info(
       `Admin ${adminName} reassigned complaint ${complaint.complaintId} from ${oldStaff.name} to ${newStaff.name}`
@@ -525,16 +605,15 @@ export const addComplaintResponse = async (req, res, next) => {
       }
     }
 
-    // Add response
+  // Add response
     const response = {
       message,
-      addedBy: {
+      respondedBy: {
         userType: "admin",
         userId: adminId,
-        name: adminName,
       },
-      timestamp: new Date(),
-      isInternal,
+      respondedAt: new Date(),
+      isPublic: !isInternal, // Convert isInternal param to isPublic for model
     };
 
     complaint.responses.push(response);
@@ -545,14 +624,47 @@ export const addComplaintResponse = async (req, res, next) => {
     };
 
     await complaint.save();
+    await complaint.populate('assignedTo', 'name email role staffId');
 
-    // TODO: Send notifications (only if public response)
-    // if (!isInternal) {
-    //   await notificationService.notifyUserComplaintResponse(complaint, response);
-    // }
-    // if (complaint.assignedTo) {
-    //   await notificationService.notifyStaffComplaintUpdated(complaint, { name: adminName }, "response_added");
-    // }
+    // Emit socket events to notify manager, staff, and user
+    try {
+      const io = getIO();
+      const socketData = {
+        complaintId: complaint._id,
+        complaint: complaint.toObject(),
+        message: isInternal ? "Admin added an internal response" : "Admin added a response to your complaint",
+        respondedBy: "admin",
+        type: "response_added",
+      };
+
+      // Always notify manager and staff about responses (even internal)
+      // Notify branch manager
+      io.to(`branch_${complaint.branch}`).emit("complaint:response", {
+        ...socketData,
+        branchId: complaint.branch,
+      });
+
+      // Notify assigned staff
+      if (complaint.assignedTo) {
+        io.to(`staff_${complaint.assignedTo._id}`).emit("complaint:response", {
+          ...socketData,
+          staffId: complaint.assignedTo._id,
+        });
+      }
+
+      // Only notify user for public responses
+      if (!isInternal) {
+        io.to(`user_${complaint.user}`).emit("complaint:response", {
+          ...socketData,
+          userId: complaint.user,
+        });
+      }
+
+      logger.info(`Socket event 'complaint:response' emitted for complaint ${complaint.complaintId}`);
+    } catch (socketError) {
+      logger.error("Error emitting socket event for admin response:", socketError);
+      // Don't block operation if socket emission fails
+    }
 
     logger.info(
       `Admin ${adminName} added ${isInternal ? "internal" : "public"} response to complaint ${complaint.complaintId}`
@@ -651,6 +763,7 @@ export const resolveComplaint = async (req, res, next) => {
     complaint.coinCompensation = coinsToAward;
 
     await complaint.save();
+    await complaint.populate('assignedTo', 'name email role staffId');
 
     // Award coins to user
     let coinTransaction = null;
@@ -681,11 +794,45 @@ export const resolveComplaint = async (req, res, next) => {
       // Don't fail the resolution if coin award fails
     }
 
-    // TODO: Send notifications
-    // await notificationService.notifyUserComplaintResolved(complaint, { name: adminName }, coinsToAward);
-    // if (complaint.assignedTo) {
-    //   await notificationService.notifyStaffComplaintUpdated(complaint, { name: adminName }, "resolved");
-    // }
+     // Emit socket events to notify manager, staff, and user about resolution
+    try {
+      const io = getIO();
+      const socketData = {
+        complaintId: complaint._id,
+        complaint: complaint.toObject(),
+        coinCompensation: coinsToAward,
+        type: "resolved",
+        resolvedBy: "admin",
+      };
+
+      // Notify user
+      io.to(`user_${complaint.user._id}`).emit("complaint:resolved", {
+        ...socketData,
+        userId: complaint.user._id,
+        message: `Your complaint has been resolved by admin. You received ${coinsToAward} coins as compensation.`,
+      });
+
+      // Notify assigned staff
+      if (complaint.assignedTo) {
+        io.to(`staff_${complaint.assignedTo._id}`).emit("complaint:resolved", {
+          ...socketData,
+          staffId: complaint.assignedTo._id,
+          message: `Admin resolved complaint #${complaint.complaintId}`,
+        });
+      }
+
+      // Notify branch manager
+      io.to(`branch_${complaint.branch}`).emit("complaint:resolved", {
+        ...socketData,
+        branchId: complaint.branch,
+        message: `Admin resolved complaint #${complaint.complaintId}`,
+      });
+      
+      logger.info(`Socket events emitted for admin resolution of complaint ${complaint.complaintId}`);
+    } catch (socketError) {
+      logger.error("Error emitting socket events for admin resolution:", socketError);
+      // Don't block operation if socket emission fails
+    }
 
     logger.info(
       `Admin ${adminName} resolved complaint ${complaint.complaintId} and awarded ${coinsToAward} coins`

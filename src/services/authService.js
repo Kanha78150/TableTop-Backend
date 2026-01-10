@@ -2,6 +2,7 @@ import { Admin } from "../models/Admin.model.js";
 import { Manager } from "../models/Manager.model.js";
 import { Staff } from "../models/Staff.model.js";
 import { Hotel } from "../models/Hotel.model.js";
+import { Branch } from "../models/Branch.model.js";
 import { APIError } from "../utils/APIError.js";
 
 /**
@@ -22,10 +23,14 @@ export const findUserByIdentifier = async (identifier) => {
   // Try to find user based on identifier pattern
   if (isEmail) {
     // Email - check all models in priority order: Admin -> Manager -> Staff
-    user = await Admin.findOne({ email: identifier }).populate(
-      "assignedBranches",
-      "name branchId location"
-    );
+    user = await Admin.findOne({ email: identifier }).populate({
+      path: "assignedBranches",
+      select: "name branchId location hotel",
+      populate: {
+        path: "hotel",
+        select: "_id name hotelId",
+      },
+    });
     if (user) {
       userType = "admin";
       model = Admin;
@@ -175,6 +180,45 @@ export const handlePostLoginUpdates = async (user, userType) => {
   let wasInactive = false;
   let isFirstLogin = false;
 
+  // Auto-assign branches if admin has no assigned branches
+  if (
+    userType === "admin" &&
+    (!user.assignedBranches || user.assignedBranches.length === 0)
+  ) {
+    // Find all hotels created by this admin
+    const adminHotels = await Hotel.find({ createdBy: user._id }).select("_id");
+
+    if (adminHotels.length > 0) {
+      // Find all branches for these hotels
+      const hotelIds = adminHotels.map((hotel) => hotel._id);
+      const branches = await Branch.find({
+        hotel: { $in: hotelIds },
+        status: "active",
+      }).select("_id");
+
+      if (branches.length > 0) {
+        // Auto-assign all branches to admin
+        user.assignedBranches = branches.map((branch) => branch._id);
+        await user.save();
+
+        // Re-fetch admin with populated branches
+        const updatedAdmin = await Admin.findById(user._id).populate({
+          path: "assignedBranches",
+          select: "name branchId location hotel",
+          populate: {
+            path: "hotel",
+            select: "_id name hotelId",
+          },
+        });
+
+        // Update user object with populated data
+        if (updatedAdmin) {
+          user.assignedBranches = updatedAdmin.assignedBranches;
+        }
+      }
+    }
+  }
+
   // Auto-reactivate inactive accounts (Manager and Staff only)
   if (userType !== "admin" && user.status === "inactive") {
     wasInactive = true;
@@ -213,7 +257,12 @@ export const fetchAdminHotels = async (admin) => {
  * @param {Object} additionalData - Additional data (e.g., createdHotels, flags)
  * @returns {Object} Formatted response data
  */
-export const formatUserResponse = (user, userType, tokens, additionalData = {}) => {
+export const formatUserResponse = (
+  user,
+  userType,
+  tokens,
+  additionalData = {}
+) => {
   const baseResponse = {
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,

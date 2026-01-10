@@ -1,9 +1,14 @@
 // src/controllers/staff/complaintController.js - Staff Complaint Management Controller (READ-ONLY)
 
-import { Complaint, validateGetComplaintsQuery } from "../../models/Complaint.model.js";
+import {
+  Complaint,
+  validateGetComplaintsQuery,
+} from "../../models/Complaint.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
+import { emitComplaintUpdate } from "../../socket/complaintEvents.js";
+import { getIO } from "../../utils/socketService.js";
 
 /**
  * Get all complaints assigned to the logged-in staff member (READ-ONLY)
@@ -13,7 +18,17 @@ import { logger } from "../../utils/logger.js";
 export const getMyAssignedComplaints = async (req, res, next) => {
   try {
     const staffId = req.user._id;
-    const { status, priority, category, page, limit, sortBy, sortOrder, search } = req.query;
+    const {
+      status,
+      priority,
+      category,
+      page,
+      limit,
+      sortBy,
+      sortOrder,
+      search,
+      unviewedOnly,
+    } = req.query;
 
     // Validate query parameters
     const { error } = validateGetComplaintsQuery(req.query);
@@ -36,6 +51,14 @@ export const getMyAssignedComplaints = async (req, res, next) => {
 
     if (category && category !== "all") {
       filter.category = category;
+    }
+
+    // Filter for unviewed complaints only
+    if (unviewedOnly === "true" || unviewedOnly === true) {
+      filter.$or = [
+        { staffViewedAt: { $exists: false } },
+        { staffViewedAt: null },
+      ];
     }
 
     // Search filter
@@ -87,7 +110,7 @@ export const getMyAssignedComplaints = async (req, res, next) => {
           pagination: {
             currentPage: pageNum,
             totalPages: Math.ceil(totalCount / limitNum),
-            total: totalCount,
+            totalItems: totalCount,
             hasNextPage: pageNum < Math.ceil(totalCount / limitNum),
             hasPrevPage: pageNum > 1,
           },
@@ -135,7 +158,10 @@ export const getComplaintDetails = async (req, res, next) => {
     }
 
     // Check if complaint is assigned to this staff member
-    if (!complaint.assignedTo || complaint.assignedTo._id.toString() !== staffId.toString()) {
+    if (
+      !complaint.assignedTo ||
+      complaint.assignedTo._id.toString() !== staffId.toString()
+    ) {
       return next(
         new APIError(
           403,
@@ -184,8 +210,16 @@ export const markComplaintAsViewed = async (req, res, next) => {
     }
 
     // Check if complaint is assigned to this staff member
-    if (!complaint.assignedTo || complaint.assignedTo.toString() !== staffId.toString()) {
-      return next(new APIError(403, "You can only mark complaints assigned to you as viewed"));
+    if (
+      !complaint.assignedTo ||
+      complaint.assignedTo.toString() !== staffId.toString()
+    ) {
+      return next(
+        new APIError(
+          403,
+          "You can only mark complaints assigned to you as viewed"
+        )
+      );
     }
 
     // Update viewed timestamp
@@ -195,9 +229,51 @@ export const markComplaintAsViewed = async (req, res, next) => {
 
     logger.info(`Staff ${staffId} viewed complaint ${complaintId}`);
 
-    res.status(200).json(
-      new APIResponse(200, { viewedAt: complaint.staffViewedAt }, "Complaint marked as viewed")
-    );
+    // Emit socket event to notify admin, manager, and user that staff viewed the complaint
+    try {
+      const io = getIO();
+      const socketData = {
+        complaintId,
+        complaint: complaint.toObject(),
+        staffId,
+        type: "viewed_by_staff",
+        message: `Staff viewed complaint #${complaint.complaintId}`,
+        viewedAt: complaint.staffViewedAt,
+      };
+
+      // Notify user (customer)
+      io.to(`user_${complaint.user}`).emit("complaint:staff_viewed", {
+        ...socketData,
+        userId: complaint.user,
+      });
+
+      // Notify branch room (managers and admins will receive through this)
+      // This avoids duplicates since both managers and admins join branch rooms
+      io.to(`branch_${complaint.branch}`).emit("complaint:staff_viewed", {
+        ...socketData,
+        branchId: complaint.branch,
+      });
+
+      logger.info(
+        `Socket event emitted for complaint viewed by staff ${staffId}`
+      );
+    } catch (socketError) {
+      logger.error(
+        "Error emitting socket event for complaint viewed:",
+        socketError
+      );
+      // Don't block operation if socket emission fails
+    }
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { viewedAt: complaint.staffViewedAt },
+          "Complaint marked as viewed"
+        )
+      );
   } catch (error) {
     logger.error("Error marking complaint as viewed:", error);
     next(error);
@@ -244,22 +320,46 @@ export const getStaffComplaintDashboard = async (req, res, next) => {
       .populate("branch", "name");
 
     // Calculate engagement rate
-    const totalAssigned = await Complaint.countDocuments({ assignedTo: staffId });
+    const totalAssigned = await Complaint.countDocuments({
+      assignedTo: staffId,
+    });
     const totalViewed = await Complaint.countDocuments({
       assignedTo: staffId,
       staffViewedAt: { $exists: true, $ne: null },
     });
-    const engagementRate = totalAssigned > 0 ? ((totalViewed / totalAssigned) * 100).toFixed(2) : 0;
+    const engagementRate =
+      totalAssigned > 0 ? ((totalViewed / totalAssigned) * 100).toFixed(2) : 0;
+
+    // Format status counts with defaults
+    const formattedStatusCounts = {
+      pending: 0,
+      in_progress: 0,
+      resolved: 0,
+      escalated: 0,
+      cancelled: 0,
+      reopened: 0,
+      ...statusCounts.reduce((acc, item) => {
+        acc[item._id] = item.count;
+        return acc;
+      }, {}),
+    };
+
+    // Format priority counts with defaults
+    const formattedPriorityCounts = {
+      low: 0,
+      medium: 0,
+      high: 0,
+      urgent: 0,
+      ...priorityCounts.reduce((acc, item) => {
+        acc[item._id] = item.count;
+        return acc;
+      }, {}),
+    };
 
     const dashboard = {
-      statusCounts: statusCounts.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {}),
-      priorityCounts: priorityCounts.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {}),
+      totalComplaints: totalAssigned,
+      statusCounts: formattedStatusCounts,
+      priorityCounts: formattedPriorityCounts,
       unviewedCount,
       totalAssigned,
       totalViewed,
@@ -269,9 +369,15 @@ export const getStaffComplaintDashboard = async (req, res, next) => {
         "You have read-only access. All complaint updates are handled by managers and admins.",
     };
 
-    res.status(200).json(
-      new APIResponse(200, { dashboard }, "Staff dashboard data retrieved successfully")
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { dashboard },
+          "Staff dashboard data retrieved successfully"
+        )
+      );
   } catch (error) {
     logger.error("Error getting staff complaint dashboard:", error);
     next(error);

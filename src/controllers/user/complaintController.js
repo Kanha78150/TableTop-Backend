@@ -1,6 +1,12 @@
 // src/controllers/user/complaintController.js - User Complaint Management Controller
 
-import { Complaint, validateCreateComplaint, validateFollowUpMessage, validateRating, validateReopenRequest } from "../../models/Complaint.model.js";
+import {
+  Complaint,
+  validateCreateComplaint,
+  validateFollowUpMessage,
+  validateRating,
+  validateReopenRequest,
+} from "../../models/Complaint.model.js";
 import { Order } from "../../models/Order.model.js";
 import { RefundRequest } from "../../models/RefundRequest.model.js";
 import { Counter } from "../../models/Counter.model.js";
@@ -8,6 +14,12 @@ import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
 import { uploadToCloudinary } from "../../utils/cloudinary.js";
+import {
+  emitComplaintNew,
+  emitComplaintUpdate,
+} from "../../socket/complaintEvents.js";
+import { getIO } from "../../utils/socketService.js";
+
 import fs from "fs";
 
 /**
@@ -18,7 +30,16 @@ import fs from "fs";
 export const submitComplaint = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { title, description, category, priority, orderId, contactMethod, requestRefund, refundAmount } = req.body;
+    const {
+      title,
+      description,
+      category,
+      priority,
+      orderId,
+      contactMethod,
+      requestRefund,
+      refundAmount,
+    } = req.body;
 
     // Validate request
     const { error } = validateCreateComplaint(req.body);
@@ -41,7 +62,7 @@ export const submitComplaint = async (req, res, next) => {
     // If order ID provided, verify and get order details
     if (orderId) {
       orderDetails = await Order.findById(orderId).populate("branch");
-      
+
       if (!orderDetails) {
         if (req.files) {
           req.files.forEach((file) => {
@@ -62,7 +83,12 @@ export const submitComplaint = async (req, res, next) => {
             }
           });
         }
-        return next(new APIError(403, "You can only create complaints for your own orders"));
+        return next(
+          new APIError(
+            403,
+            "You can only create complaints for your own orders"
+          )
+        );
       }
 
       hotelId = orderDetails.hotel;
@@ -77,7 +103,9 @@ export const submitComplaint = async (req, res, next) => {
             }
           });
         }
-        return next(new APIError(400, "Branch ID is required when no order is specified"));
+        return next(
+          new APIError(400, "Branch ID is required when no order is specified")
+        );
       }
       branchId = req.body.branchId;
       hotelId = req.body.hotelId;
@@ -89,7 +117,10 @@ export const submitComplaint = async (req, res, next) => {
       { $inc: { sequence_value: 1 } },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
-    const complaintId = `CMP-${String(counter.sequence_value).padStart(6, "0")}`;
+    const complaintId = `CMP-${String(counter.sequence_value).padStart(
+      6,
+      "0"
+    )}`;
 
     // Handle file uploads (attachments)
     const attachments = [];
@@ -158,12 +189,15 @@ export const submitComplaint = async (req, res, next) => {
     if (requestRefund === true && orderId) {
       try {
         const refAmount = refundAmount || orderDetails.totalPrice;
-        
+
         refundRequest = new RefundRequest({
           user: userId,
           order: orderId,
           amount: refAmount,
-          reason: `Related to complaint #${complaintId}: ${description.substring(0, 100)}`,
+          reason: `Related to complaint #${complaintId}: ${description.substring(
+            0,
+            100
+          )}`,
           status: "pending",
           attachments: attachments, // Use same attachments
         });
@@ -183,22 +217,76 @@ export const submitComplaint = async (req, res, next) => {
       }
     }
 
-    // TODO: Send notification to manager (Phase 7)
-    // TODO: Emit socket event (Phase 8)
+    // Emit socket event to notify managers in the hotel
+    try {
+      const io = getIO();
+
+      const complaintData = {
+        _id: complaint._id,
+        complaintId: complaint.complaintId,
+        title: complaint.title,
+        description: complaint.description,
+        category: complaint.category,
+        priority: complaint.priority,
+        status: complaint.status,
+        user: { _id: userId, name: req.user.name, phone: req.user.phone },
+        createdAt: complaint.createdAt,
+        message: `New ${complaint.priority} priority complaint submitted`,
+      };
+
+      // Emit to branch room (branch managers) and hotel room (admins)
+      // Note: Managers join both hotel and branch rooms, so we emit to branch only to avoid duplicates
+      // Admins will receive it through hotel room
+      if (branchId) {
+        io.to(`branch_${branchId}`).emit("complaint:new", complaintData);
+      }
+
+      // console.log("\n🔔 Socket Event Emitted:");
+      // console.log("Event: complaint:new");
+      // console.log("Room:", `branch_${branchId}`);
+      // console.log("Complaint ID:", complaintId);
+      // console.log("Title:", complaint.title);
+      // console.log("Priority:", complaint.priority);
+      // console.log("Data:", JSON.stringify(complaintData, null, 2));
+      logger.info("\n🔔 Socket Event Emitted:");
+      logger.info("Event: complaint:new");
+      logger.info(`Room: branch_${branchId}`);
+      logger.info(`Complaint ID: ${complaintId}`);
+      logger.info(`Title: ${complaint.title}`);
+      logger.info(`Priority: ${complaint.priority}`);
+      logger.info(`Data: ${JSON.stringify(complaintData, null, 2)}`);
+
+      logger.info(
+        `Socket event 'complaint:new' emitted to branch ${branchId} for complaint ${complaintId}`
+      );
+    } catch (socketError) {
+      // console.error("❌ Socket emission error:", socketError);
+      logger.error(
+        "Error emitting socket event for new complaint:",
+        socketError
+      );
+      // Don't block complaint creation if socket emission fails
+    }
 
     const responseData = refundRequest
-      ? { complaint, refundRequest, message: "Refund request also created and linked" }
+      ? {
+          complaint,
+          refundRequest,
+          message: "Refund request also created and linked",
+        }
       : { complaint };
 
-    res.status(201).json(
-      new APIResponse(
-        201,
-        responseData,
-        `Complaint submitted successfully. Your complaint ID is ${complaintId}${
-          refundRequest ? ". Refund request also created." : ""
-        }`
-      )
-    );
+    res
+      .status(201)
+      .json(
+        new APIResponse(
+          201,
+          responseData,
+          `Complaint submitted successfully. Your complaint ID is ${complaintId}${
+            refundRequest ? ". Refund request also created." : ""
+          }`
+        )
+      );
   } catch (error) {
     // Clean up uploaded files on error
     if (req.files) {
@@ -221,13 +309,28 @@ export const submitComplaint = async (req, res, next) => {
 export const getMyComplaints = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { status, category, page, limit, sortBy, sortOrder, search, startDate, endDate } = req.query;
+    const {
+      status,
+      priority,
+      category,
+      page,
+      limit,
+      sortBy,
+      sortOrder,
+      search,
+      startDate,
+      endDate,
+    } = req.query;
 
     // Build filter
     const filter = { user: userId };
 
     if (status && status !== "all") {
       filter.status = status;
+    }
+
+    if (priority && priority !== "all") {
+      filter.priority = priority;
     }
 
     if (category && category !== "all") {
@@ -332,12 +435,20 @@ export const getComplaintDetails = async (req, res, next) => {
 
     // Filter responses to show only public ones
     if (complaint.responses && complaint.responses.length > 0) {
-      complaint.responses = complaint.responses.filter((response) => response.isPublic === true);
+      complaint.responses = complaint.responses.filter(
+        (response) => response.isPublic === true
+      );
     }
 
-    res.status(200).json(
-      new APIResponse(200, { complaint }, "Complaint details retrieved successfully")
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { complaint },
+          "Complaint details retrieved successfully"
+        )
+      );
   } catch (error) {
     logger.error("Error getting complaint details:", error);
     next(error);
@@ -401,7 +512,9 @@ export const addFollowUpMessage = async (req, res, next) => {
           }
         });
       }
-      return next(new APIError(403, "You can only add messages to your own complaints"));
+      return next(
+        new APIError(403, "You can only add messages to your own complaints")
+      );
     }
 
     // Check if complaint is resolved or cancelled
@@ -469,12 +582,34 @@ export const addFollowUpMessage = async (req, res, next) => {
 
     logger.info(`User ${userId} added follow-up to complaint ${complaintId}`);
 
-    // TODO: Notify manager and assigned staff (Phase 7)
-    // TODO: Emit socket event (Phase 8)
+    try {
+      const io = getIO();
+      emitComplaintUpdate(io, complaintId, {
+        complaintId,
+        userId: complaint.user,
+        staffId: complaint.assignedTo,
+        branchId: complaint.branch,
+        type: "follow_up_added",
+        message: "User added follow-up message to complaint",
+        complaint: complaint.toObject(),
+      });
+      logger.info(
+        `Socket event emitted for follow-up on complaint ${complaintId}`
+      );
+    } catch (socketError) {
+      logger.error("Error emitting socket event for follow-up:", socketError);
+      // Don't block operation if socket emission fails
+    }
 
-    res.status(200).json(
-      new APIResponse(200, { complaint }, "Follow-up message added successfully")
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { complaint },
+          "Follow-up message added successfully"
+        )
+      );
   } catch (error) {
     if (req.files) {
       req.files.forEach((file) => {
@@ -547,13 +682,21 @@ export const rateResolution = async (req, res, next) => {
 
     await complaint.save();
 
-    logger.info(`User ${userId} rated complaint ${complaintId} with ${rating} stars`);
+    logger.info(
+      `User ${userId} rated complaint ${complaintId} with ${rating} stars`
+    );
 
     // TODO: If rating <= 2, alert manager (Phase 7)
 
-    res.status(200).json(
-      new APIResponse(200, { complaint }, "Thank you for rating the resolution")
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { complaint },
+          "Thank you for rating the resolution"
+        )
+      );
   } catch (error) {
     logger.error("Error rating complaint:", error);
     next(error);
@@ -603,10 +746,14 @@ export const reopenComplaint = async (req, res, next) => {
     }
 
     // Check if within 1 day of resolution
-    const daysSinceResolution = (new Date() - complaint.resolvedAt) / (1000 * 60 * 60 * 24);
+    const daysSinceResolution =
+      (new Date() - complaint.resolvedAt) / (1000 * 60 * 60 * 24);
     if (daysSinceResolution > 1) {
       return next(
-        new APIError(400, "Complaints can only be reopened within 1 day of resolution")
+        new APIError(
+          400,
+          "Complaints can only be reopened within 1 day of resolution"
+        )
       );
     }
 
@@ -647,12 +794,33 @@ export const reopenComplaint = async (req, res, next) => {
 
     logger.info(`User ${userId} reopened complaint ${complaintId}`);
 
-    // TODO: Send high-priority alert to manager (Phase 7)
-    // TODO: Emit socket event (Phase 8)
+    // Emit socket event to notify manager and assigned staff
+    try {
+      const io = getIO();
+      emitComplaintUpdate(io, complaintId, {
+        complaintId,
+        userId: complaint.user,
+        branchId: complaint.branch,
+        staffId: complaint.assignedTo,
+        type: "reopened",
+        message: "Complaint reopened by user",
+        complaint: complaint.toObject(),
+        reason,
+      });
+      logger.info(`Socket event emitted for reopened complaint ${complaintId}`);
+    } catch (socketError) {
+      logger.error(
+        "Error emitting socket event for reopened complaint:",
+        socketError
+      );
+      // Don't block operation if socket emission fails
+    }
 
-    res.status(200).json(
-      new APIResponse(200, { complaint }, "Complaint reopened successfully")
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(200, { complaint }, "Complaint reopened successfully")
+      );
   } catch (error) {
     logger.error("Error reopening complaint:", error);
     next(error);
@@ -676,11 +844,20 @@ export const getMyComplaintsDashboard = async (req, res, next) => {
 
     // Get average resolution time for user's resolved complaints
     const resolutionTimes = await Complaint.aggregate([
-      { $match: { user: userId, status: "resolved", resolvedAt: { $exists: true } } },
+      {
+        $match: {
+          user: userId,
+          status: "resolved",
+          resolvedAt: { $exists: true },
+        },
+      },
       {
         $project: {
           resolutionTime: {
-            $divide: [{ $subtract: ["$resolvedAt", "$createdAt"] }, 1000 * 60 * 60],
+            $divide: [
+              { $subtract: ["$resolvedAt", "$createdAt"] },
+              1000 * 60 * 60,
+            ],
           },
         },
       },
@@ -722,9 +899,15 @@ export const getMyComplaintsDashboard = async (req, res, next) => {
       totalRated: ratingStats[0]?.totalRated || 0,
     };
 
-    res.status(200).json(
-      new APIResponse(200, { dashboard }, "Dashboard data retrieved successfully")
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { dashboard },
+          "Dashboard data retrieved successfully"
+        )
+      );
   } catch (error) {
     logger.error("Error getting complaint dashboard:", error);
     next(error);

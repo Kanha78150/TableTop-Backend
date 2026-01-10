@@ -22,7 +22,6 @@ export const updateAdminProfile = async (req, res, next) => {
     next(error);
   }
 };
-// ...existing code...
 
 // Change password
 export const changePassword = async (req, res, next) => {
@@ -59,6 +58,7 @@ import {
   validateResendOtp,
 } from "../../models/Admin.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
+import { Branch } from "../../models/Branch.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
@@ -138,8 +138,6 @@ const setAuthCookies = (res, tokens) => {
   });
 };
 
-// ...existing code...
-
 // Admin login
 export const loginAdmin = async (req, res, next) => {
   try {
@@ -151,10 +149,14 @@ export const loginAdmin = async (req, res, next) => {
     const { email, password } = req.body;
 
     // Find admin by email
-    const admin = await Admin.findOne({ email }).populate(
-      "assignedBranches",
-      "name branchId location"
-    );
+ const admin = await Admin.findOne({ email }).populate({
+      path: "assignedBranches",
+      select: "name branchId location hotel",
+      populate: {
+        path: "hotel",
+        select: "_id name hotelId"
+      }
+    });
 
     if (!admin) {
       return next(new APIError(401, "Invalid email or password"));
@@ -196,6 +198,40 @@ export const loginAdmin = async (req, res, next) => {
 
     // Reset login attempts on successful login
     await admin.resetLoginAttempts();
+
+        // Auto-assign branches if admin has no assigned branches
+    if (!admin.assignedBranches || admin.assignedBranches.length === 0) {
+      // Find all hotels created by this admin
+      const adminHotels = await Hotel.find({ createdBy: admin._id }).select('_id');
+      
+      if (adminHotels.length > 0) {
+        // Find all branches for these hotels
+        const hotelIds = adminHotels.map(hotel => hotel._id);
+        const branches = await Branch.find({ 
+          hotel: { $in: hotelIds },
+          status: 'active'
+        }).select('_id');
+        
+        if (branches.length > 0) {
+          // Auto-assign all branches to admin
+          admin.assignedBranches = branches.map(branch => branch._id);
+          await admin.save();
+          
+          // Re-fetch admin with populated branches
+          const updatedAdmin = await Admin.findById(admin._id).populate({
+            path: "assignedBranches",
+            select: "name branchId location hotel",
+            populate: {
+              path: "hotel",
+              select: "_id name hotelId"
+            }
+          });
+          
+          // Update admin object with populated data
+          admin.assignedBranches = updatedAdmin.assignedBranches;
+        }
+      }
+    }
 
     try {
       // Generate tokens
