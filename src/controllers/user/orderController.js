@@ -3,6 +3,9 @@ import assignmentService from "../../services/assignmentService.js";
 import timeTracker from "../../services/timeTracker.js";
 import { validateOrder } from "../../models/Order.model.js";
 import { User } from "../../models/User.model.js";
+import { Order } from "../../models/Order.model.js";
+import { RefundRequest } from "../../models/RefundRequest.model.js";
+import { invoiceService } from "../../services/invoiceService.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
@@ -678,6 +681,282 @@ const validateReorder = (data) => {
   return schema.validate(data);
 };
 
+/**
+ * Download invoice for an order
+ * GET /api/v1/user/orders/:orderId/invoice
+ */
+export const downloadInvoice = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { orderId } = req.params;
+
+    // Validate order ID
+    if (!orderId || !orderId.match(/^[0-9a-fA-F]{24}$/)) {
+      return next(new APIError(400, "Invalid order ID"));
+    }
+
+    // Find order and verify ownership
+    const order = await Order.findOne({
+      _id: orderId,
+      user: userId,
+    })
+      .populate("user", "name email phone")
+      .populate("hotel", "name email contactNumber gstin")
+      .populate("branch", "name email contactNumber address")
+      .populate("items.foodItem", "name price");
+
+    if (!order) {
+      return next(new APIError(404, "Order not found or access denied"));
+    }
+
+    // Check if order is paid
+    if (order.payment.paymentStatus !== "paid") {
+      return next(
+        new APIError(
+          400,
+          "Invoice can only be generated for paid orders. Current payment status: " +
+            order.payment.paymentStatus
+        )
+      );
+    }
+
+    // If invoice doesn't exist but order is paid, generate it now
+    if (!order.invoiceNumber) {
+      try {
+        logger.info("Generating invoice on-demand for paid order", {
+          orderId: order._id,
+        });
+
+        // Generate invoice number
+        const invoiceNumber = `INV-${Date.now()}-${order._id
+          .toString()
+          .slice(-8)
+          .toUpperCase()}`;
+
+        // Create invoice snapshot
+        order.invoiceNumber = invoiceNumber;
+        order.invoiceGeneratedAt = new Date();
+        order.invoiceSnapshot = {
+          hotelName: order.hotel?.name || "Hotel Name",
+          hotelEmail: order.hotel?.email || "",
+          hotelPhone: order.hotel?.contactNumber || "",
+          hotelGSTIN: order.hotel?.gstin || "",
+          branchName: order.branch?.name || "Branch Name",
+          branchAddress: order.branch?.address || "",
+          branchPhone: order.branch?.contactNumber || "",
+          branchEmail: order.branch?.email || "",
+          customerName: order.user?.name || "Guest",
+          customerEmail: order.user?.email || "",
+          customerPhone: order.user?.phone || "",
+          tableNumber: order.tableNumber || "",
+        };
+
+        // Try to send email if not sent
+        if (order.user?.email && order.invoiceEmailStatus !== "sent") {
+          try {
+            const invoice = await invoiceService.generateOrderInvoice(order, {
+              showCancelledStamp: false,
+            });
+            await invoiceService.sendInvoiceEmail(
+              invoice,
+              order.user.email,
+              order.user.name,
+              "invoice"
+            );
+            order.invoiceEmailStatus = "sent";
+            logger.info("Invoice email sent successfully", {
+              orderId: order._id,
+              invoiceNumber: invoiceNumber,
+            });
+          } catch (emailError) {
+            // Email failed - add to queue
+            logger.warn("Failed to send invoice email, adding to queue", {
+              orderId: order._id,
+              error: emailError.message,
+            });
+
+            const EmailQueue = (
+              await import("../../models/EmailQueue.model.js")
+            ).EmailQueue;
+            await EmailQueue.create({
+              type: "invoice",
+              orderId: order._id,
+              recipientEmail: order.user.email,
+              recipientName: order.user.name,
+              status: "pending",
+              emailData: {
+                subject: `Invoice ${invoiceNumber} - TableTop`,
+                invoiceNumber: invoiceNumber,
+                amount: order.totalPrice,
+              },
+              scheduledFor: new Date(Date.now() + 5 * 60 * 1000),
+            });
+
+            order.invoiceEmailStatus = "failed";
+            order.invoiceEmailAttempts = 1;
+          }
+        }
+
+        await order.save();
+
+        logger.info("Invoice generated on-demand successfully", {
+          orderId: order._id,
+          invoiceNumber: invoiceNumber,
+        });
+      } catch (error) {
+        logger.error("Failed to generate invoice on-demand", {
+          orderId: order._id,
+          error: error.message,
+        });
+        return next(
+          new APIError(
+            500,
+            "Failed to generate invoice. Please try again later."
+          )
+        );
+      }
+    }
+
+    // Check rate limit - reset monthly download count if needed
+    order.resetMonthlyDownloadCount();
+
+    // Check if user can download
+    if (!order.canDownloadInvoice()) {
+      return next(
+        new APIError(
+          429,
+          "Invoice download limit exceeded. You can download up to 3 invoices per month."
+        )
+      );
+    }
+
+    // Determine if cancelled stamp is needed
+    const showCancelledStamp = order.needsCancelledStamp();
+
+    // Regenerate invoice from metadata
+    const invoice = await invoiceService.generateOrderInvoice(order, {
+      showCancelledStamp,
+    });
+
+    // Update download count and timestamp
+    const now = new Date();
+    const lastDownload = order.lastInvoiceDownloadAt
+      ? new Date(order.lastInvoiceDownloadAt)
+      : null;
+    const sameMonth =
+      lastDownload &&
+      now.getMonth() === lastDownload.getMonth() &&
+      now.getFullYear() === lastDownload.getFullYear();
+
+    if (sameMonth) {
+      order.invoiceDownloadCount += 1;
+    } else {
+      order.invoiceDownloadCount = 1;
+    }
+    order.lastInvoiceDownloadAt = now;
+
+    await order.save();
+
+    logger.info("Invoice downloaded", {
+      orderId: order._id,
+      userId: userId,
+      invoiceNumber: invoice.invoiceNumber,
+      downloadCount: order.invoiceDownloadCount,
+    });
+
+    // Set response headers
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${invoice.fileName}"`
+    );
+    res.setHeader("Content-Length", invoice.buffer.length);
+
+    // Send PDF buffer
+    res.send(invoice.buffer);
+  } catch (error) {
+    logger.error("Error downloading invoice:", error);
+    next(error);
+  }
+};
+
+/**
+ * Download credit note for an order
+ * GET /api/v1/user/orders/:orderId/credit-notes/:creditNoteNumber
+ */
+export const downloadCreditNote = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { orderId, creditNoteNumber } = req.params;
+
+    // Validate order ID
+    if (!orderId || !orderId.match(/^[0-9a-fA-F]{24}$/)) {
+      return next(new APIError(400, "Invalid order ID"));
+    }
+
+    if (!creditNoteNumber) {
+      return next(new APIError(400, "Credit note number is required"));
+    }
+
+    // Find order and verify ownership
+    const order = await Order.findOne({
+      _id: orderId,
+      user: userId,
+    })
+      .populate("user", "name email phone")
+      .populate("hotel", "name email contactNumber gstin")
+      .populate("branch", "name email contactNumber address");
+
+    if (!order) {
+      return next(new APIError(404, "Order not found or access denied"));
+    }
+
+    // Find the credit note
+    const creditNote = order.creditNotes?.find(
+      (cn) => cn.creditNoteNumber === creditNoteNumber
+    );
+
+    if (!creditNote) {
+      return next(new APIError(404, "Credit note not found for this order"));
+    }
+
+    // Get the refund request
+    const refundRequest = await RefundRequest.findById(
+      creditNote.refundRequestId
+    );
+
+    if (!refundRequest) {
+      return next(new APIError(404, "Refund request not found"));
+    }
+
+    // Regenerate credit note from metadata
+    const creditNoteData = await invoiceService.generateCreditNote(
+      order,
+      refundRequest
+    );
+
+    logger.info("Credit note downloaded", {
+      orderId: order._id,
+      userId: userId,
+      creditNoteNumber: creditNoteNumber,
+    });
+
+    // Set response headers
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${creditNoteData.fileName}"`
+    );
+    res.setHeader("Content-Length", creditNoteData.buffer.length);
+
+    // Send PDF buffer
+    res.send(creditNoteData.buffer);
+  } catch (error) {
+    logger.error("Error downloading credit note:", error);
+    next(error);
+  }
+};
+
 export default {
   placeOrder,
   getMyOrders,
@@ -687,4 +966,6 @@ export default {
   getOrderStatus,
   getActiveOrders,
   getOrderHistory,
+  downloadInvoice,
+  downloadCreditNote,
 };

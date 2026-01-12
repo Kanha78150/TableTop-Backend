@@ -52,6 +52,26 @@ app.get("/", (req, res) => {
   res.json({ message: "Restaurant Management System API is running ✅" });
 });
 
+// Email queue health check
+app.get("/health/email-queue", async (req, res) => {
+  try {
+    const { emailQueueService } = await import(
+      "./services/emailQueueService.js"
+    );
+    const stats = await emailQueueService.getStats();
+    res.json({
+      status: "ok",
+      emailQueue: stats,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: error.message,
+    });
+  }
+});
+
 // Error handling middleware (should be last)
 app.use(errorHandler);
 

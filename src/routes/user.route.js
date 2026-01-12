@@ -43,6 +43,8 @@ import {
   getActiveOrders,
   getOrderHistory,
   getTableOrderHistory,
+  downloadInvoice,
+  downloadCreditNote,
 } from "../controllers/user/orderController.js";
 import {
   getOrderRefundStatus,
@@ -195,6 +197,16 @@ router.put("/orders/:orderId/cancel", authenticateUser, cancelOrder);
 
 // Reorder from previous order
 router.post("/orders/:orderId/reorder", authenticateUser, reorder);
+
+// Download invoice for order
+router.get("/orders/:orderId/invoice", authenticateUser, downloadInvoice);
+
+// Download credit note for order
+router.get(
+  "/orders/:orderId/credit-notes/:creditNoteNumber",
+  authenticateUser,
+  downloadCreditNote
+);
 
 // ======================
 // REFUND STATUS ROUTES (PROTECTED)

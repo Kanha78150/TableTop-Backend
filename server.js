@@ -6,6 +6,7 @@ import connectDB from "./src/config/database.js";
 import assignmentSystemInit from "./src/services/assignmentSystemInit.js";
 import scheduledJobsService from "./src/services/scheduledJobs.js";
 import { startAllJobs } from "./src/services/subscriptionJobs.js";
+import { emailQueueService } from "./src/services/emailQueueService.js";
 import { logger } from "./src/utils/logger.js";
 import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
 import { setIO } from "./src/utils/socketService.js";
@@ -38,6 +39,16 @@ const initializeServer = async () => {
     } else {
       logger.info(
         "⚠️ Subscription jobs disabled (ENABLE_SUBSCRIPTION_JOBS=false)"
+      );
+    }
+
+    // Initialize email queue processor
+    if (process.env.ENABLE_EMAIL_QUEUE !== "false") {
+      emailQueueService.startQueueProcessor();
+      logger.info("✅ Email queue processor started");
+    } else {
+      logger.info(
+        "⚠️ Email queue processor disabled (ENABLE_EMAIL_QUEUE=false)"
       );
     }
 
@@ -80,4 +91,22 @@ io.on("connection", (socket) => {
 // Start server
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM signal received: closing HTTP server");
+  emailQueueService.stopQueueProcessor();
+  server.close(() => {
+    logger.info("HTTP server closed");
+  });
+});
+
+process.on("SIGINT", () => {
+  logger.info("SIGINT signal received: closing HTTP server");
+  emailQueueService.stopQueueProcessor();
+  server.close(() => {
+    logger.info("HTTP server closed");
+    process.exit(0);
+  });
 });

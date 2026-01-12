@@ -217,6 +217,60 @@ const orderSchema = new mongoose.Schema(
         notes: { type: String },
       },
     ],
+
+    // Invoice and Credit Note Fields
+    invoiceNumber: {
+      type: String,
+      sparse: true,
+      unique: true,
+    },
+    invoiceGeneratedAt: {
+      type: Date,
+    },
+    invoiceSnapshot: {
+      hotelName: String,
+      hotelEmail: String,
+      hotelPhone: String,
+      hotelGSTIN: String,
+      branchName: String,
+      branchAddress: String,
+      branchPhone: String,
+      branchEmail: String,
+      customerName: String,
+      customerEmail: String,
+      customerPhone: String,
+      tableNumber: String,
+    },
+    creditNotes: [
+      {
+        creditNoteNumber: { type: String, required: true },
+        refundRequestId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "RefundRequest",
+        },
+        amount: { type: Number, required: true },
+        reason: String,
+        generatedAt: { type: Date, default: Date.now },
+      },
+    ],
+    invoiceDownloadCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lastInvoiceDownloadAt: {
+      type: Date,
+    },
+    invoiceEmailStatus: {
+      type: String,
+      enum: ["pending", "sent", "failed"],
+      default: "pending",
+    },
+    invoiceEmailAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
@@ -241,6 +295,10 @@ orderSchema.index({ queuedAt: 1 });
 orderSchema.index({ status: 1, hotel: 1, branch: 1 });
 orderSchema.index({ priorityValue: -1, queuePosition: 1 });
 orderSchema.index({ status: 1, staff: 1 }); // For counting active orders per waiter
+
+// Invoice system indexes
+orderSchema.index({ user: 1, invoiceDownloadCount: 1 });
+orderSchema.index({ invoiceEmailStatus: 1 });
 
 // Virtual for order duration
 orderSchema.virtual("orderDuration").get(function () {
@@ -313,6 +371,77 @@ orderSchema.methods.addAssignmentHistory = function (
   this.assignedAt = new Date();
   this.assignmentMethod = method;
   this.staff = waiterId;
+};
+
+// Invoice-related helper methods
+orderSchema.methods.canDownloadInvoice = function () {
+  // If no invoice generated yet, can't download
+  if (!this.invoiceNumber) {
+    return false;
+  }
+
+  // If never downloaded, allow
+  if (!this.lastInvoiceDownloadAt) {
+    return true;
+  }
+
+  const now = new Date();
+  const lastDownload = new Date(this.lastInvoiceDownloadAt);
+
+  // Check if in same month and year
+  const sameMonth =
+    now.getMonth() === lastDownload.getMonth() &&
+    now.getFullYear() === lastDownload.getFullYear();
+
+  // If different month, allow download
+  if (!sameMonth) {
+    return true;
+  }
+
+  // Same month - check if under 3 downloads
+  return this.invoiceDownloadCount < 3;
+};
+
+orderSchema.methods.isFullyRefunded = function () {
+  if (!this.creditNotes || this.creditNotes.length === 0) {
+    return false;
+  }
+
+  const totalRefunded = this.creditNotes.reduce(
+    (sum, cn) => sum + cn.amount,
+    0
+  );
+  return totalRefunded >= this.totalPrice;
+};
+
+orderSchema.methods.needsCancelledStamp = function () {
+  return this.payment.paymentStatus === "refunded" || this.isFullyRefunded();
+};
+
+orderSchema.methods.getTotalRefundAmount = function () {
+  if (!this.creditNotes || this.creditNotes.length === 0) {
+    return 0;
+  }
+  return this.creditNotes.reduce((sum, cn) => sum + cn.amount, 0);
+};
+
+orderSchema.methods.resetMonthlyDownloadCount = function () {
+  const now = new Date();
+  const lastDownload = this.lastInvoiceDownloadAt
+    ? new Date(this.lastInvoiceDownloadAt)
+    : null;
+
+  if (!lastDownload) {
+    return;
+  }
+
+  const sameMonth =
+    now.getMonth() === lastDownload.getMonth() &&
+    now.getFullYear() === lastDownload.getFullYear();
+
+  if (!sameMonth) {
+    this.invoiceDownloadCount = 0;
+  }
 };
 
 // Pre-save middleware to update status history

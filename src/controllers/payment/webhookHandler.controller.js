@@ -4,6 +4,7 @@ import { paymentLogger } from "../../utils/paymentLogger.js";
 import { logger } from "../../utils/logger.js";
 import { AdminSubscription } from "../../models/AdminSubscription.model.js";
 import { Order } from "../../models/Order.model.js";
+import { EmailQueue } from "../../models/EmailQueue.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { APIResponse } from "../../utils/APIResponse.js";
@@ -354,7 +355,10 @@ async function handleRefundProcessed(entity) {
     // Update order or subscription status
     const order = await Order.findOne({
       "payment.razorpayPaymentId": paymentId,
-    });
+    })
+      .populate("user", "name email phone")
+      .populate("hotel", "name email contactNumber gstin")
+      .populate("branch", "name email contactNumber address");
 
     if (order) {
       order.payment.paymentStatus = "refunded";
@@ -364,6 +368,91 @@ async function handleRefundProcessed(entity) {
         completedAt: new Date(),
       };
       await order.save();
+
+      // Generate and send credit note
+      try {
+        // Find the refund request by razorpay refund ID
+        const { RefundRequest } = await import(
+          "../../models/RefundRequest.model.js"
+        );
+        const refundRequest = await RefundRequest.findOne({
+          refundTransactionId: refundId,
+          order: order._id,
+        });
+
+        if (refundRequest) {
+          // Generate credit note
+          const creditNote = await invoiceService.generateCreditNote(
+            order,
+            refundRequest
+          );
+
+          // Add credit note to order
+          order.creditNotes.push({
+            creditNoteNumber: creditNote.creditNoteNumber,
+            refundRequestId: refundRequest._id,
+            amount: refundRequest.amount,
+            reason: refundRequest.reason,
+            generatedAt: new Date(),
+          });
+
+          await order.save();
+
+          // Try to send credit note email
+          if (order.user?.email) {
+            try {
+              await invoiceService.sendInvoiceEmail(
+                creditNote,
+                order.user.email,
+                order.user.name,
+                "credit_note"
+              );
+              logger.info("Credit note email sent successfully", {
+                orderId: order._id,
+                creditNoteNumber: creditNote.creditNoteNumber,
+              });
+            } catch (emailError) {
+              // Email failed - add to queue
+              logger.warn("Failed to send credit note email, adding to queue", {
+                orderId: order._id,
+                error: emailError.message,
+              });
+
+              await EmailQueue.create({
+                type: "credit_note",
+                orderId: order._id,
+                recipientEmail: order.user.email,
+                recipientName: order.user.name,
+                status: "pending",
+                emailData: {
+                  subject: `Credit Note ${creditNote.creditNoteNumber} - TableTop`,
+                  creditNoteNumber: creditNote.creditNoteNumber,
+                  amount: refundRequest.amount,
+                },
+                scheduledFor: new Date(Date.now() + 5 * 60 * 1000), // Retry in 5 minutes
+              });
+            }
+          }
+
+          logger.info("Credit note generated successfully", {
+            orderId: order._id,
+            creditNoteNumber: creditNote.creditNoteNumber,
+            refundAmount: refundRequest.amount,
+          });
+        } else {
+          logger.warn("Refund request not found for credit note generation", {
+            orderId: order._id,
+            refundId,
+          });
+        }
+      } catch (creditNoteError) {
+        logger.error("Failed to generate/send credit note", {
+          orderId: order._id,
+          error: creditNoteError.message,
+          stack: creditNoteError.stack,
+        });
+        // Don't fail the refund processing if credit note fails
+      }
     }
 
     return { success: true, message: "Refund processed successfully" };
@@ -573,11 +662,41 @@ async function processSubscriptionPayment(entity, status) {
         lastPayment
       );
 
-      await invoiceService.sendInvoiceEmail(
-        invoice,
-        subscription.admin.email,
-        subscription.admin.name
-      );
+      try {
+        await invoiceService.sendInvoiceEmail(
+          invoice,
+          subscription.admin.email,
+          subscription.admin.name,
+          "invoice"
+        );
+        logger.info("Subscription invoice email sent successfully", {
+          subscriptionId: subscription._id,
+          invoiceNumber: invoice.invoiceNumber,
+        });
+      } catch (emailError) {
+        // Email failed - add to queue
+        logger.warn(
+          "Failed to send subscription invoice email, adding to queue",
+          {
+            subscriptionId: subscription._id,
+            error: emailError.message,
+          }
+        );
+
+        await EmailQueue.create({
+          type: "subscription_invoice",
+          subscriptionId: subscription._id,
+          recipientEmail: subscription.admin.email,
+          recipientName: subscription.admin.name,
+          status: "pending",
+          emailData: {
+            subject: `Subscription Invoice ${invoice.invoiceNumber} - TableTop`,
+            invoiceNumber: invoice.invoiceNumber,
+            amount: lastPayment.amount,
+          },
+          scheduledFor: new Date(Date.now() + 5 * 60 * 1000), // Retry in 5 minutes
+        });
+      }
     } catch (invoiceError) {
       logger.error("Failed to generate/send invoice", {
         error: invoiceError.message,
@@ -640,6 +759,105 @@ async function processOrderPayment(entity, status) {
       await paymentService.clearCartAfterPayment(order);
     } catch (cartError) {
       logger.error("Failed to clear cart", { error: cartError.message });
+    }
+
+    // Generate and send invoice
+    try {
+      // Populate order for invoice generation
+      const populatedOrder = await Order.findById(order._id)
+        .populate("user", "name email phone")
+        .populate("hotel", "name email contactNumber gstin")
+        .populate("branch", "name email contactNumber address")
+        .populate("items.foodItem", "name price");
+
+      if (!populatedOrder) {
+        throw new Error("Order not found for invoice generation");
+      }
+
+      // Generate invoice number
+      const invoiceNumber = `INV-${Date.now()}-${order._id
+        .toString()
+        .slice(-8)
+        .toUpperCase()}`;
+
+      // Create invoice snapshot
+      populatedOrder.invoiceNumber = invoiceNumber;
+      populatedOrder.invoiceGeneratedAt = new Date();
+      populatedOrder.invoiceSnapshot = {
+        hotelName: populatedOrder.hotel?.name || "Hotel Name",
+        hotelEmail: populatedOrder.hotel?.email || "",
+        hotelPhone: populatedOrder.hotel?.contactNumber || "",
+        hotelGSTIN: populatedOrder.hotel?.gstin || "",
+        branchName: populatedOrder.branch?.name || "Branch Name",
+        branchAddress: populatedOrder.branch?.address || "",
+        branchPhone: populatedOrder.branch?.contactNumber || "",
+        branchEmail: populatedOrder.branch?.email || "",
+        customerName: populatedOrder.user?.name || "Guest",
+        customerEmail: populatedOrder.user?.email || "",
+        customerPhone: populatedOrder.user?.phone || "",
+        tableNumber: populatedOrder.tableNumber || "",
+      };
+
+      // Generate invoice PDF
+      const invoice = await invoiceService.generateOrderInvoice(
+        populatedOrder,
+        { showCancelledStamp: false }
+      );
+
+      // Try to send email
+      if (populatedOrder.user?.email) {
+        try {
+          await invoiceService.sendInvoiceEmail(
+            invoice,
+            populatedOrder.user.email,
+            populatedOrder.user.name,
+            "invoice"
+          );
+          populatedOrder.invoiceEmailStatus = "sent";
+          logger.info("Invoice email sent successfully", {
+            orderId: order._id,
+            invoiceNumber: invoiceNumber,
+          });
+        } catch (emailError) {
+          // Email failed - add to queue
+          logger.warn("Failed to send invoice email, adding to queue", {
+            orderId: order._id,
+            error: emailError.message,
+          });
+
+          await EmailQueue.create({
+            type: "invoice",
+            orderId: populatedOrder._id,
+            recipientEmail: populatedOrder.user.email,
+            recipientName: populatedOrder.user.name,
+            status: "pending",
+            emailData: {
+              subject: `Invoice ${invoiceNumber} - TableTop`,
+              invoiceNumber: invoiceNumber,
+              amount: populatedOrder.totalPrice,
+            },
+            scheduledFor: new Date(Date.now() + 5 * 60 * 1000), // Retry in 5 minutes
+          });
+
+          populatedOrder.invoiceEmailStatus = "failed";
+          populatedOrder.invoiceEmailAttempts = 1;
+        }
+      }
+
+      // Save order with invoice data
+      await populatedOrder.save();
+
+      logger.info("Invoice generated successfully", {
+        orderId: order._id,
+        invoiceNumber: invoiceNumber,
+      });
+    } catch (invoiceError) {
+      logger.error("Failed to generate/send invoice", {
+        orderId: order._id,
+        error: invoiceError.message,
+        stack: invoiceError.stack,
+      });
+      // Don't fail the payment if invoice fails
     }
 
     logger.info("Order payment processed successfully", { orderId: order._id });
