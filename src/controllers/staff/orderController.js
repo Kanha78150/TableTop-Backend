@@ -2,11 +2,13 @@
 import { Order } from "../../models/Order.model.js";
 import { Staff } from "../../models/Staff.model.js";
 import { Table } from "../../models/Table.model.js";
+import { User } from "../../models/User.model.js";
 import assignmentService from "../../services/assignmentService.js";
 import timeTracker from "../../services/timeTracker.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
+import { sendReviewInvitationEmail } from "../../utils/emailService.js";
 import Joi from "joi";
 
 /**
@@ -168,6 +170,42 @@ export const updateOrderStatus = async (req, res, next) => {
         reassignmentResult = await timeTracker.handleOrderCompletion(orderId);
 
         logger.info(`Order ${orderId} completed by staff ${staffId}`);
+
+        // Send review invitation email if order is paid and email not sent yet
+        if (
+          updatedOrder.payment?.paymentStatus === "paid" &&
+          !updatedOrder.reviewInviteSentAt
+        ) {
+          try {
+            // Get user details
+            const user = await User.findById(
+              updatedOrder.user._id || updatedOrder.user
+            );
+            if (user && user.email) {
+              // Populate hotel and branch details for email
+              const orderWithDetails = await Order.findById(updatedOrder._id)
+                .populate("hotel", "name")
+                .populate("branch", "name");
+
+              await sendReviewInvitationEmail(orderWithDetails, user);
+
+              // Mark email as sent (don't wait for this to complete)
+              Order.findByIdAndUpdate(orderId, {
+                reviewInviteSentAt: new Date(),
+              }).catch((err) =>
+                logger.error("Failed to update reviewInviteSentAt:", err)
+              );
+
+              logger.info(`Review invitation email sent for order ${orderId}`);
+            }
+          } catch (emailError) {
+            // Log error but don't block the order completion
+            logger.error(
+              `Failed to send review invitation email for order ${orderId}:`,
+              emailError
+            );
+          }
+        }
       } catch (reassignmentError) {
         logger.error(
           `Failed to handle reassignment after completion of ${orderId}:`,
@@ -271,7 +309,7 @@ export const getActiveOrdersCount = async (req, res, next) => {
       hotel: staff.hotel,
       isActive: true,
     };
-    
+
     // Add branch filter if staff has a branch assigned
     if (staff.branch) {
       tableQuery.branch = staff.branch;
@@ -359,7 +397,9 @@ export const getAllTablesStatus = async (req, res, next) => {
     // Get tables with pagination
     const [tables, totalCount] = await Promise.all([
       Table.find(tableQuery)
-        .select("tableNumber uniqueId status capacity currentOrder currentCustomer lastUsed totalOrders totalRevenue")
+        .select(
+          "tableNumber uniqueId status capacity currentOrder currentCustomer lastUsed totalOrders totalRevenue"
+        )
         .populate("currentOrder", "orderNumber status totalPrice")
         .populate("currentCustomer", "name phone")
         .sort(sortOptions)
@@ -406,7 +446,11 @@ export const getAllTablesStatus = async (req, res, next) => {
     res
       .status(200)
       .json(
-        new APIResponse(200, responseData, "Tables status retrieved successfully")
+        new APIResponse(
+          200,
+          responseData,
+          "Tables status retrieved successfully"
+        )
       );
   } catch (error) {
     logger.error("Error getting tables status:", error);

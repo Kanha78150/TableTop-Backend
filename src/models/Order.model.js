@@ -203,6 +203,11 @@ const orderSchema = new mongoose.Schema(
     customerRating: { type: Number, min: 1, max: 5 }, // Optional customer feedback
     serviceNotes: { type: String }, // Internal notes about service quality
 
+    // Review System Fields
+    reviewInviteSentAt: { type: Date }, // When review invitation email was sent
+    hasReview: { type: Boolean, default: false }, // Whether user submitted a review
+    reviewId: { type: mongoose.Schema.Types.ObjectId, ref: "Review" }, // Reference to review
+
     // Timestamps for status changes
     statusHistory: [
       {

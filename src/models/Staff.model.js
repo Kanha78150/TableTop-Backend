@@ -224,6 +224,7 @@ const staffSchema = new mongoose.Schema(
       completedOrders: { type: Number, default: 0 },
       averageCompletionTime: { type: Number, default: 0 }, // in minutes
       customerRating: { type: Number, default: 0, min: 0, max: 5 },
+      totalReviews: { type: Number, default: 0 }, // Total number of reviews received
       lastStatsUpdate: { type: Date, default: Date.now },
     },
 

@@ -396,7 +396,11 @@ export const updateStaffStatus = async (req, res, next) => {
 export const getStaffPerformance = async (req, res, next) => {
   try {
     const { staffId } = req.params;
-    const { days = 30 } = req.query;
+    const {
+      days,
+      startDate: startDateParam,
+      endDate: endDateParam,
+    } = req.query;
     const managerBranch = req.user.branch;
 
     // Get staff
@@ -405,19 +409,43 @@ export const getStaffPerformance = async (req, res, next) => {
       return next(new APIError(404, "Staff member not found"));
     }
 
-    // Check branch access
-    if (staff.branch?.toString() !== managerBranch?.toString()) {
-      return next(
-        new APIError(
-          403,
-          "You can only view performance of staff from your branch"
-        )
-      );
+    // Check branch access (skip if manager has no branch or staff has no branch)
+    if (managerBranch && staff.branch) {
+      // Extract branch ID from manager branch (could be populated object or ObjectId)
+      const managerBranchId =
+        managerBranch._id?.toString() || managerBranch.toString();
+      const staffBranchId = staff.branch.toString();
+
+      if (staffBranchId !== managerBranchId) {
+        return next(
+          new APIError(
+            403,
+            "You can only view performance of staff from your branch"
+          )
+        );
+      }
     }
 
-    // Calculate date range
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - parseInt(days));
+    // Calculate date range - support both days and startDate/endDate
+    let startDate, endDate;
+
+    if (startDateParam && endDateParam) {
+      // Parse date strings (DD-MM-YYYY format)
+      const [startDay, startMonth, startYear] = startDateParam.split("-");
+      const [endDay, endMonth, endYear] = endDateParam.split("-");
+
+      startDate = new Date(startYear, startMonth - 1, startDay);
+      endDate = new Date(endYear, endMonth - 1, endDay);
+      endDate.setHours(23, 59, 59, 999); // End of day
+    } else {
+      // Use days parameter (default 30)
+      const daysCount = parseInt(days) || 30;
+      startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysCount);
+      endDate = new Date();
+    }
+
+    const periodDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
 
     // Get performance data based on role
     let performanceData = {};
@@ -426,7 +454,7 @@ export const getStaffPerformance = async (req, res, next) => {
       // Get orders handled by this waiter
       const orders = await Order.find({
         staff: staffId,
-        createdAt: { $gte: startDate },
+        createdAt: { $gte: startDate, $lte: endDate },
       }).select("status totalPrice actualServiceTime customerRating createdAt");
 
       const totalOrders = orders.length;
@@ -447,26 +475,33 @@ export const getStaffPerformance = async (req, res, next) => {
             serviceTimes.length
           : 0;
 
-      const ratings = orders
-        .filter((o) => o.customerRating)
-        .map((o) => o.customerRating);
-      const avgRating =
-        ratings.length > 0
-          ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
-          : 0;
+      // Get customer rating from staff's review statistics
+      const avgRating = staff.assignmentStats?.customerRating || 0;
+      const totalReviews = staff.assignmentStats?.totalReviews || 0;
 
       performanceData = {
-        totalOrders,
-        completedOrders,
-        completionRate:
-          totalOrders > 0
-            ? ((completedOrders / totalOrders) * 100).toFixed(2)
-            : 0,
-        totalRevenue,
-        avgOrderValue:
-          totalOrders > 0 ? (totalRevenue / totalOrders).toFixed(2) : 0,
-        avgServiceTime: Math.round(avgServiceTime),
-        avgCustomerRating: parseFloat(avgRating.toFixed(2)),
+        // Period-specific metrics (filtered by date range)
+        periodMetrics: {
+          totalOrders,
+          completedOrders,
+          completionRate:
+            totalOrders > 0
+              ? ((completedOrders / totalOrders) * 100).toFixed(2)
+              : 0,
+          totalRevenue,
+          avgOrderValue:
+            totalOrders > 0 ? (totalRevenue / totalOrders).toFixed(2) : 0,
+          avgServiceTime: Math.round(avgServiceTime),
+        },
+        // All-time metrics from assignment stats
+        allTimeMetrics: {
+          totalAssignments: staff.assignmentStats?.totalAssignments || 0,
+          completedOrders: staff.assignmentStats?.completedOrders || 0,
+          avgCompletionTime: staff.assignmentStats?.averageCompletionTime || 0,
+          avgCustomerRating: parseFloat(avgRating.toFixed(2)),
+          totalReviews: totalReviews,
+          lastStatsUpdate: staff.assignmentStats?.lastStatsUpdate,
+        },
         currentActiveOrders: staff.activeOrdersCount || 0,
       };
     } else {
@@ -489,7 +524,11 @@ export const getStaffPerformance = async (req, res, next) => {
             role: staff.role,
             department: staff.department,
           },
-          period: `${days} days`,
+          period: {
+            days: periodDays,
+            startDate: startDate,
+            endDate: endDate,
+          },
           performance: performanceData,
         },
         "Staff performance retrieved successfully"

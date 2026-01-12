@@ -2,11 +2,13 @@
 import { Order } from "../../models/Order.model.js";
 import { Staff } from "../../models/Staff.model.js";
 import { FoodItem } from "../../models/FoodItem.model.js";
+import { User } from "../../models/User.model.js";
 import assignmentService from "../../services/assignmentService.js";
 import timeTracker from "../../services/timeTracker.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
+import { sendReviewInvitationEmail } from "../../utils/emailService.js";
 import Joi from "joi";
 
 /**
@@ -302,6 +304,42 @@ export const updateOrderStatus = async (req, res, next) => {
     if (status === "completed") {
       try {
         await timeTracker.handleOrderCompletion(orderId);
+
+        // Send review invitation email if order is paid and email not sent yet
+        if (
+          updatedOrder.payment?.paymentStatus === "paid" &&
+          !updatedOrder.reviewInviteSentAt
+        ) {
+          try {
+            // Get user details
+            const user = await User.findById(
+              updatedOrder.user._id || updatedOrder.user
+            );
+            if (user && user.email) {
+              // Populate hotel and branch details for email
+              const orderWithDetails = await Order.findById(updatedOrder._id)
+                .populate("hotel", "name")
+                .populate("branch", "name");
+
+              await sendReviewInvitationEmail(orderWithDetails, user);
+
+              // Mark email as sent (don't wait for this to complete)
+              Order.findByIdAndUpdate(orderId, {
+                reviewInviteSentAt: new Date(),
+              }).catch((err) =>
+                logger.error("Failed to update reviewInviteSentAt:", err)
+              );
+
+              logger.info(`Review invitation email sent for order ${orderId}`);
+            }
+          } catch (emailError) {
+            // Log error but don't block the order completion
+            logger.error(
+              `Failed to send review invitation email for order ${orderId}:`,
+              emailError
+            );
+          }
+        }
       } catch (assignmentError) {
         logger.error(
           `Assignment system error on order completion:`,

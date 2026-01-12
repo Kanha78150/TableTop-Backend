@@ -969,4 +969,10 @@ import accountingRoutes from "./admin/accounting.route.js";
 // Mount accounting routes
 router.use("/accounting", accountingRoutes);
 
+// ===== REVIEW MANAGEMENT =====
+import reviewRoutes from "./admin/review.route.js";
+
+// Mount review routes
+router.use("/reviews", reviewRoutes);
+
 export default router;

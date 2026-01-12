@@ -908,3 +908,236 @@ export const sendSubscriptionExpiredEmail = async (
     `,
   });
 };
+/**
+ * Send review invitation email to user after order completion
+ * @param {Object} order - Order object
+ * @param {Object} user - User object
+ */
+export const sendReviewInvitationEmail = async (order, user) => {
+  try {
+    const hotelName = order.hotel?.name || "Our Restaurant";
+    const branchName = order.branch?.name || "";
+    const orderId = order.orderId || order._id;
+    const completedDate = new Date(
+      order.completedAt || order.updatedAt
+    ).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const itemCount = order.items?.length || 0;
+    const totalAmount = order.totalPrice || 0;
+
+    // Generate review link with orderId
+    const reviewLink = `${process.env.FRONTEND_URL}/reviews/create?orderId=${order._id}`;
+
+    await sendEmail({
+      to: user.email,
+      subject: `How was your experience at ${hotelName}? Share your review`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 8px 8px 0 0; margin: -20px -20px 20px -20px;">
+            <h1 style="color: #ffffff; margin: 0;">⭐ Share Your Experience</h1>
+            <p style="color: #f0f0f0; margin: 10px 0 0 0;">Your feedback helps us serve you better!</p>
+          </div>
+          
+          <h2 style="color: #333;">Hi ${user.name},</h2>
+          
+          <p style="font-size: 16px; color: #555; line-height: 1.6;">
+            Thank you for dining with us at <strong>${hotelName}</strong>${
+        branchName ? ` - ${branchName}` : ""
+      }! We hope you enjoyed your meal.
+          </p>
+          
+          <div style="background-color: #f5f7fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #667eea;">
+            <h3 style="color: #333; margin-top: 0;">📋 Order Summary</h3>
+            <p style="margin: 5px 0; color: #555;"><strong>Order ID:</strong> ${orderId}</p>
+            <p style="margin: 5px 0; color: #555;"><strong>Date:</strong> ${completedDate}</p>
+            <p style="margin: 5px 0; color: #555;"><strong>Items:</strong> ${itemCount} item${
+        itemCount !== 1 ? "s" : ""
+      }</p>
+            <p style="margin: 5px 0; color: #555;"><strong>Total:</strong> ₹${totalAmount.toFixed(
+              2
+            )}</p>
+          </div>
+          
+          <p style="font-size: 16px; color: #555; line-height: 1.6;">
+            We'd love to hear about your experience! Please take a moment to rate us on:
+          </p>
+          
+          <div style="background-color: #fff3cd; padding: 15px; margin: 20px 0; border-radius: 8px;">
+            <ul style="margin: 0; padding-left: 20px; color: #856404;">
+              <li style="margin: 8px 0;"><strong>🍕 Food Quality</strong> - How was the taste and presentation?</li>
+              <li style="margin: 8px 0;"><strong>🏨 Hotel Experience</strong> - Ambiance and overall atmosphere</li>
+              <li style="margin: 8px 0;"><strong>🏢 Branch Service</strong> - Facilities and cleanliness</li>
+              <li style="margin: 8px 0;"><strong>👥 Staff Behavior</strong> - Service quality and friendliness</li>
+            </ul>
+          </div>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${reviewLink}" 
+               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 40px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold; font-size: 18px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
+              ⭐ Write a Review
+            </a>
+          </div>
+          
+          <p style="font-size: 14px; color: #777; text-align: center; margin-top: 20px;">
+            Or copy this link: <br>
+            <span style="word-break: break-all; background-color: #f0f0f0; padding: 8px; display: inline-block; margin-top: 5px; border-radius: 4px; font-size: 12px;">${reviewLink}</span>
+          </p>
+          
+          <div style="background-color: #e3f2fd; padding: 15px; margin: 20px 0; border-radius: 5px;">
+            <p style="margin: 0; color: #1976d2; font-size: 14px;">
+              ⏰ <strong>Please Note:</strong> You can submit your review within 30 days of order completion.
+            </p>
+          </div>
+          
+          <p style="font-size: 14px; color: #555; line-height: 1.6;">
+            Your honest feedback helps us improve and helps other customers make informed decisions.
+          </p>
+          
+          <p style="font-size: 16px; color: #333; margin-top: 30px;">
+            Thank you for choosing ${hotelName}!<br>
+            We look forward to serving you again soon.
+          </p>
+          
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #e0e0e0;">
+          <p style="color: #999; font-size: 12px; text-align: center;">
+            This is an automated message from ${hotelName}.<br>
+            If you have any questions, feel free to contact us.
+          </p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    console.error("Error sending review invitation email:", error);
+    throw error;
+  }
+};
+
+/**
+ * Send email when admin responds to a review
+ * @param {Object} review - Review object with populated fields
+ * @param {Object} user - User object
+ * @param {Object} admin - Admin object who responded
+ * @param {String} message - Admin's response message
+ */
+export const sendReviewResponseEmail = async (review, user, admin, message) => {
+  try {
+    const hotelName = review.hotel?.name || "Our Restaurant";
+    const branchName = review.branch?.name || "";
+    const orderId = review.order?.orderId || review.order?._id;
+    const reviewDate = new Date(review.createdAt).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    // Generate review link
+    const reviewLink = `${process.env.FRONTEND_URL}/reviews/${review._id}`;
+
+    // Format ratings for display
+    const avgRating =
+      review.overallRating ||
+      (
+        (review.foodRating +
+          review.hotelRating +
+          review.branchRating +
+          review.staffRating) /
+        4
+      ).toFixed(1);
+    const starsDisplay = "⭐".repeat(Math.round(avgRating));
+
+    await sendEmail({
+      to: user.email,
+      subject: `${hotelName} responded to your review`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 8px 8px 0 0; margin: -20px -20px 20px -20px;">
+            <h1 style="color: #ffffff; margin: 0;">💬 Response to Your Review</h1>
+            <p style="color: #f0f0f0; margin: 10px 0 0 0;">Thank you for sharing your feedback!</p>
+          </div>
+          
+          <h2 style="color: #333;">Hi ${user.name},</h2>
+          
+          <p style="font-size: 16px; color: #555; line-height: 1.6;">
+            <strong>${hotelName}</strong>${
+        branchName ? ` - ${branchName}` : ""
+      } has responded to your review. We appreciate you taking the time to share your experience with us!
+          </p>
+          
+          <div style="background-color: #f5f7fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #667eea;">
+            <h3 style="color: #333; margin-top: 0;">📝 Your Review Summary</h3>
+            <p style="margin: 5px 0; color: #555;"><strong>Order ID:</strong> ${orderId}</p>
+            <p style="margin: 5px 0; color: #555;"><strong>Review Date:</strong> ${reviewDate}</p>
+            <p style="margin: 5px 0; color: #555;"><strong>Overall Rating:</strong> ${starsDisplay} (${avgRating}/5)</p>
+            <div style="margin-top: 15px; padding: 15px; background-color: #ffffff; border-radius: 5px;">
+              <p style="margin: 5px 0; color: #555;"><strong>🍕 Food:</strong> ${
+                review.foodRating
+              }/5</p>
+              <p style="margin: 5px 0; color: #555;"><strong>🏨 Hotel:</strong> ${
+                review.hotelRating
+              }/5</p>
+              <p style="margin: 5px 0; color: #555;"><strong>🏢 Branch:</strong> ${
+                review.branchRating
+              }/5</p>
+              <p style="margin: 5px 0; color: #555;"><strong>👥 Staff:</strong> ${
+                review.staffRating
+              }/5</p>
+            </div>
+            ${
+              review.comment
+                ? `
+            <div style="margin-top: 15px; padding: 15px; background-color: #ffffff; border-radius: 5px; border-left: 3px solid #667eea;">
+              <p style="margin: 0; color: #666; font-style: italic;">"${review.comment}"</p>
+            </div>
+            `
+                : ""
+            }
+          </div>
+          
+          <div style="background-color: #e8f5e9; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #4caf50;">
+            <h3 style="color: #2e7d32; margin-top: 0;">💼 Response from ${
+              admin.name || "Management"
+            }</h3>
+            <p style="color: #333; font-size: 15px; line-height: 1.6; margin: 0;">
+              ${message}
+            </p>
+          </div>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${reviewLink}" 
+               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 40px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold; font-size: 18px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
+              View Full Review
+            </a>
+          </div>
+          
+          <p style="font-size: 14px; color: #777; text-align: center; margin-top: 20px;">
+            Or copy this link: <br>
+            <span style="word-break: break-all; background-color: #f0f0f0; padding: 8px; display: inline-block; margin-top: 5px; border-radius: 4px; font-size: 12px;">${reviewLink}</span>
+          </p>
+          
+          <div style="background-color: #fff3cd; padding: 15px; margin: 20px 0; border-radius: 5px;">
+            <p style="margin: 0; color: #856404; font-size: 14px;">
+              💡 <strong>Did you find this helpful?</strong> Mark the review as helpful or share it with others who might be interested in ${hotelName}!
+            </p>
+          </div>
+          
+          <p style="font-size: 16px; color: #333; margin-top: 30px;">
+            Thank you for being a valued customer!<br>
+            We look forward to serving you again soon.
+          </p>
+          
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #e0e0e0;">
+          <p style="color: #999; font-size: 12px; text-align: center;">
+            This is an automated notification from ${hotelName}.<br>
+            You received this email because you submitted a review for Order #${orderId}.
+          </p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    console.error("Error sending review response email:", error);
+    throw error;
+  }
+};

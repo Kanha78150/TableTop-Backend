@@ -58,6 +58,17 @@ import {
   calculateCoinsEarning,
   getCoinSystemInfo,
 } from "../controllers/user/coinController.js";
+import {
+  submitReview,
+  getMyReviews,
+  updateReview,
+  // checkEligibility,
+  markReviewHelpful,
+  getHotelReviews,
+  getBranchReviews,
+  getReviewDetails,
+  getReviewByOrderId,
+} from "../controllers/user/reviewController.js";
 import userOfferController from "../controllers/user/offerController.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/multer.middleware.js";
@@ -297,6 +308,43 @@ router.post(
 router.put("/complaints/:complaintId/rate", authenticateUser, rateResolution);
 
 // Reopen a resolved complaint
-router.put("/complaints/:complaintId/reopen", authenticateUser, reopenComplaint);
+router.put(
+  "/complaints/:complaintId/reopen",
+  authenticateUser,
+  reopenComplaint
+);
+
+// ======================
+// REVIEW ROUTES (PUBLIC AND PROTECTED)
+// ======================
+
+// Public review routes (no authentication required)
+// Get all reviews for a specific hotel
+router.get("/reviews/hotel/:hotelId", getHotelReviews);
+
+// Get all reviews for a specific branch
+router.get("/reviews/branch/:branchId", getBranchReviews);
+
+// Protected review routes (authentication required)
+// Submit a new review for a completed order
+router.post("/reviews", authenticateUser, submitReview);
+
+// Get all reviews submitted by the logged-in user
+router.get("/reviews/my-reviews", authenticateUser, getMyReviews);
+
+// Update an existing review (only if status is pending)
+router.put("/reviews/:reviewId", authenticateUser, updateReview);
+
+// Check if user is eligible to review a specific order
+// router.get("/reviews/eligibility/:orderId", authenticateUser, checkEligibility);
+
+// Get review by order ID (optional authentication - can be used by owner or public for approved reviews)
+router.get("/reviews/order/:orderId", getReviewByOrderId);
+
+// Mark a review as helpful (toggle on/off)
+router.post("/reviews/:reviewId/helpful", authenticateUser, markReviewHelpful);
+
+// Get specific review details (public - must come last to avoid matching specific routes)
+router.get("/reviews/:reviewId", getReviewDetails);
 
 export default router;
