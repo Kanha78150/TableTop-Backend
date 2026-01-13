@@ -1,2 +1,2 @@
 // Application constants
-export const DB_NAME = "restaurantDB";
+export const DB_NAME = "BeanrowseDEVDEB";
