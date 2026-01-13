@@ -45,7 +45,7 @@ app.use(cookieParser());
 // Session configuration for OAuth
 app.use(
   session({
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET || "fallback-secret-for-cloud-run",
     resave: false,
     saveUninitialized: false,
     cookie: {
