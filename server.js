@@ -81,7 +81,15 @@ try {
 
 // Track initialization status
 let isInitialized = false;
+let isDbConnected = false;
 let initializationError = null;
+
+// Export status for middleware
+export const getInitStatus = () => ({
+  isInitialized,
+  isDbConnected,
+  initializationError,
+});
 
 // Connect DB and initialize assignment system
 const initializeServer = async () => {
@@ -90,6 +98,8 @@ const initializeServer = async () => {
 
     // Connect to database first
     await connectDB();
+    isDbConnected = true;
+    logger.info("✅ Database connected");
 
     // Initialize assignment system after database connection
     await assignmentSystemInit.initialize({
