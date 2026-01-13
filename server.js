@@ -29,6 +29,32 @@ if (!validateEnvironment()) {
 // Print environment summary
 printEnvironmentSummary();
 
+// Setup server
+const PORT = process.env.PORT || 8080;
+const server = http.createServer(app);
+
+// Setup socket.io
+const io = new Server(server, {
+  origin: process.env.CORS_ORIGIN, // 🔒
+  credentials: true,
+  methods: ["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE"],
+});
+
+// Initialize complaint socket events
+setupComplaintEvents(io);
+
+// Set global Socket.IO instance for use in controllers
+setIO(io);
+
+// Basic socket handler
+io.on("connection", (socket) => {
+  console.log("⚡ A user connected:", socket.id);
+
+  socket.on("disconnect", () => {
+    console.log("❌ A user disconnected:", socket.id);
+  });
+});
+
 // Connect DB and initialize assignment system
 const initializeServer = async () => {
   try {
@@ -66,6 +92,11 @@ const initializeServer = async () => {
     }
 
     logger.info("✅ All systems initialized successfully");
+
+    // Start server AFTER all initialization is complete
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
   } catch (error) {
     logger.error("❌ Failed to initialize server:", error);
     process.exit(1);
@@ -74,37 +105,6 @@ const initializeServer = async () => {
 
 // Initialize everything
 initializeServer();
-
-// Setup server
-const PORT = process.env.PORT || 8080;
-const server = http.createServer(app);
-
-// Setup socket.io
-const io = new Server(server, {
-  origin: process.env.CORS_ORIGIN, // 🔒
-  credentials: true,
-  methods: ["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE"],
-});
-
-// Initialize complaint socket events
-setupComplaintEvents(io);
-
-// Set global Socket.IO instance for use in controllers
-setIO(io);
-
-// Basic socket handler
-io.on("connection", (socket) => {
-  console.log("⚡ A user connected:", socket.id);
-
-  socket.on("disconnect", () => {
-    console.log("❌ A user disconnected:", socket.id);
-  });
-});
-
-// Start server
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
