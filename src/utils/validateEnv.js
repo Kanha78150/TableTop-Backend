@@ -303,6 +303,8 @@ export const printEnvironmentSummary = () => {
     RAZORPAY_MODE: process.env.RAZORPAY_KEY_ID?.startsWith("rzp_test_")
       ? "TEST"
       : "LIVE",
+    CORS_ORIGIN: process.env.CORS_ORIGIN,
+    FRONTEND_URL: process.env.FRONTEND_URL,
     EMAIL_QUEUE: process.env.ENABLE_EMAIL_QUEUE,
     SUBSCRIPTION_JOBS: process.env.ENABLE_SUBSCRIPTION_JOBS,
   };

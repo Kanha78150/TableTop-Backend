@@ -17,48 +17,61 @@ import superAdminSubscriptionPlanRoutes from "./superAdmin/subscriptionPlan.rout
 import superAdminSubscriptionJobsRoutes from "./superAdmin/subscriptionJobs.route.js";
 import adminSubscriptionRoutes from "./admin/subscription.route.js";
 import { getPublicSubscriptionPlans } from "../controllers/superAdmin/subscriptionPlan.controller.js";
+import { ensureDbReady } from "../middleware/dbReady.middleware.js";
 
 const router = Router();
 
 // Public routes (no authentication required)
-router.get("/public/subscription-plans", getPublicSubscriptionPlans);
+router.get(
+  "/public/subscription-plans",
+  ensureDbReady,
+  getPublicSubscriptionPlans
+);
 
-// Authentication routes
-router.use("/auth", unifiedAuthRoutes); // Unified login endpoint
-router.use("/auth/user", userAuthRoutes);
-router.use("/auth/admin", adminAuthRoutes);
-router.use("/auth/manager", managerAuthRoutes);
-router.use("/auth/staff", staffAuthRoutes);
-router.use("/auth/super-admin", superAdminAuthRoutes);
+// Authentication routes (require DB connection)
+router.use("/auth", ensureDbReady, unifiedAuthRoutes); // Unified login endpoint
+router.use("/auth/user", ensureDbReady, userAuthRoutes);
+router.use("/auth/admin", ensureDbReady, adminAuthRoutes);
+router.use("/auth/manager", ensureDbReady, managerAuthRoutes);
+router.use("/auth/staff", ensureDbReady, staffAuthRoutes);
+router.use("/auth/super-admin", ensureDbReady, superAdminAuthRoutes);
 
 // Admin routes (authentication is handled within the admin routes)
-router.use("/admin", adminRoutes);
+router.use("/admin", ensureDbReady, adminRoutes);
 
 // Super Admin routes (authentication is handled within the super admin routes)
-router.use("/super-admin", superAdminDashboardRoutes);
-router.use("/super-admin/plans", superAdminSubscriptionPlanRoutes);
-router.use("/super-admin/subscription-jobs", superAdminSubscriptionJobsRoutes);
+router.use("/super-admin", ensureDbReady, superAdminDashboardRoutes);
+router.use(
+  "/super-admin/plans",
+  ensureDbReady,
+  superAdminSubscriptionPlanRoutes
+);
+router.use(
+  "/super-admin/subscription-jobs",
+  ensureDbReady,
+  superAdminSubscriptionJobsRoutes
+);
 
 // Admin subscription routes
-router.use("/subscription", adminSubscriptionRoutes);
+router.use("/subscription", ensureDbReady, adminSubscriptionRoutes);
 
 // Manager routes (authentication is handled within the manager routes)
-router.use("/manager", managerRoutes);
+router.use("/manager", ensureDbReady, managerRoutes);
 
 // Staff routes (authentication is handled within the staff routes)
-router.use("/staff", staffRoutes);
+router.use("/staff", ensureDbReady, staffRoutes);
 
 // Assignment system routes (authentication is handled within the assignment routes)
-router.use("/assignment", assignmentRoutes);
+router.use("/assignment", ensureDbReady, assignmentRoutes);
 
-// User routes
-router.use("/user", userRoutes);
+// User routes (you might want to add authentication middleware here)
+router.use("/user", ensureDbReady, userRoutes);
 
 // Public QR scan routes (no authentication required)
-router.use("/scan", scanRoutes);
+router.use("/scan", ensureDbReady, scanRoutes);
 
 // Payment routes (Razorpay integration)
-router.use("/payment", paymentRoutes);
+router.use("/payment", ensureDbReady, paymentRoutes);
 
 // Health check endpoints for Cloud Run
 router.get("/", (req, res) => {
