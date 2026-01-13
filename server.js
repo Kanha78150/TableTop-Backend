@@ -95,26 +95,50 @@ export const getInitStatus = () => ({
 const initializeServer = async () => {
   try {
     logger.info("🔄 Starting background initialization...");
+    console.log("🔄 Starting DB connection...");
 
-    // Connect to database first
-    await connectDB();
-    isDbConnected = true;
-    logger.info("✅ Database connected");
+    // Connect to database first - THIS IS CRITICAL
+    try {
+      await connectDB();
+      isDbConnected = true;
+      logger.info("✅ Database connected");
+      console.log("✅ Database connected successfully");
+    } catch (dbError) {
+      console.error("❌ Database connection FAILED:", dbError.message);
+      logger.error("❌ Database connection failed:", dbError);
+      // Don't throw - continue with other services
+      return; // Exit early if DB fails
+    }
 
     // Initialize assignment system after database connection
-    await assignmentSystemInit.initialize({
-      skipDataValidation: false,
-      skipTimeTracker: false,
-      autoRepairData: true,
-    });
+    try {
+      await assignmentSystemInit.initialize({
+        skipDataValidation: false,
+        skipTimeTracker: false,
+        autoRepairData: true,
+      });
+      console.log("✅ Assignment system initialized");
+    } catch (error) {
+      console.error("⚠️ Assignment system init failed:", error.message);
+      // Continue even if assignment fails
+    }
 
     // Initialize scheduled jobs
-    await scheduledJobsService.initialize();
+    try {
+      await scheduledJobsService.initialize();
+      console.log("✅ Scheduled jobs initialized");
+    } catch (error) {
+      console.error("⚠️ Scheduled jobs init failed:", error.message);
+    }
 
     // Initialize subscription background jobs
     if (process.env.ENABLE_SUBSCRIPTION_JOBS !== "false") {
-      startAllJobs();
-      logger.info("✅ Subscription background jobs started");
+      try {
+        startAllJobs();
+        logger.info("✅ Subscription background jobs started");
+      } catch (error) {
+        console.error("⚠️ Subscription jobs failed:", error.message);
+      }
     } else {
       logger.info(
         "⚠️ Subscription jobs disabled (ENABLE_SUBSCRIPTION_JOBS=false)"
@@ -123,8 +147,12 @@ const initializeServer = async () => {
 
     // Initialize email queue processor
     if (process.env.ENABLE_EMAIL_QUEUE !== "false") {
-      emailQueueService.startQueueProcessor();
-      logger.info("✅ Email queue processor started");
+      try {
+        emailQueueService.startQueueProcessor();
+        logger.info("✅ Email queue processor started");
+      } catch (error) {
+        console.error("⚠️ Email queue failed:", error.message);
+      }
     } else {
       logger.info(
         "⚠️ Email queue processor disabled (ENABLE_EMAIL_QUEUE=false)"
@@ -133,9 +161,11 @@ const initializeServer = async () => {
 
     isInitialized = true;
     logger.info("✅ All systems initialized successfully");
+    console.log("✅✅✅ ALL SYSTEMS READY ✅✅✅");
   } catch (error) {
     initializationError = error;
     logger.error("❌ Failed to initialize server:", error);
+    console.error("❌ CRITICAL INITIALIZATION ERROR:", error);
     // Don't exit - allow server to stay up for health checks
   }
 };
