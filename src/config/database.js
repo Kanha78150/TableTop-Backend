@@ -13,8 +13,11 @@ const connectDB = async () => {
     }
 
     const conn = await mongoose.connect(`${process.env.MONGO_URI}/${DB_NAME}`, {
-      serverSelectionTimeoutMS: 10000, // 10 seconds timeout
+      serverSelectionTimeoutMS: 30000, // 30 seconds for Cloud Run
       socketTimeoutMS: 45000,
+      family: 4, // Force IPv4 (Cloud Run compatibility)
+      maxPoolSize: 10,
+      minPoolSize: 1,
     });
     console.log(`✅ MongoDB Connected !! DB HOST: ${conn.connection.host}`);
   } catch (error) {
