@@ -76,7 +76,7 @@ const initializeServer = async () => {
 initializeServer();
 
 // Setup server
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 8080;
 const server = http.createServer(app);
 
 // Setup socket.io
