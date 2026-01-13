@@ -26,8 +26,6 @@ dotenv.config({
 
 console.log("✅ Environment variables loaded");
 
-console.log("✅ Environment variables loaded");
-
 // Validate environment variables (warn but don't exit for Cloud Run)
 try {
   const envValidation = validateEnvironment();
@@ -41,10 +39,6 @@ try {
 } catch (error) {
   console.warn("⚠️ Environment validation error:", error.message);
 }
-
-console.log("✅ Setting up Express server...");
-
-console.log("✅ Setting up Express server...");
 
 // Setup server
 const PORT = process.env.PORT || 8080;
@@ -139,7 +133,7 @@ const initializeServer = async () => {
 // Start server immediately for Cloud Run
 console.log(`🚀 Starting server on port ${PORT}...`);
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅✅✅ Server running on port ${PORT} ✅✅✅`);
+  console.log(`✅Server running on port ${PORT}`);
   console.log(`🌐 Health check: http://localhost:${PORT}/health`);
   console.log("🔄 Initializing background services...");
   // Initialize services in background after server starts
