@@ -60,9 +60,25 @@ router.use("/scan", scanRoutes);
 // Payment routes (Razorpay integration)
 router.use("/payment", paymentRoutes);
 
-// Health check
+// Health check endpoints for Cloud Run
 router.get("/", (req, res) => {
-  res.json({ message: "API Root 🚀" });
+  res.json({ message: "API Root 🚀", status: "ok" });
+});
+
+router.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
+// Readiness check (for checking if dependencies are ready)
+router.get("/ready", (req, res) => {
+  res.status(200).json({
+    status: "ready",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 export default router;

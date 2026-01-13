@@ -55,9 +55,15 @@ io.on("connection", (socket) => {
   });
 });
 
+// Track initialization status
+let isInitialized = false;
+let initializationError = null;
+
 // Connect DB and initialize assignment system
 const initializeServer = async () => {
   try {
+    logger.info("🔄 Starting background initialization...");
+
     // Connect to database first
     await connectDB();
 
@@ -91,20 +97,21 @@ const initializeServer = async () => {
       );
     }
 
+    isInitialized = true;
     logger.info("✅ All systems initialized successfully");
-
-    // Start server AFTER all initialization is complete
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-    });
   } catch (error) {
+    initializationError = error;
     logger.error("❌ Failed to initialize server:", error);
-    process.exit(1);
+    // Don't exit - allow server to stay up for health checks
   }
 };
 
-// Initialize everything
-initializeServer();
+// Start server immediately for Cloud Run
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  // Initialize services in background after server starts
+  initializeServer();
+});
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
