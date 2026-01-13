@@ -177,7 +177,6 @@ const createValidationMiddleware = (schema, source = "query") => {
 
       if (error) {
         const errorMessages = error.details.map((detail) => detail.message);
-        console.log("Joi validation error:", errorMessages);
         return next(
           new APIError(400, `Validation error: ${errorMessages.join(", ")}`)
         );
@@ -199,7 +198,6 @@ const createValidationMiddleware = (schema, source = "query") => {
           });
         } catch (queryError) {
           // If we can't modify req.query, just use req.validatedQuery
-          console.log("Using req.validatedQuery due to read-only req.query");
         }
       }
 
