@@ -4,20 +4,13 @@ dotenv.config();
 
 // Razorpay Payment Gateway Configuration
 export const razorpayConfig = {
-  keyId: process.env.RAZORPAY_KEY_ID || "",
-  keySecret: process.env.RAZORPAY_KEY_SECRET || "",
-  webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
+  keyId: process.env.RAZORPAY_KEY_ID,
+  keySecret: process.env.RAZORPAY_KEY_SECRET,
+  webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
   mode: process.env.NODE_ENV === "production" ? "PRODUCTION" : "TEST",
-  hostUrl:
-    process.env.NODE_ENV === "production"
-      ? "https://api.razorpay.com/v1"
-      : "https://api.razorpay.com/v1",
-  callbackUrl:
-    process.env.RAZORPAY_REDIRECT_URL ||
-    "http://localhost:8000/api/v1/payment/razorpay/callback",
-  webhookUrl:
-    process.env.RAZORPAY_WEBHOOK_URL ||
-    "http://localhost:8000/api/v1/payment/razorpay/webhook",
+  hostUrl: "https://api.razorpay.com/v1", // Same for both test and production
+  callbackUrl: process.env.RAZORPAY_REDIRECT_URL,
+  webhookUrl: process.env.RAZORPAY_WEBHOOK_URL,
 };
 
 // Payment Gateway URLs

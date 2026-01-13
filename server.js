@@ -10,11 +10,24 @@ import { emailQueueService } from "./src/services/emailQueueService.js";
 import { logger } from "./src/utils/logger.js";
 import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
 import { setIO } from "./src/utils/socketService.js";
+import {
+  validateEnvironment,
+  printEnvironmentSummary,
+} from "./src/utils/validateEnv.js";
 
 // Load env variables
 dotenv.config({
   path: ".env",
 });
+
+// Validate environment variables first
+if (!validateEnvironment()) {
+  logger.error("❌ Environment validation failed. Exiting...");
+  process.exit(1);
+}
+
+// Print environment summary
+printEnvironmentSummary();
 
 // Connect DB and initialize assignment system
 const initializeServer = async () => {

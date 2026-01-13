@@ -16,25 +16,42 @@ const app = express();
 app.use(express.json({ limit: "20kb" }));
 app.use(express.urlencoded({ extended: true, limit: "20kb" }));
 app.use(express.static("public"));
+
+// CORS Configuration
+const corsOrigins = process.env.CORS_ORIGIN?.split(",").map((origin) =>
+  origin.trim()
+);
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN?.split(",").map((origin) => origin.trim()), // 🔒
+    origin: corsOrigins,
     credentials: true,
     methods: ["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-razorpay-signature"],
   })
 );
-app.use(helmet());
-app.use(morgan("dev"));
+
+// Security Headers
+app.use(
+  helmet({
+    contentSecurityPolicy:
+      process.env.NODE_ENV === "production" ? undefined : false,
+  })
+);
+
+// Logging
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 app.use(cookieParser());
 
 // Session configuration for OAuth
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "your-session-secret",
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
       secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
   })
