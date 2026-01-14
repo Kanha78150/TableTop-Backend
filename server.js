@@ -1,213 +1,125 @@
+// server.js
 import dotenv from "dotenv";
 import http from "http";
 import { Server } from "socket.io";
+import mongoose from "mongoose";
+
 import app from "./src/app.js";
 import connectDB from "./src/config/database.js";
 import assignmentSystemInit from "./src/services/assignmentSystemInit.js";
 import scheduledJobsService from "./src/services/scheduledJobs.js";
 import { startAllJobs } from "./src/services/subscriptionJobs.js";
 import { emailQueueService } from "./src/services/emailQueueService.js";
-import { logger } from "./src/utils/logger.js";
 import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
 import { setIO } from "./src/utils/socketService.js";
+import { logger } from "./src/utils/logger.js";
 import {
   validateEnvironment,
   printEnvironmentSummary,
 } from "./src/utils/validateEnv.js";
 
+/* ---------------- ENV SETUP ---------------- */
+dotenv.config();
 console.log("🔧 Starting Hotel Management Backend...");
-console.log("📍 Node Version:", process.version);
-console.log("📍 PORT:", process.env.PORT || 8080);
+console.log("📍 Node:", process.version);
 
-// Load env variables
-dotenv.config({
-  path: ".env",
-});
-
-console.log("✅ Environment variables loaded");
-
-// Validate environment variables (warn but don't exit for Cloud Run)
+/* ---------------- ENV VALIDATION ---------------- */
 try {
-  const envValidation = validateEnvironment();
-  if (!envValidation) {
-    console.warn(
-      "⚠️ Environment validation failed. Server will start but may have issues."
-    );
-  } else {
-    printEnvironmentSummary();
-  }
-} catch (error) {
-  console.warn("⚠️ Environment validation error:", error.message);
+  const valid = validateEnvironment();
+  if (valid) printEnvironmentSummary();
+} catch (err) {
+  console.warn("⚠️ Env validation warning:", err.message);
 }
 
-// Setup server
+/* ---------------- SERVER SETUP ---------------- */
 const PORT = process.env.PORT || 8080;
 const server = http.createServer(app);
 
-console.log("✅ HTTP server created");
-console.log("✅ Configuring Socket.IO...");
-
-// Setup socket.io with error handling
-let io;
-try {
-  io = new Server(server, {
-    cors: {
-      origin: process.env.CORS_ORIGIN || "*",
-      credentials: true,
-      methods: ["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE"],
-    },
-  });
-
-  // Initialize complaint socket events
-  setupComplaintEvents(io);
-
-  // Set global Socket.IO instance for use in controllers
-  setIO(io);
-
-  // Basic socket handler
-  io.on("connection", (socket) => {
-    console.log("⚡ A user connected:", socket.id);
-
-    socket.on("disconnect", () => {
-      console.log("❌ A user disconnected:", socket.id);
-    });
-  });
-
-  logger.info("✅ Socket.IO configured successfully");
-} catch (error) {
-  logger.error("❌ Socket.IO configuration error:", error.message);
-  // Continue without socket.io if it fails
-}
-
-// Track initialization status
-let isInitialized = false;
-let isDbConnected = false;
-let initializationError = null;
-
-// Export status for middleware
-export const getInitStatus = () => ({
-  isInitialized,
-  isDbConnected,
-  initializationError,
+/* ---------------- SOCKET.IO ---------------- */
+const io = new Server(server, {
+  cors: {
+    origin: process.env.CORS_ORIGIN || "*",
+    credentials: true,
+  },
 });
 
-// Connect DB and initialize assignment system
-const initializeServer = async () => {
+setupComplaintEvents(io);
+setIO(io);
+
+io.on("connection", (socket) => {
+  console.log("⚡ Socket connected:", socket.id);
+  socket.on("disconnect", () => {
+    console.log("❌ Socket disconnected:", socket.id);
+  });
+});
+
+/* ---------------- INITIALIZATION FLAGS ---------------- */
+let isDbConnected = false;
+
+/* ---------------- BACKGROUND INITIALIZATION ---------------- */
+const initializeBackgroundServices = async () => {
   try {
-    logger.info("🔄 Starting background initialization...");
-    console.log("🔄 Starting DB connection...");
-
-    // Connect to database first - THIS IS CRITICAL
-    try {
-      await connectDB();
-      isDbConnected = true;
-      logger.info("✅ Database connected");
-      console.log("✅ Database connected successfully");
-    } catch (dbError) {
-      console.error("❌ Database connection FAILED:", dbError.message);
-      logger.error("❌ Database connection failed:", dbError);
-      // Don't throw - continue with other services
-      return; // Exit early if DB fails
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error("Database not connected");
     }
 
-    // Initialize assignment system after database connection
-    try {
-      await assignmentSystemInit.initialize({
-        skipDataValidation: false,
-        skipTimeTracker: false,
-        autoRepairData: true,
-      });
-      console.log("✅ Assignment system initialized");
-    } catch (error) {
-      console.error("⚠️ Assignment system init failed:", error.message);
-      // Continue even if assignment fails
-    }
+    await assignmentSystemInit.initialize({
+      skipDataValidation: false,
+      skipTimeTracker: false,
+      autoRepairData: true,
+    });
+    logger.info("✅ Assignment system initialized");
 
-    // Initialize scheduled jobs
-    try {
-      await scheduledJobsService.initialize();
-      console.log("✅ Scheduled jobs initialized");
-    } catch (error) {
-      console.error("⚠️ Scheduled jobs init failed:", error.message);
-    }
+    await scheduledJobsService.initialize();
+    logger.info("✅ Scheduled jobs initialized");
 
-    // Initialize subscription background jobs
     if (process.env.ENABLE_SUBSCRIPTION_JOBS !== "false") {
-      try {
-        startAllJobs();
-        logger.info("✅ Subscription background jobs started");
-      } catch (error) {
-        console.error("⚠️ Subscription jobs failed:", error.message);
-      }
-    } else {
-      logger.info(
-        "⚠️ Subscription jobs disabled (ENABLE_SUBSCRIPTION_JOBS=false)"
-      );
+      startAllJobs();
+      logger.info("✅ Subscription jobs started");
     }
 
-    // Initialize email queue processor
     if (process.env.ENABLE_EMAIL_QUEUE !== "false") {
-      try {
-        emailQueueService.startQueueProcessor();
-        logger.info("✅ Email queue processor started");
-      } catch (error) {
-        console.error("⚠️ Email queue failed:", error.message);
-      }
-    } else {
-      logger.info(
-        "⚠️ Email queue processor disabled (ENABLE_EMAIL_QUEUE=false)"
-      );
+      emailQueueService.startQueueProcessor();
+      logger.info("✅ Email queue started");
     }
 
-    isInitialized = true;
-    logger.info("✅ All systems initialized successfully");
-    console.log("✅✅✅ ALL SYSTEMS READY ✅✅✅");
+    console.log("✅ ALL BACKGROUND SERVICES READY");
   } catch (error) {
-    initializationError = error;
-    logger.error("❌ Failed to initialize server:", error);
-    console.error("❌ CRITICAL INITIALIZATION ERROR:", error);
-    // Don't exit - allow server to stay up for health checks
+    logger.error("❌ Background initialization failed:", error);
   }
 };
 
-// Start server immediately for Cloud Run
-console.log(`🚀 Starting server on port ${PORT}...`);
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅Server running on port ${PORT}`);
-  console.log(`🌐 Health check: http://localhost:${PORT}/health`);
-  console.log("🔄 Initializing background services...");
-  // Initialize services in background after server starts
-  initializeServer().catch((err) => {
-    console.error("Background initialization error:", err);
-  });
+/* ---------------- START SERVER (CORRECT WAY) ---------------- */
+const startServer = async () => {
+  try {
+    // 🔴 THIS IS THE KEY FIX
+    await connectDB();
+    isDbConnected = true;
+
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🌐 Health: http://localhost:${PORT}/health`);
+    });
+
+    // Start background services AFTER DB is ready
+    initializeBackgroundServices();
+  } catch (error) {
+    console.error("❌ Server startup failed:", error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+/* ---------------- GRACEFUL SHUTDOWN ---------------- */
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, shutting down...");
+  await mongoose.connection.close();
+  server.close(() => process.exit(0));
 });
 
-// Graceful shutdown
-process.on("SIGTERM", () => {
-  logger.info("SIGTERM signal received: closing HTTP server");
-  try {
-    if (emailQueueService && emailQueueService.stopQueueProcessor) {
-      emailQueueService.stopQueueProcessor();
-    }
-  } catch (error) {
-    logger.error("Error stopping email queue:", error.message);
-  }
-  server.close(() => {
-    logger.info("HTTP server closed");
-  });
-});
-
-process.on("SIGINT", () => {
-  logger.info("SIGINT signal received: closing HTTP server");
-  try {
-    if (emailQueueService && emailQueueService.stopQueueProcessor) {
-      emailQueueService.stopQueueProcessor();
-    }
-  } catch (error) {
-    logger.error("Error stopping email queue:", error.message);
-  }
-  server.close(() => {
-    logger.info("HTTP server closed");
-    process.exit(0);
-  });
+process.on("SIGINT", async () => {
+  console.log("SIGINT received, shutting down...");
+  await mongoose.connection.close();
+  server.close(() => process.exit(0));
 });

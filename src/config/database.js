@@ -1,33 +1,57 @@
-// MongoDB connection
+// src/config/database.js
 import mongoose from "mongoose";
-import { DB_NAME } from "./constants.js";
 
 const connectDB = async () => {
   try {
-    console.log("🔌 Connecting to MongoDB...");
-    console.log("📍 MONGO_URI present:", !!process.env.MONGO_URI);
-    console.log("📍 DB_NAME:", DB_NAME);
-
     if (!process.env.MONGO_URI) {
-      throw new Error("MONGO_URI environment variable is not set!");
+      throw new Error("❌ MONGO_URI is not set");
     }
 
+    console.log("🔌 Connecting to MongoDB...");
+
     const conn = await mongoose.connect(
-      `${process.env.MONGO_URI}/${DB_NAME}?retryWrites=true&w=majority`,
+      `${process.env.MONGO_URI}?retryWrites=true&w=majority`,
       {
-        serverSelectionTimeoutMS: 30000, // 30 seconds for Cloud Run
-        socketTimeoutMS: 45000,
-        family: 4, // Force IPv4 (Cloud Run compatibility)
-        maxPoolSize: 10,
+        maxPoolSize: 5,
         minPoolSize: 1,
+        serverSelectionTimeoutMS: 20000,
+        socketTimeoutMS: 45000,
+        connectTimeoutMS: 20000,
+        heartbeatFrequencyMS: 10000,
       }
     );
-    console.log(`✅ MongoDB Connected !! DB HOST: ${conn.connection.host}`);
+
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error("❌ MongoDB Connection Error:", error.message);
-    console.error("❌ Full error:", error);
-    throw error; // Re-throw to allow caller to handle
+    console.error("❌ MongoDB connection failed:", error.message);
+    throw error;
   }
 };
+
+/* 🔁 MongoDB lifecycle logs */
+mongoose.connection.on("connected", () => {
+  console.log("🟢 MongoDB connected");
+});
+
+mongoose.connection.on("error", (err) => {
+  console.error("🔴 MongoDB error:", err);
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.warn("🟠 MongoDB disconnected");
+});
+
+/* 🔚 Graceful shutdown */
+process.on("SIGINT", async () => {
+  await mongoose.connection.close();
+  console.log("🔴 MongoDB connection closed (SIGINT)");
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  await mongoose.connection.close();
+  console.log("🔴 MongoDB connection closed (SIGTERM)");
+  process.exit(0);
+});
 
 export default connectDB;
