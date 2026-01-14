@@ -2,6 +2,8 @@
 import cron from "node-cron";
 import assignmentService from "./assignmentService.js";
 import { Complaint } from "../models/Complaint.model.js";
+import { Order } from "../models/Order.model.js";
+import { paymentService } from "./paymentService.js";
 import { logger } from "../utils/logger.js";
 
 class ScheduledJobsService {
@@ -22,6 +24,9 @@ class ScheduledJobsService {
 
       // Schedule complaint auto-escalation every 6 hours
       this.scheduleComplaintEscalation();
+
+      // Schedule automatic payment sync every 5 minutes
+      this.schedulePaymentSync();
 
       this.isInitialized = true;
       logger.info("✅ Scheduled jobs initialized successfully", {});
@@ -384,6 +389,133 @@ class ScheduledJobsService {
       return { escalatedCount, totalChecked: complaintsToEscalate.length };
     } catch (error) {
       logger.error("Error in performComplaintEscalation:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Schedule automatic payment sync to fix abandoned/stuck payments
+   * Runs every 5 minutes to check pending payments older than 3 minutes
+   */
+  schedulePaymentSync() {
+    // Run every 5 minutes: "0 */5 * * * *" (at minute 0, 5, 10, 15, etc.)
+    const cronPattern = "0 */5 * * * *";
+
+    logger.info("💰 Scheduling automatic payment sync every 5 minutes", {});
+
+    const job = cron.schedule(
+      cronPattern,
+      async () => {
+        try {
+          logger.info("🔄 Starting automatic payment sync...", {});
+          await this.performPaymentSync();
+          logger.info("✅ Automatic payment sync completed successfully", {});
+        } catch (error) {
+          logger.error("❌ Failed to perform automatic payment sync:", error);
+        }
+      },
+      {
+        scheduled: true,
+        timezone: "Asia/Kolkata",
+      }
+    );
+
+    this.jobs.set("paymentSync", job);
+    logger.info("⏰ Payment sync job scheduled (runs every 5 minutes)", {});
+  }
+
+  /**
+   * Perform payment sync for pending/abandoned payments
+   * Checks Razorpay status and updates database accordingly
+   */
+  async performPaymentSync() {
+    try {
+      const now = new Date();
+      const threeMinutesAgo = new Date(now.getTime() - 3 * 60 * 1000); // 3 minutes ago
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000); // 1 hour ago
+
+      logger.info("🔍 Searching for pending payments to sync...", {
+        olderThan: "3 minutes",
+        newerThan: "1 hour",
+      });
+
+      // Find pending orders with Razorpay payment initiated
+      // That are older than 3 minutes (payment should complete by then)
+      // But newer than 1 hour (don't process very old orders)
+      const pendingOrders = await Order.find({
+        "payment.paymentStatus": "pending",
+        "payment.paymentMethod": "razorpay",
+        "payment.razorpayOrderId": { $exists: true },
+        createdAt: {
+          $gte: oneHourAgo, // Created within last hour
+          $lte: threeMinutesAgo, // But older than 3 minutes
+        },
+      }).select("_id payment.razorpayOrderId payment.transactionId createdAt");
+
+      logger.info(`📊 Found ${pendingOrders.length} pending orders to sync`, {
+        count: pendingOrders.length,
+      });
+
+      if (pendingOrders.length === 0) {
+        return { synced: 0, updated: 0, failed: 0 };
+      }
+
+      let syncedCount = 0;
+      let updatedCount = 0;
+      let failedCount = 0;
+
+      // Sync each pending order
+      for (const order of pendingOrders) {
+        try {
+          logger.info(`🔄 Syncing payment for order ${order._id}`, {
+            orderId: order._id,
+            razorpayOrderId: order.payment.razorpayOrderId,
+            transactionId: order.payment.transactionId,
+          });
+
+          const syncResult = await paymentService.syncPaymentStatus(
+            order._id.toString()
+          );
+
+          syncedCount++;
+
+          if (syncResult.statusChanged) {
+            updatedCount++;
+            logger.info(
+              `✅ Payment status updated for order ${order._id}: ${syncResult.previousStatus} → ${syncResult.currentStatus}`,
+              {
+                orderId: order._id,
+                previousStatus: syncResult.previousStatus,
+                currentStatus: syncResult.currentStatus,
+              }
+            );
+          } else {
+            logger.info(`ℹ️ No status change needed for order ${order._id}`, {
+              orderId: order._id,
+              currentStatus: syncResult.currentStatus,
+            });
+          }
+        } catch (error) {
+          failedCount++;
+          logger.error(`❌ Failed to sync payment for order ${order._id}:`, {
+            orderId: order._id,
+            error: error.message,
+          });
+        }
+      }
+
+      const summary = {
+        totalFound: pendingOrders.length,
+        synced: syncedCount,
+        updated: updatedCount,
+        failed: failedCount,
+      };
+
+      logger.info("📈 Payment sync summary:", summary);
+
+      return summary;
+    } catch (error) {
+      logger.error("Error in performPaymentSync:", error);
       throw error;
     }
   }

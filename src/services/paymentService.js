@@ -1454,6 +1454,181 @@ class PaymentService {
   verifySubscriptionPayment(paymentData) {
     return this.verifyPaymentSignature(paymentData);
   }
+
+  /**
+   * Sync Payment Status with Razorpay
+   * Fetches actual payment status from Razorpay and syncs with database
+   * Useful for handling abandoned/back button scenarios
+   * @param {String} orderId - MongoDB Order ID
+   * @returns {Object} Sync result with updated status
+   */
+  async syncPaymentStatus(orderId) {
+    try {
+      logger.info("Syncing payment status with Razorpay", { orderId });
+
+      // Find order in database
+      const order = await Order.findById(orderId);
+      if (!order) {
+        throw new APIError(404, "Order not found");
+      }
+
+      // If no Razorpay order ID, nothing to sync
+      if (!order.payment?.razorpayOrderId) {
+        return {
+          synced: false,
+          message: "No Razorpay payment initiated for this order",
+          currentStatus: order.payment?.paymentStatus || "pending",
+        };
+      }
+
+      // Fetch Razorpay order details
+      const razorpayOrder = await this.razorpay.orders.fetch(
+        order.payment.razorpayOrderId
+      );
+
+      logger.info("Razorpay order fetched", {
+        orderId,
+        razorpayOrderId: razorpayOrder.id,
+        razorpayStatus: razorpayOrder.status,
+        attempts: razorpayOrder.attempts,
+      });
+
+      let actualStatus = "pending";
+      let razorpayPayment = null;
+
+      // If order has payments, fetch the latest payment
+      if (razorpayOrder.attempts > 0) {
+        try {
+          // Fetch payments for this order
+          const payments = await this.razorpay.orders.fetchPayments(
+            razorpayOrder.id
+          );
+
+          if (payments.items && payments.items.length > 0) {
+            // Get the latest payment attempt
+            razorpayPayment = payments.items[0];
+
+            logger.info("Payment attempt found", {
+              orderId,
+              paymentId: razorpayPayment.id,
+              status: razorpayPayment.status,
+            });
+
+            // Map Razorpay payment status to our status
+            switch (razorpayPayment.status) {
+              case "captured":
+              case "authorized":
+                actualStatus = "paid";
+                break;
+              case "failed":
+                actualStatus = "failed";
+                break;
+              case "refunded":
+                actualStatus = "refunded";
+                break;
+              default:
+                actualStatus = "pending";
+            }
+          }
+        } catch (paymentError) {
+          logger.warn("Could not fetch payments for order", {
+            orderId,
+            razorpayOrderId: razorpayOrder.id,
+            error: paymentError.message,
+          });
+        }
+      } else {
+        // No payment attempts - user abandoned
+        actualStatus = "failed";
+        logger.info("No payment attempts - marking as failed", { orderId });
+      }
+
+      // Check if status needs to be updated
+      const currentDbStatus = order.payment?.paymentStatus || "pending";
+
+      if (currentDbStatus !== actualStatus) {
+        logger.info("Payment status mismatch - updating database", {
+          orderId,
+          dbStatus: currentDbStatus,
+          razorpayStatus: actualStatus,
+        });
+
+        // Update order in database
+        const updateData = {
+          "payment.paymentStatus": actualStatus,
+        };
+
+        // If payment was successful, update additional fields
+        if (actualStatus === "paid" && razorpayPayment) {
+          updateData["payment.razorpayPaymentId"] = razorpayPayment.id;
+          updateData["payment.paidAt"] = new Date();
+          updateData.status = "confirmed";
+
+          // Trigger staff assignment for successful payments
+          try {
+            const assignmentResult = await assignmentService.assignOrder(
+              orderId
+            );
+            if (assignmentResult.success) {
+              logger.info("Staff assigned after payment sync", {
+                orderId,
+                waiterId: assignmentResult.assignment?.waiter?._id,
+              });
+            }
+          } catch (assignmentError) {
+            logger.error("Staff assignment failed during sync", {
+              orderId,
+              error: assignmentError.message,
+            });
+          }
+
+          // Clear cart
+          try {
+            await this.clearCartAfterPayment(order);
+          } catch (cartError) {
+            logger.error("Cart clearing failed during sync", {
+              orderId,
+              error: cartError.message,
+            });
+          }
+        } else if (actualStatus === "failed") {
+          // Mark order as cancelled for failed payments
+          updateData.status = "cancelled";
+        }
+
+        await Order.findByIdAndUpdate(orderId, updateData);
+
+        return {
+          synced: true,
+          statusChanged: true,
+          previousStatus: currentDbStatus,
+          currentStatus: actualStatus,
+          message: `Payment status updated from ${currentDbStatus} to ${actualStatus}`,
+          razorpayOrderId: razorpayOrder.id,
+          razorpayPaymentId: razorpayPayment?.id || null,
+        };
+      }
+
+      // Status already matches
+      return {
+        synced: true,
+        statusChanged: false,
+        currentStatus: actualStatus,
+        message: "Payment status is already up to date",
+        razorpayOrderId: razorpayOrder.id,
+        razorpayPaymentId: razorpayPayment?.id || null,
+      };
+    } catch (error) {
+      logger.error("Payment sync failed", {
+        orderId,
+        error: error.message,
+        stack: error.stack,
+      });
+
+      if (error instanceof APIError) throw error;
+      throw new APIError(500, "Failed to sync payment status");
+    }
+  }
 }
 
 export const paymentService = new PaymentService();
