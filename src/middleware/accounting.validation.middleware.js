@@ -12,17 +12,7 @@ const validateTransactionQuery = Joi.object({
   branchId: Joi.string()
     .pattern(/^[0-9a-fA-F]{24}$/)
     .optional(),
-  status: Joi.string()
-    .valid(
-      "pending",
-      "completed",
-      "failed",
-      "cancelled",
-      "paid",
-      "refund_pending",
-      "refunded"
-    )
-    .optional(),
+  status: Joi.string().valid("pending", "success", "failed").optional(),
   paymentMethod: Joi.string()
     .valid("cash", "card", "upi", "wallet", "razorpay")
     .optional(),
@@ -47,9 +37,7 @@ const validateHotelAccountingQuery = Joi.object({
   endDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
-    .default("completed"),
+  status: Joi.string().valid("pending", "success", "failed").default("success"),
 });
 
 const validateBranchAccountingQuery = Joi.object({
@@ -62,9 +50,7 @@ const validateBranchAccountingQuery = Joi.object({
   endDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
-    .default("completed"),
+  status: Joi.string().valid("pending", "success", "failed").default("success"),
 });
 
 const validateSettlementQuery = Joi.object({
@@ -76,9 +62,7 @@ const validateSettlementQuery = Joi.object({
   branchId: Joi.string()
     .pattern(/^[0-9a-fA-F]{24}$/)
     .optional(),
-  status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
-    .optional(),
+  status: Joi.string().valid("pending", "success", "failed").optional(),
   startDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
@@ -107,9 +91,7 @@ const validateExportRequest = Joi.object({
   endDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
-    .optional(),
+  status: Joi.string().valid("pending", "success", "failed").optional(),
 });
 
 const validateDashboardQuery = Joi.object({

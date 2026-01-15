@@ -5,11 +5,13 @@ const transactionSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     order: { type: mongoose.Schema.Types.ObjectId, ref: "Order" },
+    hotel: { type: mongoose.Schema.Types.ObjectId, ref: "Hotel" },
+    branch: { type: mongoose.Schema.Types.ObjectId, ref: "Branch" },
     amount: { type: Number, required: true },
     paymentMethod: {
       type: String,
-      enum: ["upi", "card", "wallet", "cod"],
-      default: "upi",
+      enum: ["cash", "card", "upi", "wallet", "razorpay"],
+      default: "cash",
     },
     status: {
       type: String,
@@ -29,7 +31,7 @@ export const validateTransaction = (data) => {
     order: Joi.string().required(),
     amount: Joi.number().positive().required(),
     paymentMethod: Joi.string()
-      .valid("upi", "card", "wallet", "cod")
+      .valid("cash", "card", "upi", "wallet", "razorpay")
       .required(),
   });
   return schema.validate(data);

@@ -2,6 +2,7 @@
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
+import { Transaction } from "../../models/Transaction.model.js";
 import {
   getTransactionAnalytics,
   getRevenueComparison,
@@ -125,10 +126,31 @@ export const getFinancialSummary = async (req, res, next) => {
     const queryParams = req.validatedQuery || req.query;
     const { period = "30d" } = queryParams;
 
-    const [analytics, comparison] = await Promise.all([
+    const [analytics, comparison, pendingSettlements] = await Promise.all([
       getTransactionAnalytics({ period }),
       getRevenueComparison({ currentPeriod: period }),
+      getPendingSettlements({}),
     ]);
+
+    // Count unique hotels and branches from recent transactions
+    const uniqueEntities = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }, // Last 30 days
+          status: "success",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          hotels: { $addToSet: "$hotel" },
+          branches: { $addToSet: "$branch" },
+        },
+      },
+    ]);
+
+    const totalActiveHotels = uniqueEntities[0]?.hotels?.length || 0;
+    const totalActiveBranches = uniqueEntities[0]?.branches?.length || 0;
 
     const summary = {
       currentPeriod: {
@@ -143,9 +165,10 @@ export const getFinancialSummary = async (req, res, next) => {
         avgTransactionGrowth: comparison.growth.avgTransaction,
       },
       status: {
-        totalActiveHotels: 0, // Will be populated from hotel count
-        totalActiveBranches: 0, // Will be populated from branch count
-        totalPendingSettlements: 0, // Will be populated from settlements
+        totalActiveHotels,
+        totalActiveBranches,
+        totalPendingSettlements:
+          pendingSettlements.summary.totalPendingSettlements,
       },
     };
 

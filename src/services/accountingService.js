@@ -1,4 +1,5 @@
 // src/services/accountingService.js - Accounting Business Logic Service
+import mongoose from "mongoose";
 import { Transaction } from "../models/Transaction.model.js";
 import { Order } from "../models/Order.model.js";
 import { Hotel } from "../models/Hotel.model.js";
@@ -38,11 +39,12 @@ export const getTransactionAnalytics = async (filters = {}) => {
 
     const matchQuery = {
       createdAt: { $gte: startDate, $lte: endDate },
-      status: "completed",
+      status: "success",
     };
 
-    if (hotelId) matchQuery.hotel = hotelId;
-    if (branchId) matchQuery.branch = branchId;
+    // Convert string IDs to ObjectIds for MongoDB aggregation
+    if (hotelId) matchQuery.hotel = new mongoose.Types.ObjectId(hotelId);
+    if (branchId) matchQuery.branch = new mongoose.Types.ObjectId(branchId);
 
     const pipeline = [
       { $match: matchQuery },
@@ -165,9 +167,10 @@ export const getRevenueComparison = async (filters = {}) => {
         prevStartDate.setDate(currentEndDate.getDate() - 60);
     }
 
-    const baseQuery = { status: "completed" };
-    if (hotelId) baseQuery.hotel = hotelId;
-    if (branchId) baseQuery.branch = branchId;
+    const baseQuery = { status: "success" };
+    // Convert string IDs to ObjectIds for MongoDB aggregation
+    if (hotelId) baseQuery.hotel = new mongoose.Types.ObjectId(hotelId);
+    if (branchId) baseQuery.branch = new mongoose.Types.ObjectId(branchId);
 
     const [currentPeriodStats, previousPeriodStats] = await Promise.all([
       Transaction.aggregate([
@@ -302,7 +305,7 @@ export const getTopPerformers = async (filters = {}) => {
 
     const matchQuery = {
       createdAt: { $gte: startDate, $lte: endDate },
-      status: "completed",
+      status: "success",
     };
 
     let pipeline;
@@ -437,11 +440,12 @@ export const getPaymentMethodDistribution = async (filters = {}) => {
 
     const matchQuery = {
       createdAt: { $gte: startDate, $lte: endDate },
-      status: "completed",
+      status: "success",
     };
 
-    if (hotelId) matchQuery.hotel = hotelId;
-    if (branchId) matchQuery.branch = branchId;
+    // Convert string IDs to ObjectIds for MongoDB aggregation
+    if (hotelId) matchQuery.hotel = new mongoose.Types.ObjectId(hotelId);
+    if (branchId) matchQuery.branch = new mongoose.Types.ObjectId(branchId);
 
     const pipeline = [
       { $match: matchQuery },
@@ -504,12 +508,13 @@ export const getPendingSettlements = async (filters = {}) => {
     settlementCutoff.setDate(settlementCutoff.getDate() - 1);
 
     const matchQuery = {
-      status: "completed",
+      status: "success",
       createdAt: { $lte: settlementCutoff },
     };
 
-    if (hotelId) matchQuery.hotel = hotelId;
-    if (branchId) matchQuery.branch = branchId;
+    // Convert string IDs to ObjectIds for MongoDB aggregation
+    if (hotelId) matchQuery.hotel = new mongoose.Types.ObjectId(hotelId);
+    if (branchId) matchQuery.branch = new mongoose.Types.ObjectId(branchId);
 
     const pipeline = [
       { $match: matchQuery },

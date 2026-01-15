@@ -8,6 +8,7 @@ import { Order } from "../models/Order.model.js";
 import { Cart } from "../models/Cart.model.js";
 import { User } from "../models/User.model.js";
 import { CoinTransaction } from "../models/CoinTransaction.model.js";
+import { Transaction } from "../models/Transaction.model.js";
 import { APIError } from "../utils/APIError.js";
 import { logger } from "../utils/logger.js";
 import { generateTransactionId } from "../utils/idGenerator.js";
@@ -361,6 +362,19 @@ class PaymentService {
       razorpayPaymentId: razorpay_payment_id,
     });
 
+    // Refresh order to get updated data
+    const updatedOrder = await Order.findById(order._id);
+
+    // Create transaction record for accounting
+    try {
+      await this.createTransactionRecord(updatedOrder);
+    } catch (txError) {
+      logger.error("Failed to create transaction record", {
+        orderId: order._id,
+        error: txError.message,
+      });
+    }
+
     // 🎯 TRIGGER STAFF ASSIGNMENT AFTER PAYMENT CONFIRMATION
     try {
       logger.info("Triggering staff assignment after payment confirmation", {
@@ -473,6 +487,19 @@ class PaymentService {
       transactionId: order.payment.transactionId,
     });
 
+    // Refresh order to get updated data
+    const updatedOrder = await Order.findById(order._id);
+
+    // Create transaction record for accounting
+    try {
+      await this.createTransactionRecord(updatedOrder);
+    } catch (txError) {
+      logger.error("Failed to create transaction record", {
+        orderId: order._id,
+        error: txError.message,
+      });
+    }
+
     // 🎯 TRIGGER STAFF ASSIGNMENT AFTER PAYMENT CONFIRMATION
     try {
       logger.info("Triggering staff assignment after success callback", {
@@ -573,6 +600,19 @@ class PaymentService {
           transactionId: currentStatus.transactionId,
         }
       );
+
+      // Refresh order to get updated data
+      const updatedOrder = await Order.findById(order._id);
+
+      // Create transaction record for accounting
+      try {
+        await this.createTransactionRecord(updatedOrder);
+      } catch (txError) {
+        logger.error("Failed to create transaction record", {
+          orderId: order._id,
+          error: txError.message,
+        });
+      }
 
       return {
         transactionId: currentStatus.transactionId,
@@ -963,6 +1003,56 @@ class PaymentService {
         error: error.message,
         stack: error.stack,
       });
+    }
+  }
+
+  /**
+   * Create Transaction record for successful payment
+   * @param {Object} order - The order object
+   * @returns {Object} Created transaction
+   */
+  async createTransactionRecord(order) {
+    try {
+      // Check if transaction already exists
+      const existingTransaction = await Transaction.findOne({
+        order: order._id,
+      });
+
+      if (existingTransaction) {
+        logger.info("Transaction record already exists", {
+          orderId: order._id,
+          transactionId: existingTransaction._id,
+        });
+        return existingTransaction;
+      }
+
+      // Create new transaction record
+      const transaction = await Transaction.create({
+        user: order.user,
+        order: order._id,
+        hotel: order.hotel,
+        branch: order.branch,
+        amount: order.totalPrice,
+        paymentMethod: order.payment?.paymentMethod || "cash",
+        status: order.payment?.paymentStatus === "paid" ? "success" : "pending",
+        transactionId: order.payment?.transactionId,
+      });
+
+      logger.info("Transaction record created successfully", {
+        orderId: order._id,
+        transactionId: transaction._id,
+        amount: transaction.amount,
+      });
+
+      return transaction;
+    } catch (error) {
+      // Log error but don't fail the payment process
+      logger.error("Error creating transaction record", {
+        orderId: order._id,
+        error: error.message,
+        stack: error.stack,
+      });
+      return null;
     }
   }
 
@@ -1564,6 +1654,22 @@ class PaymentService {
           updateData["payment.paidAt"] = new Date();
           updateData.status = "confirmed";
 
+          // Update order first
+          await Order.findByIdAndUpdate(orderId, updateData);
+
+          // Refresh order to get updated data
+          const updatedOrder = await Order.findById(orderId);
+
+          // Create transaction record for accounting
+          try {
+            await this.createTransactionRecord(updatedOrder);
+          } catch (txError) {
+            logger.error("Failed to create transaction record during sync", {
+              orderId,
+              error: txError.message,
+            });
+          }
+
           // Trigger staff assignment for successful payments
           try {
             const assignmentResult = await assignmentService.assignOrder(
@@ -1584,29 +1690,50 @@ class PaymentService {
 
           // Clear cart
           try {
-            await this.clearCartAfterPayment(order);
+            await this.clearCartAfterPayment(updatedOrder);
           } catch (cartError) {
             logger.error("Cart clearing failed during sync", {
               orderId,
               error: cartError.message,
             });
           }
+
+          return {
+            synced: true,
+            statusChanged: true,
+            previousStatus: currentDbStatus,
+            currentStatus: actualStatus,
+            message: `Payment status updated from ${currentDbStatus} to ${actualStatus}`,
+            razorpayOrderId: razorpayOrder.id,
+            razorpayPaymentId: razorpayPayment?.id || null,
+          };
         } else if (actualStatus === "failed") {
           // Mark order as cancelled for failed payments
           updateData.status = "cancelled";
+          await Order.findByIdAndUpdate(orderId, updateData);
+
+          return {
+            synced: true,
+            statusChanged: true,
+            previousStatus: currentDbStatus,
+            currentStatus: actualStatus,
+            message: `Payment status updated from ${currentDbStatus} to ${actualStatus}`,
+            razorpayOrderId: razorpayOrder.id,
+            razorpayPaymentId: razorpayPayment?.id || null,
+          };
+        } else {
+          await Order.findByIdAndUpdate(orderId, updateData);
+
+          return {
+            synced: true,
+            statusChanged: true,
+            previousStatus: currentDbStatus,
+            currentStatus: actualStatus,
+            message: `Payment status updated from ${currentDbStatus} to ${actualStatus}`,
+            razorpayOrderId: razorpayOrder.id,
+            razorpayPaymentId: razorpayPayment?.id || null,
+          };
         }
-
-        await Order.findByIdAndUpdate(orderId, updateData);
-
-        return {
-          synced: true,
-          statusChanged: true,
-          previousStatus: currentDbStatus,
-          currentStatus: actualStatus,
-          message: `Payment status updated from ${currentDbStatus} to ${actualStatus}`,
-          razorpayOrderId: razorpayOrder.id,
-          razorpayPaymentId: razorpayPayment?.id || null,
-        };
       }
 
       // Status already matches

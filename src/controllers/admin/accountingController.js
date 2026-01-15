@@ -38,77 +38,52 @@ export const getAllTransactions = async (req, res, next) => {
       sortOrder = "desc",
     } = queryParams;
 
-    // Build query for Order model (since that's where payment data is stored)
+    // Build query for Transaction model
     const query = {};
 
     if (hotelId) query.hotel = new mongoose.Types.ObjectId(hotelId);
     if (branchId) query.branch = new mongoose.Types.ObjectId(branchId);
-
-    // Map status from Transaction terms to Order payment status terms
-    if (status) {
-      const statusMapping = {
-        completed: "paid",
-        pending: "pending",
-        failed: "failed",
-      };
-      query["payment.paymentStatus"] = statusMapping[status] || status;
-    }
-
-    if (paymentMethod) query["payment.paymentMethod"] = paymentMethod;
+    if (status) query.status = status;
+    if (paymentMethod) query.paymentMethod = paymentMethod;
 
     // Date range filter
     if (startDate || endDate) {
       query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        query.createdAt.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
     }
 
-    // Amount range filter (using totalPrice from orders)
+    // Amount range filter
     if (minAmount || maxAmount) {
-      query.totalPrice = {};
-      if (minAmount) query.totalPrice.$gte = parseFloat(minAmount);
-      if (maxAmount) query.totalPrice.$lte = parseFloat(maxAmount);
+      query.amount = {};
+      if (minAmount) query.amount.$gte = parseFloat(minAmount);
+      if (maxAmount) query.amount.$lte = parseFloat(maxAmount);
     }
 
     // Execute query with pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
-    const [orders, totalCount] = await Promise.all([
-      Order.find(query)
+    const [transactions, totalCount] = await Promise.all([
+      Transaction.find(query)
         .populate("hotel", "name hotelId location")
         .populate("branch", "name branchId location")
         .populate("user", "name email phone")
+        .populate("order", "totalPrice items")
         .sort(sortOptions)
         .skip(skip)
-        .limit(parseInt(limit)),
-      Order.countDocuments(query),
+        .limit(parseInt(limit))
+        .lean(),
+      Transaction.countDocuments(query),
     ]);
-
-    // Transform orders to transaction-like format
-    const transactions = orders.map((order) => ({
-      _id: order._id,
-      transactionId: order.payment?.transactionId || order._id.toString(),
-      amount: order.totalPrice,
-      paymentMethod: order.payment?.paymentMethod || "cash",
-      status:
-        order.payment?.paymentStatus === "paid"
-          ? "completed"
-          : order.payment?.paymentStatus === "pending"
-          ? "pending"
-          : "failed",
-      createdAt: order.createdAt,
-      updatedAt: order.updatedAt,
-      hotel: order.hotel,
-      branch: order.branch,
-      user: order.user,
-      order: {
-        _id: order._id,
-        orderId: order._id.toString(),
-        totalPrice: order.totalPrice,
-        items: order.items?.length || 0,
-      },
-    }));
 
     // Calculate summary statistics using aggregation
     const summaryPipeline = [
@@ -116,29 +91,29 @@ export const getAllTransactions = async (req, res, next) => {
       {
         $group: {
           _id: null,
-          totalAmount: { $sum: "$totalPrice" },
+          totalAmount: { $sum: "$amount" },
           totalTransactions: { $sum: 1 },
           successfulTransactions: {
             $sum: {
-              $cond: [{ $eq: ["$payment.paymentStatus", "paid"] }, 1, 0],
+              $cond: [{ $eq: ["$status", "success"] }, 1, 0],
             },
           },
           failedTransactions: {
             $sum: {
-              $cond: [{ $eq: ["$payment.paymentStatus", "failed"] }, 1, 0],
+              $cond: [{ $eq: ["$status", "failed"] }, 1, 0],
             },
           },
           pendingTransactions: {
             $sum: {
-              $cond: [{ $eq: ["$payment.paymentStatus", "pending"] }, 1, 0],
+              $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
             },
           },
-          avgTransactionAmount: { $avg: "$totalPrice" },
+          avgTransactionAmount: { $avg: "$amount" },
         },
       },
     ];
 
-    const [summaryStats] = await Order.aggregate(summaryPipeline);
+    const [summaryStats] = await Transaction.aggregate(summaryPipeline);
 
     const stats = summaryStats || {
       totalAmount: 0,
@@ -208,36 +183,41 @@ export const getAllTransactions = async (req, res, next) => {
 export const getHotelWiseAccounting = async (req, res, next) => {
   try {
     const queryParams = req.validatedQuery || req.query;
-    const { startDate, endDate, status = "completed" } = queryParams;
+    const { startDate, endDate, status = "success" } = queryParams;
 
     // Build date filter
     const dateFilter = {};
     if (startDate || endDate) {
       dateFilter.createdAt = {};
-      if (startDate) dateFilter.createdAt.$gte = new Date(startDate);
-      if (endDate) dateFilter.createdAt.$lte = new Date(endDate);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        dateFilter.createdAt.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.createdAt.$lte = end;
+      }
     }
-
-    // Map status from Transaction terms to Order payment status terms
-    const paymentStatus = status === "completed" ? "paid" : status;
 
     const pipeline = [
       {
         $match: {
-          "payment.paymentStatus": paymentStatus,
+          status: status,
           ...dateFilter,
         },
       },
       {
         $group: {
           _id: "$hotel",
-          totalRevenue: { $sum: "$totalPrice" },
+          totalRevenue: { $sum: "$amount" },
           totalTransactions: { $sum: 1 },
-          avgTransactionAmount: { $avg: "$totalPrice" },
+          avgTransactionAmount: { $avg: "$amount" },
           paymentMethods: {
             $push: {
-              method: "$payment.paymentMethod",
-              amount: "$totalPrice",
+              method: "$paymentMethod",
+              amount: "$amount",
             },
           },
         },
@@ -298,7 +278,7 @@ export const getHotelWiseAccounting = async (req, res, next) => {
       },
     ];
 
-    const hotelAccounting = await Order.aggregate(pipeline);
+    const hotelAccounting = await Transaction.aggregate(pipeline);
 
     // Calculate overall totals
     const overallTotals = hotelAccounting.reduce(
@@ -357,16 +337,23 @@ export const getHotelWiseAccounting = async (req, res, next) => {
 export const getBranchWiseAccounting = async (req, res, next) => {
   try {
     const queryParams = req.validatedQuery || req.query;
-    const { hotelId, startDate, endDate, status = "completed" } = queryParams;
+    const { hotelId, startDate, endDate, status = "success" } = queryParams;
 
     // Build match filter
-    const paymentStatus = status === "completed" ? "paid" : status;
-    const matchFilter = { "payment.paymentStatus": paymentStatus };
+    const matchFilter = { status: status };
     if (hotelId) matchFilter.hotel = new mongoose.Types.ObjectId(hotelId);
     if (startDate || endDate) {
       matchFilter.createdAt = {};
-      if (startDate) matchFilter.createdAt.$gte = new Date(startDate);
-      if (endDate) matchFilter.createdAt.$lte = new Date(endDate);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        matchFilter.createdAt.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        matchFilter.createdAt.$lte = end;
+      }
     }
 
     const pipeline = [
@@ -377,15 +364,15 @@ export const getBranchWiseAccounting = async (req, res, next) => {
             branch: "$branch",
             hotel: "$hotel",
           },
-          totalRevenue: { $sum: "$totalPrice" },
+          totalRevenue: { $sum: "$amount" },
           totalTransactions: { $sum: 1 },
-          avgTransactionAmount: { $avg: "$totalPrice" },
+          avgTransactionAmount: { $avg: "$amount" },
           dailyRevenue: {
             $push: {
               date: {
                 $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
               },
-              amount: "$totalPrice",
+              amount: "$amount",
             },
           },
         },
@@ -417,7 +404,7 @@ export const getBranchWiseAccounting = async (req, res, next) => {
       },
     ];
 
-    const branchAccounting = await Order.aggregate(pipeline);
+    const branchAccounting = await Transaction.aggregate(pipeline);
 
     // Process daily revenue data
     const processedData = branchAccounting.map((branch) => {
@@ -493,20 +480,30 @@ export const getSettlements = async (req, res, next) => {
       payoutStatus = "all",
     } = queryParams;
 
+    // Build match filter for Transaction model
+    const matchFilter = { status: "success" };
+    if (hotelId) matchFilter.hotel = new mongoose.Types.ObjectId(hotelId);
+    if (branchId) matchFilter.branch = new mongoose.Types.ObjectId(branchId);
+    if (status) matchFilter.status = status;
+
+    if (startDate || endDate) {
+      matchFilter.createdAt = {};
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        matchFilter.createdAt.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        matchFilter.createdAt.$lte = end;
+      }
+    }
+
     // Build aggregation pipeline for settlements
     const pipeline = [
       {
-        $match: {
-          "payment.paymentStatus": "paid",
-          ...(hotelId && { hotel: new mongoose.Types.ObjectId(hotelId) }),
-          ...(branchId && { branch: new mongoose.Types.ObjectId(branchId) }),
-          ...((startDate || endDate) && {
-            createdAt: {
-              ...(startDate && { $gte: new Date(startDate) }),
-              ...(endDate && { $lte: new Date(endDate) }),
-            },
-          }),
-        },
+        $match: matchFilter,
       },
       {
         $addFields: {
@@ -525,14 +522,14 @@ export const getSettlements = async (req, res, next) => {
             branch: "$branch",
             date: "$settlementDate",
           },
-          totalAmount: { $sum: "$totalPrice" },
+          totalAmount: { $sum: "$amount" },
           transactionCount: { $sum: 1 },
           transactions: {
             $push: {
-              transactionId: "$payment.transactionId",
-              orderId: "$_id",
-              amount: "$totalPrice",
-              paymentMethod: "$payment.paymentMethod",
+              transactionId: "$transactionId",
+              orderId: "$order",
+              amount: "$amount",
+              paymentMethod: "$paymentMethod",
               createdAt: "$createdAt",
             },
           },
@@ -601,11 +598,11 @@ export const getSettlements = async (req, res, next) => {
     pipeline.push({ $skip: skip });
     pipeline.push({ $limit: parseInt(limit) });
 
-    const settlements = await Order.aggregate(pipeline);
+    const settlements = await Transaction.aggregate(pipeline);
 
     // Get total count for pagination
     const countPipeline = [...pipeline.slice(0, -2), { $count: "total" }];
-    const [countResult] = await Order.aggregate(countPipeline);
+    const [countResult] = await Transaction.aggregate(countPipeline);
     const totalCount = countResult?.total || 0;
 
     // Calculate settlement summary
@@ -647,7 +644,7 @@ export const getSettlements = async (req, res, next) => {
       },
     ];
 
-    const [settlementSummary] = await Order.aggregate(summaryPipeline);
+    const [settlementSummary] = await Transaction.aggregate(summaryPipeline);
 
     res.status(200).json(
       new APIResponse(
@@ -878,73 +875,70 @@ async function getTransactionsForExport(filters) {
     query.hotel = new mongoose.Types.ObjectId(filters.hotelId);
   if (filters.branchId)
     query.branch = new mongoose.Types.ObjectId(filters.branchId);
-
-  if (filters.status) {
-    const statusMapping = {
-      completed: "paid",
-      pending: "pending",
-      failed: "failed",
-    };
-    query["payment.paymentStatus"] =
-      statusMapping[filters.status] || filters.status;
-  }
+  if (filters.status) query.status = filters.status;
 
   if (filters.startDate || filters.endDate) {
     query.createdAt = {};
-    if (filters.startDate) query.createdAt.$gte = new Date(filters.startDate);
-    if (filters.endDate) query.createdAt.$lte = new Date(filters.endDate);
+    if (filters.startDate) {
+      const start = new Date(filters.startDate);
+      start.setHours(0, 0, 0, 0);
+      query.createdAt.$gte = start;
+    }
+    if (filters.endDate) {
+      const end = new Date(filters.endDate);
+      end.setHours(23, 59, 59, 999);
+      query.createdAt.$lte = end;
+    }
   }
 
-  const orders = await Order.find(query)
+  const transactions = await Transaction.find(query)
     .populate("hotel", "name hotelId")
     .populate("branch", "name branchId")
     .populate("user", "name email")
+    .populate("order", "_id")
     .sort({ createdAt: -1 })
     .limit(10000); // Limit for performance
 
-  return orders.map((order) => ({
-    transactionId: order.payment?.transactionId || order._id.toString(),
-    orderId: order._id.toString(),
-    hotelName: order.hotel?.name || "N/A",
-    branchName: order.branch?.name || "N/A",
-    customerName: order.user?.name || "N/A",
-    amount: order.totalPrice,
-    paymentMethod: order.payment?.paymentMethod || "cash",
-    status:
-      order.payment?.paymentStatus === "paid"
-        ? "completed"
-        : order.payment?.paymentStatus === "pending"
-        ? "pending"
-        : "failed",
-    createdAt: order.createdAt.toISOString().split("T")[0],
+  return transactions.map((txn) => ({
+    transactionId: txn.transactionId || txn._id.toString(),
+    orderId: txn.order?._id?.toString() || "N/A",
+    hotelName: txn.hotel?.name || "N/A",
+    branchName: txn.branch?.name || "N/A",
+    customerName: txn.user?.name || "N/A",
+    amount: txn.amount,
+    paymentMethod: txn.paymentMethod || "cash",
+    status: txn.status,
+    createdAt: txn.createdAt.toISOString().split("T")[0],
   }));
 }
 
 async function getHotelsForExport(filters) {
   try {
-    // Implementation similar to getHotelWiseAccounting but return flat data
-    // This is a simplified version - you can expand based on needs
-    const paymentStatus =
-      filters.status === "completed" ? "paid" : filters.status || "paid";
+    // Build match filter
+    const matchFilter = { status: filters.status || "success" };
+
+    if (filters.startDate || filters.endDate) {
+      matchFilter.createdAt = {};
+      if (filters.startDate) {
+        const start = new Date(filters.startDate);
+        start.setHours(0, 0, 0, 0);
+        matchFilter.createdAt.$gte = start;
+      }
+      if (filters.endDate) {
+        const end = new Date(filters.endDate);
+        end.setHours(23, 59, 59, 999);
+        matchFilter.createdAt.$lte = end;
+      }
+    }
 
     const pipeline = [
-      {
-        $match: {
-          "payment.paymentStatus": paymentStatus,
-          ...((filters.startDate || filters.endDate) && {
-            createdAt: {
-              ...(filters.startDate && { $gte: new Date(filters.startDate) }),
-              ...(filters.endDate && { $lte: new Date(filters.endDate) }),
-            },
-          }),
-        },
-      },
+      { $match: matchFilter },
       {
         $group: {
           _id: "$hotel",
-          totalRevenue: { $sum: "$totalPrice" },
+          totalRevenue: { $sum: "$amount" },
           totalTransactions: { $sum: 1 },
-          avgTransactionAmount: { $avg: "$totalPrice" },
+          avgTransactionAmount: { $avg: "$amount" },
         },
       },
       {
@@ -959,7 +953,7 @@ async function getHotelsForExport(filters) {
       { $sort: { totalRevenue: -1 } },
     ];
 
-    const result = await Order.aggregate(pipeline);
+    const result = await Transaction.aggregate(pipeline);
     const totalRevenue = result.reduce(
       (sum, hotel) => sum + hotel.totalRevenue,
       0
@@ -991,18 +985,22 @@ async function getHotelsForExport(filters) {
 
 async function getBranchesForExport(filters) {
   try {
-    const paymentStatus =
-      filters.status === "completed" ? "paid" : filters.status || "paid";
-    const matchFilter = { "payment.paymentStatus": paymentStatus };
+    const matchFilter = { status: filters.status || "success" };
     if (filters.hotelId)
       matchFilter.hotel = new mongoose.Types.ObjectId(filters.hotelId);
 
     if (filters.startDate || filters.endDate) {
       matchFilter.createdAt = {};
-      if (filters.startDate)
-        matchFilter.createdAt.$gte = new Date(filters.startDate);
-      if (filters.endDate)
-        matchFilter.createdAt.$lte = new Date(filters.endDate);
+      if (filters.startDate) {
+        const start = new Date(filters.startDate);
+        start.setHours(0, 0, 0, 0);
+        matchFilter.createdAt.$gte = start;
+      }
+      if (filters.endDate) {
+        const end = new Date(filters.endDate);
+        end.setHours(23, 59, 59, 999);
+        matchFilter.createdAt.$lte = end;
+      }
     }
 
     const pipeline = [
@@ -1010,9 +1008,9 @@ async function getBranchesForExport(filters) {
       {
         $group: {
           _id: { branch: "$branch", hotel: "$hotel" },
-          totalRevenue: { $sum: "$totalPrice" },
+          totalRevenue: { $sum: "$amount" },
           totalTransactions: { $sum: 1 },
-          avgTransactionAmount: { $avg: "$totalPrice" },
+          avgTransactionAmount: { $avg: "$amount" },
         },
       },
       {
@@ -1036,7 +1034,7 @@ async function getBranchesForExport(filters) {
       { $sort: { totalRevenue: -1 } },
     ];
 
-    const result = await Order.aggregate(pipeline);
+    const result = await Transaction.aggregate(pipeline);
 
     return result.map((branch) => ({
       hotelName: branch.hotelDetails?.name || "Unknown Hotel",
@@ -1061,25 +1059,29 @@ async function getBranchesForExport(filters) {
 }
 
 async function getSettlementsForExport(filters) {
-  // Similar to getSettlements but return flat data
+  // Build match filter
+  const matchFilter = { status: "success" };
+  if (filters.hotelId)
+    matchFilter.hotel = new mongoose.Types.ObjectId(filters.hotelId);
+  if (filters.branchId)
+    matchFilter.branch = new mongoose.Types.ObjectId(filters.branchId);
+
+  if (filters.startDate || filters.endDate) {
+    matchFilter.createdAt = {};
+    if (filters.startDate) {
+      const start = new Date(filters.startDate);
+      start.setHours(0, 0, 0, 0);
+      matchFilter.createdAt.$gte = start;
+    }
+    if (filters.endDate) {
+      const end = new Date(filters.endDate);
+      end.setHours(23, 59, 59, 999);
+      matchFilter.createdAt.$lte = end;
+    }
+  }
+
   const pipeline = [
-    {
-      $match: {
-        "payment.paymentStatus": "paid",
-        ...(filters.hotelId && {
-          hotel: new mongoose.Types.ObjectId(filters.hotelId),
-        }),
-        ...(filters.branchId && {
-          branch: new mongoose.Types.ObjectId(filters.branchId),
-        }),
-        ...((filters.startDate || filters.endDate) && {
-          createdAt: {
-            ...(filters.startDate && { $gte: new Date(filters.startDate) }),
-            ...(filters.endDate && { $lte: new Date(filters.endDate) }),
-          },
-        }),
-      },
-    },
+    { $match: matchFilter },
     {
       $addFields: {
         settlementDate: {
@@ -1090,7 +1092,7 @@ async function getSettlementsForExport(filters) {
     {
       $group: {
         _id: { hotel: "$hotel", branch: "$branch", date: "$settlementDate" },
-        totalAmount: { $sum: "$totalPrice" },
+        totalAmount: { $sum: "$amount" },
         transactionCount: { $sum: 1 },
       },
     },
@@ -1115,7 +1117,7 @@ async function getSettlementsForExport(filters) {
     { $sort: { "_id.date": -1 } },
   ];
 
-  const result = await Order.aggregate(pipeline);
+  const result = await Transaction.aggregate(pipeline);
 
   return result.map((settlement) => {
     const settDate = new Date(settlement._id.date);

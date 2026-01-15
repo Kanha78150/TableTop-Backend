@@ -754,6 +754,16 @@ async function processOrderPayment(entity, status) {
 
     await order.save();
 
+    // Create transaction record for accounting
+    try {
+      await paymentService.createTransactionRecord(order);
+    } catch (txError) {
+      logger.error("Failed to create transaction record in webhook", {
+        orderId: order._id,
+        error: txError.message,
+      });
+    }
+
     // Clear cart and process coins
     try {
       await paymentService.clearCartAfterPayment(order);
