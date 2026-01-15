@@ -15,6 +15,7 @@ import assignmentRoutes from "./assignment.route.js";
 import superAdminDashboardRoutes from "./superAdmin/dashboard.route.js";
 import superAdminSubscriptionPlanRoutes from "./superAdmin/subscriptionPlan.route.js";
 import superAdminSubscriptionJobsRoutes from "./superAdmin/subscriptionJobs.route.js";
+import superAdminAccountingRoutes from "./superAdmin/accounting.route.js";
 import adminSubscriptionRoutes from "./admin/subscription.route.js";
 import { getPublicSubscriptionPlans } from "../controllers/superAdmin/subscriptionPlan.controller.js";
 import { ensureDbReady } from "../middleware/dbReady.middleware.js";
@@ -50,6 +51,11 @@ router.use(
   "/super-admin/subscription-jobs",
   ensureDbReady,
   superAdminSubscriptionJobsRoutes
+);
+router.use(
+  "/super-admin/accounting",
+  ensureDbReady,
+  superAdminAccountingRoutes
 );
 
 // Admin subscription routes
