@@ -1,5 +1,7 @@
 export const CookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production", // Set to true in production
-  sameSite: "Lax", // Adjust based on your needs (Lax, Strict, None)
+  secure: process.env.NODE_ENV === "production",
+  sameSite: process.env.NODE_ENV === "production" ? "None" : "Lax",
+  maxAge: 60 * 60 * 1000, // 1 hour
+  path: "/",
 };

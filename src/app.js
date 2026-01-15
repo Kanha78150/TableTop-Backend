@@ -12,7 +12,10 @@ import { errorHandler } from "./middleware/errorHandler.middleware.js";
 
 const app = express();
 
-// Middleware
+/* Trust proxy for Cloud Run */
+app.set("trust proxy", 1);
+
+/* ---------- Body parsers ---------- */
 app.use(express.json({ limit: "20kb" }));
 app.use(express.urlencoded({ extended: true, limit: "20kb" }));
 app.use(express.static("public"));
@@ -45,13 +48,15 @@ app.use(cookieParser());
 // Session configuration for OAuth
 app.use(
   session({
+    name: "oauth_session",
     secret: process.env.SESSION_SECRET || "fallback-secret-for-cloud-run",
     resave: false,
     saveUninitialized: false,
+    proxy: true,
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
   })
@@ -66,7 +71,7 @@ app.use("/api/v1", routes);
 
 // Health check
 app.get("/", (req, res) => {
-  res.json({ message: "Restaurant Management System API is running ✅" });
+  res.json({ message: "Beanrow System API is running ✅" });
 });
 
 // Email queue health check

@@ -17,10 +17,7 @@ export const authenticate = async (req, res, next) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
-    );
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     let user = null;
     let userType = null;
@@ -102,10 +99,7 @@ export const authenticateAdmin = async (req, res, next) => {
       return next(new APIError(401, "Access token is required"));
     }
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
-    );
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     if (!["admin", "super_admin"].includes(decoded.role)) {
       return next(new APIError(403, "Admin access required"));

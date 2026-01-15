@@ -12,14 +12,10 @@ export const generateTokens = (user) => {
     role: user.role,
   };
 
-  const accessToken = jwt.sign(
-    payload,
-    process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET,
-    {
-      expiresIn:
-        process.env.JWT_ACCESS_EXPIRY || process.env.JWT_SECRET_EXPIRY || "15m",
-    }
-  );
+  const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn:
+      process.env.JWT_ACCESS_EXPIRY || process.env.JWT_SECRET_EXPIRY || "15m",
+  });
 
   const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
     expiresIn:
@@ -39,10 +35,7 @@ export const generateTokens = (user) => {
  */
 export const verifyAccessToken = (token) => {
   try {
-    return jwt.verify(
-      token,
-      process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
-    );
+    return jwt.verify(token, process.env.JWT_SECRET);
   } catch (error) {
     if (error.name === "TokenExpiredError") {
       throw new Error("Access token has expired");
@@ -82,9 +75,7 @@ export const verifyRefreshToken = (token) => {
  */
 export const verifyToken = (token, type = "access") => {
   const secret =
-    type === "access"
-      ? process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET
-      : process.env.JWT_REFRESH_SECRET;
+    type === "access" ? process.env.JWT_SECRET : process.env.JWT_REFRESH_SECRET;
 
   try {
     return jwt.verify(token, secret);
