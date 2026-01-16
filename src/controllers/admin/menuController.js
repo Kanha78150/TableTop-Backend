@@ -3,11 +3,13 @@ import { FoodItem } from "../../models/FoodItem.model.js";
 import { Offer } from "../../models/Offer.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import mongoose from "mongoose";
 import {
   resolveHotelId,
   resolveBranchId,
   resolveCategoryId,
 } from "../../utils/idResolver.js";
+import { validateFoodItemData } from "../../validators/foodItem.validators.js";
 
 // Food Category Management
 export const getAllCategories = async (req, res, next) => {
@@ -369,6 +371,9 @@ export const getAllFoodItems = async (req, res, next) => {
 
 export const createFoodItem = async (req, res, next) => {
   try {
+    // Validate food item data including GST rate
+    const validatedData = validateFoodItemData(req.body, false);
+
     const {
       name,
       description,
@@ -383,8 +388,9 @@ export const createFoodItem = async (req, res, next) => {
       allergens,
       nutritionalInfo,
       images,
+      gstRate,
       ...otherFields
-    } = req.body;
+    } = validatedData;
 
     // Validate required fields
     if (!hotelId) {
@@ -397,6 +403,10 @@ export const createFoodItem = async (req, res, next) => {
 
     if (!categoryId) {
       return next(new APIError(400, "Category ID is required"));
+    }
+
+    if (gstRate === undefined || gstRate === null) {
+      return next(new APIError(400, "GST rate is required"));
     }
 
     // Check if admin has access to this branch
@@ -458,6 +468,15 @@ export const createFoodItem = async (req, res, next) => {
       allergens,
       nutritionalInfo,
       images,
+      gstRate,
+      gstHistory: [
+        {
+          rate: gstRate,
+          changedBy: req.admin._id,
+          changedByModel: "Admin",
+          changedAt: new Date(),
+        },
+      ],
       createdBy: req.admin._id,
       lastModifiedBy: req.admin._id,
       ...otherFields,
@@ -521,7 +540,10 @@ export const getFoodItemById = async (req, res, next) => {
 export const updateFoodItem = async (req, res, next) => {
   try {
     const { itemId } = req.params;
-    const updates = req.body;
+
+    // Validate update data including GST rate if provided
+    const validatedData = validateFoodItemData(req.body, true);
+    const updates = validatedData;
 
     const foodItem = await FoodItem.findOne({
       _id: itemId,
@@ -558,6 +580,16 @@ export const updateFoodItem = async (req, res, next) => {
           new APIError(400, "Discount price must be less than Original price")
         );
       }
+    }
+
+    // Track GST rate changes
+    if (updates.gstRate !== undefined && updates.gstRate !== foodItem.gstRate) {
+      foodItem.gstHistory.push({
+        rate: updates.gstRate,
+        changedBy: req.admin._id,
+        changedByModel: "Admin",
+        changedAt: new Date(),
+      });
     }
 
     // Set lastModifiedBy field
@@ -646,7 +678,10 @@ export const updateSingleFoodItemAvailability = async (req, res, next) => {
 
     if (!menuItem) {
       return next(
-        new APIError(404, "Menu item not found or you don't have permission to update it")
+        new APIError(
+          404,
+          "Menu item not found or you don't have permission to update it"
+        )
       );
     }
 
@@ -664,13 +699,15 @@ export const updateSingleFoodItemAvailability = async (req, res, next) => {
       .populate("branch", "name branchId location")
       .populate("hotel", "name");
 
-    res.status(200).json(
-      new APIResponse(
-        200,
-        { menuItem: updatedItem },
-        "Menu item availability updated successfully"
-      )
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { menuItem: updatedItem },
+          "Menu item availability updated successfully"
+        )
+      );
   } catch (error) {
     next(error);
   }
@@ -945,6 +982,152 @@ export const deleteOffer = async (req, res, next) => {
     res
       .status(200)
       .json(new APIResponse(200, null, "Offer deleted successfully"));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Bulk update GST rates for food items by category
+ * @route PUT /api/v1/admin/menu/bulk-update-gst
+ * @access Admin/Manager
+ */
+export const bulkUpdateGstRate = async (req, res, next) => {
+  try {
+    const { categoryId, gstRate, hotelId, branchId } = req.body;
+
+    // Convert categoryId to ObjectId for proper MongoDB querying
+    let resolvedCategoryId;
+    if (mongoose.Types.ObjectId.isValid(categoryId)) {
+      resolvedCategoryId = new mongoose.Types.ObjectId(categoryId);
+    } else {
+      // Try to resolve using custom ID format
+      try {
+        resolvedCategoryId = await resolveCategoryId(categoryId);
+        if (!resolvedCategoryId) {
+          return next(
+            new APIError(400, `Category not found with ID: ${categoryId}`)
+          );
+        }
+        resolvedCategoryId = new mongoose.Types.ObjectId(resolvedCategoryId);
+      } catch (error) {
+        return next(
+          new APIError(400, `Error resolving category ID: ${error.message}`)
+        );
+      }
+    }
+
+    // Build query to find matching food items
+    const query = {
+      category: resolvedCategoryId,
+    };
+
+    if (hotelId) {
+      // Convert hotelId to ObjectId if it's a valid ObjectId string
+      if (mongoose.Types.ObjectId.isValid(hotelId)) {
+        query.hotel = new mongoose.Types.ObjectId(hotelId);
+      } else {
+        query.hotel = hotelId;
+      }
+    }
+
+    if (branchId) {
+      // Convert branchId to ObjectId if it's a valid ObjectId string
+      if (mongoose.Types.ObjectId.isValid(branchId)) {
+        query.branch = new mongoose.Types.ObjectId(branchId);
+      } else {
+        query.branch = branchId;
+      }
+    }
+
+    // Log query for debugging
+    // console.log("Bulk GST Update Query:", JSON.stringify(query));
+
+    // Find all food items matching the criteria
+    const foodItems = await FoodItem.find(query);
+
+    // console.log(`Found ${foodItems.length} food items matching criteria`);
+
+    if (foodItems.length === 0) {
+      // Debug: Check if items exist in this category at all
+      const itemsInCategory = await FoodItem.find({
+        category: resolvedCategoryId,
+      });
+      // console.log(
+      //   `Total items in category ${resolvedCategoryId}:`,
+      //   itemsInCategory.length
+      // );
+
+      if (itemsInCategory.length > 0) {
+        console.log("Sample item from category:", {
+          name: itemsInCategory[0].name,
+          hotel: itemsInCategory[0].hotel,
+          branch: itemsInCategory[0].branch,
+        });
+      }
+
+      return next(
+        new APIError(
+          404,
+          `No food items found matching the specified criteria. Found ${itemsInCategory.length} items in category but none matching hotel/branch filters. Try without hotelId/branchId filters.`
+        )
+      );
+    }
+
+    // Track update statistics
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const updatedItems = [];
+
+    // Update each food item
+    for (const item of foodItems) {
+      // Skip if GST rate is already the same
+      if (item.gstRate === gstRate) {
+        skippedCount++;
+        continue;
+      }
+
+      // Add to GST history
+      item.gstHistory.push({
+        rate: gstRate,
+        changedBy: req.admin._id,
+        changedByModel: "Admin",
+        changedAt: new Date(),
+      });
+
+      // Update GST rate
+      item.gstRate = gstRate;
+      item.lastModifiedBy = req.admin._id;
+
+      await item.save();
+      updatedCount++;
+      updatedItems.push({
+        id: item._id,
+        name: item.name,
+        oldGstRate: item.gstHistory[item.gstHistory.length - 2]?.rate,
+        newGstRate: gstRate,
+      });
+    }
+
+    // Get category name for response
+    const category = await FoodCategory.findById(categoryId).select("name");
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          summary: {
+            totalItemsFound: foodItems.length,
+            itemsUpdated: updatedCount,
+            itemsSkipped: skippedCount,
+            categoryName: category?.name || "Unknown",
+            newGstRate: gstRate,
+          },
+          updatedItems: updatedItems.slice(0, 20), // Return first 20 updated items
+        },
+        `Successfully updated GST rate to ${gstRate}% for ${updatedCount} food items`
+      )
+    );
   } catch (error) {
     next(error);
   }

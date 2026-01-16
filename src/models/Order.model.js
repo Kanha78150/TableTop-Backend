@@ -54,6 +54,9 @@ const orderSchema = new mongoose.Schema(
         foodItemName: { type: String, required: true },
         foodType: { type: String },
         category: { type: String },
+        // GST details for this item
+        gstRate: { type: Number, required: true },
+        gstAmount: { type: Number, required: true, min: 0 },
       },
     ],
     status: {

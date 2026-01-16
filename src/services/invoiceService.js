@@ -694,13 +694,68 @@ class InvoiceService {
       currentY += 18;
     }
 
-    // Sales Tax / GST
+    // Sales Tax / GST with itemized breakdown
     if (taxes > 0) {
-      doc.text("Sales Tax", leftMargin, currentY);
+      // Check if items have different GST rates
+      const uniqueGstRates = [
+        ...new Set(order.items.map((item) => item.gstRate)),
+      ];
+      const hasMultipleRates = uniqueGstRates.length > 1;
+
+      if (hasMultipleRates) {
+        // Show itemized GST if multiple rates exist
+        doc.fontSize(9).font("Helvetica-Bold");
+        doc.text("GST Breakdown:", leftMargin, currentY);
+        currentY += 15;
+
+        doc.fontSize(8).font("Helvetica");
+        // Group items by GST rate
+        const gstGroups = {};
+        order.items.forEach((item) => {
+          const rate = item.gstRate;
+          if (!gstGroups[rate]) {
+            gstGroups[rate] = 0;
+          }
+          gstGroups[rate] += item.gstAmount || 0;
+        });
+
+        // Display each GST rate group
+        Object.entries(gstGroups).forEach(([rate, amount]) => {
+          doc.text(`  GST @ ${rate}%`, leftMargin + 10, currentY);
+          doc.text(
+            `₹${amount.toFixed(2)}`,
+            pageWidth - rightMargin - 70,
+            currentY,
+            {
+              width: 70,
+              align: "right",
+            }
+          );
+          currentY += 12;
+        });
+
+        currentY += 3;
+      }
+
+      // Total GST
+      doc.fontSize(10).font("Helvetica");
+      doc.text("Total GST", leftMargin, currentY);
       doc.text(`₹${taxes.toFixed(2)}`, pageWidth - rightMargin - 70, currentY, {
         width: 70,
         align: "right",
       });
+      currentY += 18;
+
+      // CGST/SGST breakdown
+      const cgst = taxes * 0.5;
+      const sgst = taxes * 0.5;
+
+      doc.fontSize(8).font("Helvetica");
+      doc.text(
+        `  (CGST: ₹${cgst.toFixed(2)} + SGST: ₹${sgst.toFixed(2)})`,
+        leftMargin + 10,
+        currentY
+      );
       currentY += 18;
     }
 

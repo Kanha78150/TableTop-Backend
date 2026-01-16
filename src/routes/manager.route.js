@@ -1,5 +1,6 @@
 // src/routes/manager.route.js - Branch Manager Routes
 import express from "express";
+import { validateBulkGstUpdate } from "../validators/foodItem.validators.js";
 import {
   authenticate,
   requireRole,
@@ -41,6 +42,7 @@ import {
   updateBulkMenuItemAvailability,
   getFoodCategories,
   getFoodCategory,
+  bulkUpdateGstRate,
 } from "../controllers/manager/menuController.js";
 
 import {
@@ -230,6 +232,15 @@ router.patch(
   requireRole(["branch_manager"]),
   requirePermission("updateMenuItems"),
   updateBulkMenuItemAvailability
+);
+
+// Bulk GST update by category
+router.put(
+  "/menu/bulk-update-gst",
+  requireRole(["branch_manager"]),
+  requirePermission("updateMenuItems"),
+  validateBulkGstUpdate,
+  bulkUpdateGstRate
 );
 
 // Order Management Routes

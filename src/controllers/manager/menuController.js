@@ -3,6 +3,7 @@ import { FoodItem } from "../../models/FoodItem.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import mongoose from "mongoose";
+import { validateFoodItemData } from "../../validators/foodItem.validators.js";
 
 // READ-ONLY OPERATIONS FOR MANAGERS
 // Managers can only view food categories and items, not create/update/delete them
@@ -109,7 +110,11 @@ export const getMenuItems = async (req, res, next) => {
       }
     }
 
-    if (isAvailable !== undefined && isAvailable !== null && isAvailable !== "") {
+    if (
+      isAvailable !== undefined &&
+      isAvailable !== null &&
+      isAvailable !== ""
+    ) {
       // Handle both boolean and string values
       query.isAvailable = isAvailable === true || isAvailable === "true";
     }
@@ -344,4 +349,95 @@ export const deleteFoodCategory = async (req, res, next) => {
       "Managers cannot delete food categories. Please contact an administrator."
     )
   );
+};
+
+/**
+ * Bulk update GST rates for food items by category (Manager version)
+ * @route PUT /api/v1/manager/menu/bulk-update-gst
+ * @access Manager
+ */
+export const bulkUpdateGstRate = async (req, res, next) => {
+  try {
+    const { categoryId, gstRate, hotelId } = req.body;
+
+    // Build query to find matching food items in manager's branch
+    const query = {
+      category: categoryId,
+      branch: req.manager.branch._id, // Manager can only update their branch items
+    };
+
+    if (hotelId) {
+      query.hotel = hotelId;
+    }
+
+    // Find all food items matching the criteria
+    const foodItems = await FoodItem.find(query);
+
+    if (foodItems.length === 0) {
+      return next(
+        new APIError(
+          404,
+          "No food items found matching the specified criteria in your branch"
+        )
+      );
+    }
+
+    // Track update statistics
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const updatedItems = [];
+
+    // Update each food item
+    for (const item of foodItems) {
+      // Skip if GST rate is already the same
+      if (item.gstRate === gstRate) {
+        skippedCount++;
+        continue;
+      }
+
+      // Add to GST history
+      item.gstHistory.push({
+        rate: gstRate,
+        changedBy: req.manager._id,
+        changedByModel: "Manager",
+        changedAt: new Date(),
+      });
+
+      // Update GST rate
+      item.gstRate = gstRate;
+      item.lastModifiedBy = req.manager._id;
+
+      await item.save();
+      updatedCount++;
+      updatedItems.push({
+        id: item._id,
+        name: item.name,
+        oldGstRate: item.gstHistory[item.gstHistory.length - 2]?.rate,
+        newGstRate: gstRate,
+      });
+    }
+
+    // Get category name for response
+    const category = await FoodCategory.findById(categoryId).select("name");
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          summary: {
+            totalItemsFound: foodItems.length,
+            itemsUpdated: updatedCount,
+            itemsSkipped: skippedCount,
+            categoryName: category?.name || "Unknown",
+            newGstRate: gstRate,
+            branchName: req.manager.branch.name,
+          },
+          updatedItems: updatedItems.slice(0, 20), // Return first 20 updated items
+        },
+        `Successfully updated GST rate to ${gstRate}% for ${updatedCount} food items`
+      )
+    );
+  } catch (error) {
+    next(error);
+  }
 };

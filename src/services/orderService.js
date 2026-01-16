@@ -587,24 +587,24 @@ const reorderToCart = async (originalOrder, userId, orderDetails) => {
 
 /**
  * Calculate order totals including taxes and discounts
- * @param {Object} cart - Cart object
+ * @param {Object} cart - Cart object with items
  * @returns {Object} - Order calculation breakdown
  */
 const calculateOrderTotals = (cart) => {
   const subtotal = cart.subtotal;
-  const taxes = calculateTaxes(subtotal);
+  const taxCalculation = calculateTaxes(cart.items, subtotal, subtotal);
   const serviceCharge = calculateServiceCharge(subtotal);
-  const total = subtotal + taxes + serviceCharge;
+  const total = subtotal + taxCalculation.total + serviceCharge;
 
   return {
     subtotal,
-    taxes,
+    taxes: taxCalculation.total,
     serviceCharge,
     total,
     breakdown: {
       itemsTotal: subtotal,
-      cgst: taxes * 0.5, // 50% of total tax as CGST
-      sgst: taxes * 0.5, // 50% of total tax as SGST
+      cgst: taxCalculation.cgst,
+      sgst: taxCalculation.sgst,
       serviceCharge,
       grandTotal: total,
     },
@@ -612,13 +612,39 @@ const calculateOrderTotals = (cart) => {
 };
 
 /**
- * Calculate taxes (GST)
- * @param {number} amount - Amount to calculate tax on
- * @returns {number} - Tax amount
+ * Calculate taxes (GST) based on per-item GST rates
+ * @param {Array} items - Order items with gstRate
+ * @param {number} baseAmount - Base amount after discounts
+ * @param {number} subtotal - Original subtotal before discounts
+ * @returns {Object} - Tax breakdown with total, CGST, SGST
  */
-const calculateTaxes = (amount) => {
-  const GST_RATE = 0.18; // 18% GST
-  return Math.round(amount * GST_RATE * 100) / 100;
+const calculateTaxes = (items, baseAmount, subtotal) => {
+  // Calculate proportional base amount for each item (after discounts)
+  const discountRatio = baseAmount / subtotal;
+
+  let totalTaxes = 0;
+  const itemTaxDetails = [];
+
+  items.forEach((item) => {
+    const itemBaseAmount = item.totalPrice * discountRatio;
+    const itemGstAmount = (itemBaseAmount * item.gstRate) / 100;
+    totalTaxes += itemGstAmount;
+
+    itemTaxDetails.push({
+      itemName: item.foodItemName || item.name,
+      gstRate: item.gstRate,
+      gstAmount: Math.round(itemGstAmount * 100) / 100,
+    });
+  });
+
+  const totalGst = Math.round(totalTaxes * 100) / 100;
+
+  return {
+    total: totalGst,
+    cgst: Math.round(totalGst * 0.5 * 100) / 100, // 50% as CGST
+    sgst: Math.round(totalGst * 0.5 * 100) / 100, // 50% as SGST
+    itemDetails: itemTaxDetails,
+  };
 };
 
 /**
@@ -732,6 +758,14 @@ export const placeDirectOrder = async (
         throw new APIError(400, `${foodItem.name} not available at this hotel`);
       }
 
+      // Validate gstRate exists
+      if (foodItem.gstRate === undefined || foodItem.gstRate === null) {
+        throw new APIError(
+          400,
+          `GST rate not configured for item: ${foodItem.name}. Please contact admin.`
+        );
+      }
+
       const itemPrice = foodItem.discountPrice || foodItem.price;
       const itemTotal = itemPrice * item.quantity;
       subtotal += itemTotal;
@@ -743,17 +777,23 @@ export const placeDirectOrder = async (
         originalPrice: foodItem.price,
         quantity: item.quantity,
         total: itemTotal,
+        totalPrice: itemTotal,
         customizations: item.customizations || [],
         specialInstructions: item.specialInstructions || "",
         preparationTime: foodItem.preparationTime,
+        gstRate: foodItem.gstRate,
       });
     }
 
-    // 5. Calculate pricing
-    const taxRate = 0.18; // 18% tax
-    const tax = subtotal * taxRate;
+    // 5. Calculate pricing with per-item GST
+    const taxCalculation = calculateTaxes(orderItems, subtotal, subtotal);
     const deliveryFee = table ? 0 : 50; // Free delivery for table orders
-    const total = subtotal + tax + deliveryFee;
+    const total = subtotal + taxCalculation.total + deliveryFee;
+
+    // Add gstAmount to each order item
+    orderItems.forEach((item, index) => {
+      item.gstAmount = taxCalculation.itemDetails[index].gstAmount;
+    });
 
     // 6. Calculate estimated preparation time
     const estimatedPrepTime = calculateEstimatedTime(orderItems);
@@ -776,7 +816,7 @@ export const placeDirectOrder = async (
       items: orderItems,
       pricing: {
         subtotal,
-        tax,
+        tax: taxCalculation.total,
         deliveryFee,
         total,
       },

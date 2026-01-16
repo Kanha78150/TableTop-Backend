@@ -1,4 +1,5 @@
 import express from "express";
+import { validateBulkGstUpdate } from "../validators/foodItem.validators.js";
 
 // Hotel and Branch Controllers
 import {
@@ -68,6 +69,7 @@ import {
   deleteFoodItem,
   updateFoodItemAvailability,
   updateSingleFoodItemAvailability,
+  bulkUpdateGstRate,
 } from "../controllers/admin/menuController.js";
 
 // Table Management Controllers
@@ -537,6 +539,14 @@ router.patch(
   "/menu/items/availability",
   rbac({ permissions: ["manageMenu"] }),
   updateFoodItemAvailability
+);
+
+// Bulk update GST rates by category
+router.put(
+  "/menu/bulk-update-gst",
+  rbac({ permissions: ["manageMenu"] }),
+  validateBulkGstUpdate,
+  bulkUpdateGstRate
 );
 
 // ======================

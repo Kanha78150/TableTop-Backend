@@ -129,6 +129,7 @@ const foodItemSchema = new mongoose.Schema(
       fat: { type: Number, min: 0 }, // in grams
       fiber: { type: Number, min: 0 }, // in grams
       sodium: { type: Number, min: 0 }, // in mg
+      sugar: { type: Number, min: 0 }, // in grams
     },
     // Additional details
     preparationTime: {
@@ -201,6 +202,35 @@ const foodItemSchema = new mongoose.Schema(
       min: 0,
       default: null,
     },
+    // GST Configuration
+    gstRate: {
+      type: Number,
+      required: [true, "GST rate is required"],
+      enum: {
+        values: [0, 5, 12, 18, 28],
+        message: "GST rate must be one of: 0%, 5%, 12%, 18%, or 28%",
+      },
+    },
+    gstHistory: [
+      {
+        rate: {
+          type: Number,
+          required: true,
+        },
+        changedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          refPath: "gstHistory.changedByModel",
+        },
+        changedByModel: {
+          type: String,
+          enum: ["Admin", "Manager"],
+        },
+        changedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     // Audit
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

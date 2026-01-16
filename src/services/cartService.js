@@ -739,7 +739,7 @@ class CartService {
         {
           path: "items.foodItem",
           select:
-            "name price discountPrice effectivePrice image preparationTime category",
+            "name price discountPrice effectivePrice image preparationTime category gstRate",
         },
         {
           path: "hotel",
@@ -822,6 +822,17 @@ class CartService {
         const itemTotal = itemPrice * item.quantity;
         subtotal += itemTotal;
 
+        // Validate gstRate exists
+        if (
+          item.foodItem.gstRate === undefined ||
+          item.foodItem.gstRate === null
+        ) {
+          throw new APIError(
+            400,
+            `GST rate not configured for item: ${item.foodItem.name}. Please contact admin.`
+          );
+        }
+
         return {
           foodItem: item.foodItem._id,
           foodItemName: item.foodItem.name,
@@ -830,6 +841,7 @@ class CartService {
           totalPrice: itemTotal,
           customizations: item.customizations,
           foodType: item.foodItem.foodType || "veg",
+          gstRate: item.foodItem.gstRate,
         };
       });
 
@@ -931,11 +943,36 @@ class CartService {
         }
       }
 
-      // 9. Calculate final amounts
+      // 9. Calculate final amounts with per-item GST
       const baseAmount = Math.max(0, subtotal - offerDiscount - coinDiscount);
-      const taxes = Math.max(0, baseAmount * 0.18); // 18% GST, minimum 0
+
+      // Calculate proportional base amount for each item (after discounts)
+      const discountRatio = baseAmount / subtotal; // Ratio of amount after discounts to original subtotal
+
+      // Calculate GST for each item and track details
+      let totalTaxes = 0;
+      const itemTaxDetails = orderItems.map((item) => {
+        const itemBaseAmount = item.totalPrice * discountRatio; // Apply discount proportion
+        const itemGstAmount = (itemBaseAmount * item.gstRate) / 100;
+        totalTaxes += itemGstAmount;
+
+        return {
+          itemName: item.foodItemName,
+          baseAmount: itemBaseAmount,
+          gstRate: item.gstRate,
+          gstAmount: itemGstAmount,
+        };
+      });
+
+      const taxes = Math.max(0, Math.round(totalTaxes * 100) / 100); // Round to 2 decimals
       const serviceCharge = 0; // No service charge for now
       const finalTotal = Math.max(0, baseAmount + taxes + serviceCharge); // Ensure final total is not negative
+
+      // Update order items with GST amounts
+      orderItems.forEach((item, index) => {
+        item.gstAmount =
+          Math.round(itemTaxDetails[index].gstAmount * 100) / 100;
+      });
 
       // 10. Calculate estimated time
       const estimatedTime =
@@ -1100,8 +1137,14 @@ class CartService {
             step4_taxesAndCharges: {
               description: "Taxes and service charges",
               baseAmount: Math.max(0, subtotal - offerDiscount - coinDiscount),
-              gstRate: "18%",
-              gstAmount: taxes,
+              gstBreakdown: itemTaxDetails.map((item) => ({
+                item: item.itemName,
+                gstRate: `${item.gstRate}%`,
+                gstAmount: Math.round(item.gstAmount * 100) / 100,
+              })),
+              totalGst: taxes,
+              cgst: Math.round(taxes * 0.5 * 100) / 100, // 50% of total GST
+              sgst: Math.round(taxes * 0.5 * 100) / 100, // 50% of total GST
               serviceCharge: serviceCharge,
               totalTaxesAndCharges: taxes + serviceCharge,
               currency: "₹",
