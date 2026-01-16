@@ -14,7 +14,12 @@ import {
   AccessTokenCookieOptions,
   RefreshTokenCookieOptions,
 } from "../../config/jwtOptions.js";
-import { generateOtp, generateOtpExpiry } from "../../utils/otpGenerator.js";
+import {
+  generateOtp,
+  generateOtpExpiry,
+  hashOtp,
+  verifyOtp,
+} from "../../utils/otpGenerator.js";
 
 // Helper function to set auth cookies
 const setAuthCookies = (res, tokens) => {
@@ -56,6 +61,7 @@ export const registerSuperAdmin = async (req, res, next) => {
 
     // Generate OTP for email verification
     const otp = generateOtp();
+    const hashedOtp = hashOtp(otp);
     const otpExpiry = generateOtpExpiry(10); // 10 minutes
 
     // Create super admin with unverified status
@@ -66,7 +72,7 @@ export const registerSuperAdmin = async (req, res, next) => {
       dateOfBirth: new Date(dateOfBirth),
       role: "super_admin",
       emailVerified: false,
-      emailVerificationOtp: otp,
+      emailVerificationOtp: hashedOtp,
       emailVerificationOtpExpiry: otpExpiry,
       status: "active", // Super admin is active by default
     });
@@ -136,9 +142,12 @@ export const verifyEmail = async (req, res, next) => {
       return next(new APIError(400, "Email is already verified"));
     }
 
-    // Check if OTP matches
-    if (superAdmin.emailVerificationOtp !== otp) {
-      return next(new APIError(400, "Invalid OTP"));
+    // Check if OTP exists and not expired
+    if (
+      !superAdmin.emailVerificationOtp ||
+      !superAdmin.emailVerificationOtpExpiry
+    ) {
+      return next(new APIError(400, "No OTP found. Please request a new one."));
     }
 
     // Check if OTP has expired
@@ -149,6 +158,11 @@ export const verifyEmail = async (req, res, next) => {
           "OTP has expired. Please request a new OTP using the resend option."
         )
       );
+    }
+
+    // Verify OTP using secure comparison
+    if (!verifyOtp(otp, superAdmin.emailVerificationOtp)) {
+      return next(new APIError(400, "Invalid OTP"));
     }
 
     // Update verification status
@@ -210,10 +224,11 @@ export const resendOtp = async (req, res, next) => {
 
     // Generate new OTP
     const otp = generateOtp();
+    const hashedOtp = hashOtp(otp);
     const otpExpiry = generateOtpExpiry(10); // 10 minutes
 
     // Update OTP in database
-    superAdmin.emailVerificationOtp = otp;
+    superAdmin.emailVerificationOtp = hashedOtp;
     superAdmin.emailVerificationOtpExpiry = otpExpiry;
     await superAdmin.save();
 

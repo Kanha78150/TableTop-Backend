@@ -63,7 +63,7 @@ import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import { sendEmail } from "../../utils/emailService.js";
-import { generateOtp } from "../../utils/otpGenerator.js";
+import { generateOtp, hashOtp, verifyOtp } from "../../utils/otpGenerator.js";
 import {
   CookieOptions,
   AccessTokenCookieOptions,
@@ -385,6 +385,7 @@ export const registerAdmin = async (req, res, next) => {
 
     // Generate OTP and expiry
     const otp = generateOtp();
+    const hashedOtp = hashOtp(otp);
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     const admin = new Admin({
@@ -396,7 +397,7 @@ export const registerAdmin = async (req, res, next) => {
       role: "admin",
       status: "active",
       emailVerified: false,
-      emailVerificationOtp: otp,
+      emailVerificationOtp: hashedOtp,
       emailVerificationOtpExpiry: otpExpiry,
     });
 
@@ -542,13 +543,19 @@ export const verifyEmail = async (req, res, next) => {
         .json(new APIResponse(200, null, "Email already verified"));
     }
 
-    if (
-      !admin.emailVerificationOtp ||
-      admin.emailVerificationOtp !== otp ||
-      !admin.emailVerificationOtpExpiry ||
-      admin.emailVerificationOtpExpiry < new Date()
-    ) {
-      return next(new APIError(400, "Invalid or expired OTP"));
+    if (!admin.emailVerificationOtp || !admin.emailVerificationOtpExpiry) {
+      return next(new APIError(400, "No OTP found. Please request a new one."));
+    }
+
+    if (admin.emailVerificationOtpExpiry < new Date()) {
+      return next(
+        new APIError(400, "OTP has expired. Please request a new one.")
+      );
+    }
+
+    // Verify OTP using secure comparison
+    if (!verifyOtp(otp, admin.emailVerificationOtp)) {
+      return next(new APIError(400, "Invalid OTP"));
     }
 
     admin.emailVerified = true;
@@ -603,9 +610,10 @@ export const resendVerificationOtp = async (req, res, next) => {
 
     // Generate new OTP and expiry
     const otp = generateOtp();
+    const hashedOtp = hashOtp(otp);
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    admin.emailVerificationOtp = otp;
+    admin.emailVerificationOtp = hashedOtp;
     admin.emailVerificationOtpExpiry = otpExpiry;
     await admin.save();
 
