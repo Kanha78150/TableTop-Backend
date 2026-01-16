@@ -772,8 +772,16 @@ async function processOrderPayment(entity, status) {
     }
 
     // Generate and send invoice
+    logger.info("Starting invoice generation process", {
+      orderId: order._id,
+      userId: order.user,
+      hotelId: order.hotel,
+      branchId: order.branch,
+    });
+
     try {
       // Populate order for invoice generation
+      logger.debug("Populating order for invoice", { orderId: order._id });
       const populatedOrder = await Order.findById(order._id)
         .populate("user", "name email phone")
         .populate("hotel", "name email contactNumber gstin")
@@ -784,11 +792,24 @@ async function processOrderPayment(entity, status) {
         throw new Error("Order not found for invoice generation");
       }
 
+      logger.debug("Order populated successfully", {
+        orderId: populatedOrder._id,
+        hasUser: !!populatedOrder.user,
+        hasHotel: !!populatedOrder.hotel,
+        hasBranch: !!populatedOrder.branch,
+        userEmail: populatedOrder.user?.email,
+      });
+
       // Generate invoice number
       const invoiceNumber = `INV-${Date.now()}-${order._id
         .toString()
         .slice(-8)
         .toUpperCase()}`;
+
+      logger.info("Generated invoice number", {
+        invoiceNumber,
+        orderId: order._id,
+      });
 
       // Create invoice snapshot
       populatedOrder.invoiceNumber = invoiceNumber;
@@ -808,14 +829,36 @@ async function processOrderPayment(entity, status) {
         tableNumber: populatedOrder.tableNumber || "",
       };
 
+      logger.debug("Invoice snapshot created", {
+        invoiceNumber,
+        hasHotel: !!populatedOrder.hotel,
+        hasBranch: !!populatedOrder.branch,
+        hasUser: !!populatedOrder.user,
+      });
+
       // Generate invoice PDF
+      logger.debug("Generating invoice PDF", {
+        invoiceNumber,
+        orderId: populatedOrder._id,
+      });
       const invoice = await invoiceService.generateOrderInvoice(
         populatedOrder,
         { showCancelledStamp: false }
       );
+      logger.info("Invoice PDF generated successfully", {
+        invoiceNumber,
+        fileName: invoice.fileName,
+        bufferSize: invoice.buffer?.length,
+      });
 
       // Try to send email
       if (populatedOrder.user?.email) {
+        logger.info("Attempting to send invoice email", {
+          recipientEmail: populatedOrder.user.email,
+          recipientName: populatedOrder.user.name,
+          invoiceNumber,
+        });
+
         try {
           await invoiceService.sendInvoiceEmail(
             invoice,
@@ -824,49 +867,88 @@ async function processOrderPayment(entity, status) {
             "invoice"
           );
           populatedOrder.invoiceEmailStatus = "sent";
-          logger.info("Invoice email sent successfully", {
+          logger.info("✅ Invoice email sent successfully", {
             orderId: order._id,
             invoiceNumber: invoiceNumber,
+            recipientEmail: populatedOrder.user.email,
           });
         } catch (emailError) {
           // Email failed - add to queue
-          logger.warn("Failed to send invoice email, adding to queue", {
+          logger.error("❌ Failed to send invoice email, adding to queue", {
             orderId: order._id,
             error: emailError.message,
+            stack: emailError.stack,
+            recipientEmail: populatedOrder.user.email,
           });
 
-          await EmailQueue.create({
-            type: "invoice",
-            orderId: populatedOrder._id,
-            recipientEmail: populatedOrder.user.email,
-            recipientName: populatedOrder.user.name,
-            status: "pending",
-            emailData: {
-              subject: `Invoice ${invoiceNumber} - TableTop`,
-              invoiceNumber: invoiceNumber,
-              amount: populatedOrder.totalPrice,
-            },
-            scheduledFor: new Date(Date.now() + 5 * 60 * 1000), // Retry in 5 minutes
-          });
+          try {
+            await EmailQueue.create({
+              type: "invoice",
+              orderId: populatedOrder._id,
+              recipientEmail: populatedOrder.user.email,
+              recipientName: populatedOrder.user.name,
+              status: "pending",
+              emailData: {
+                subject: `Invoice ${invoiceNumber} - TableTop`,
+                invoiceNumber: invoiceNumber,
+                amount: populatedOrder.totalPrice,
+              },
+              scheduledFor: new Date(Date.now() + 5 * 60 * 1000), // Retry in 5 minutes
+            });
+            logger.info("Email queued for retry", {
+              orderId: populatedOrder._id,
+              recipientEmail: populatedOrder.user.email,
+            });
+          } catch (queueError) {
+            logger.error("Failed to queue email for retry", {
+              error: queueError.message,
+              orderId: populatedOrder._id,
+            });
+          }
 
           populatedOrder.invoiceEmailStatus = "failed";
           populatedOrder.invoiceEmailAttempts = 1;
         }
+      } else {
+        logger.warn("No user email available, skipping invoice email", {
+          orderId: populatedOrder._id,
+          hasUser: !!populatedOrder.user,
+        });
+        populatedOrder.invoiceEmailStatus = "no_email";
       }
 
       // Save order with invoice data
       await populatedOrder.save();
 
-      logger.info("Invoice generated successfully", {
+      logger.info("✅ Invoice generated and saved successfully", {
         orderId: order._id,
         invoiceNumber: invoiceNumber,
+        invoiceEmailStatus: populatedOrder.invoiceEmailStatus,
       });
     } catch (invoiceError) {
-      logger.error("Failed to generate/send invoice", {
+      logger.error("❌ CRITICAL: Failed to generate/send invoice", {
         orderId: order._id,
         error: invoiceError.message,
         stack: invoiceError.stack,
+        errorName: invoiceError.name,
       });
+
+      // Try to mark order with invoice error status
+      try {
+        const orderToUpdate = await Order.findById(order._id);
+        if (orderToUpdate) {
+          orderToUpdate.invoiceEmailStatus = "generation_failed";
+          orderToUpdate.invoiceGenerationError = invoiceError.message;
+          await orderToUpdate.save();
+          logger.info("Order marked with invoice generation failure", {
+            orderId: order._id,
+          });
+        }
+      } catch (updateError) {
+        logger.error("Failed to update order with invoice error status", {
+          error: updateError.message,
+        });
+      }
       // Don't fail the payment if invoice fails
     }
 

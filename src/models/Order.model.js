@@ -263,13 +263,16 @@ const orderSchema = new mongoose.Schema(
     },
     invoiceEmailStatus: {
       type: String,
-      enum: ["pending", "sent", "failed"],
+      enum: ["pending", "sent", "failed", "no_email", "generation_failed"],
       default: "pending",
     },
     invoiceEmailAttempts: {
       type: Number,
       default: 0,
       min: 0,
+    },
+    invoiceGenerationError: {
+      type: String,
     },
   },
   {

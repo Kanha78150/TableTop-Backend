@@ -647,7 +647,7 @@ class InvoiceService {
       });
 
       // Price on right
-      doc.text(`$${total.toFixed(2)}`, pageWidth - rightMargin - 70, currentY, {
+      doc.text(`₹${total.toFixed(2)}`, pageWidth - rightMargin - 70, currentY, {
         width: 70,
         align: "right",
       });
@@ -669,7 +669,7 @@ class InvoiceService {
     doc.fontSize(10).font("Helvetica");
     doc.text("Sub Total", leftMargin, currentY);
     doc.text(
-      `$${subtotal.toFixed(2)}`,
+      `₹${subtotal.toFixed(2)}`,
       pageWidth - rightMargin - 70,
       currentY,
       {
@@ -683,7 +683,7 @@ class InvoiceService {
     if (serviceCharge > 0) {
       doc.text("Service Charge", leftMargin, currentY);
       doc.text(
-        `$${serviceCharge.toFixed(2)}`,
+        `₹${serviceCharge.toFixed(2)}`,
         pageWidth - rightMargin - 70,
         currentY,
         {
@@ -697,7 +697,7 @@ class InvoiceService {
     // Sales Tax / GST
     if (taxes > 0) {
       doc.text("Sales Tax", leftMargin, currentY);
-      doc.text(`$${taxes.toFixed(2)}`, pageWidth - rightMargin - 70, currentY, {
+      doc.text(`₹${taxes.toFixed(2)}`, pageWidth - rightMargin - 70, currentY, {
         width: 70,
         align: "right",
       });
@@ -708,7 +708,7 @@ class InvoiceService {
     if (coinDiscount > 0) {
       doc.text("Coin Discount", leftMargin, currentY);
       doc.text(
-        `-$${coinDiscount.toFixed(2)}`,
+        `-₹${coinDiscount.toFixed(2)}`,
         pageWidth - rightMargin - 70,
         currentY,
         {
@@ -722,7 +722,7 @@ class InvoiceService {
     if (offerDiscount > 0) {
       doc.text("Offer Discount", leftMargin, currentY);
       doc.text(
-        `-$${offerDiscount.toFixed(2)}`,
+        `-₹${offerDiscount.toFixed(2)}`,
         pageWidth - rightMargin - 70,
         currentY,
         {
@@ -739,7 +739,7 @@ class InvoiceService {
     doc.fontSize(14).font("Helvetica-Bold");
     doc.text("TOTAL", leftMargin, currentY);
     doc.text(
-      `$${totalPrice.toFixed(2)}`,
+      `₹${totalPrice.toFixed(2)}`,
       pageWidth - rightMargin - 90,
       currentY,
       {

@@ -1,12 +1,34 @@
 import nodemailer from "nodemailer";
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Lazy transporter initialization to ensure env vars are loaded
+let transporter = null;
+
+function getTransporter() {
+  if (!transporter) {
+    const emailUser = process.env.EMAIL_USER;
+    const emailPass = process.env.EMAIL_PASS;
+
+    if (!emailUser || !emailPass) {
+      throw new Error(
+        "Email credentials not configured. EMAIL_USER or EMAIL_PASS is missing."
+      );
+    }
+
+    transporter = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false, // Use STARTTLS
+      auth: {
+        user: emailUser,
+        pass: emailPass.replace(/\s/g, ""), // Remove any spaces
+      },
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+  }
+  return transporter;
+}
 
 // Generic email sending function
 export const sendEmail = async ({
@@ -16,6 +38,7 @@ export const sendEmail = async ({
   text,
   template,
   data,
+  attachments,
 }) => {
   let emailContent = html || text;
 
@@ -611,16 +634,22 @@ export const sendEmail = async ({
     }
   }
 
-  await transporter.sendMail({
+  const mailOptions = {
     from: process.env.EMAIL_USER,
     to,
     subject,
     html: emailContent,
-  });
+  };
+
+  if (attachments) {
+    mailOptions.attachments = attachments;
+  }
+
+  await getTransporter().sendMail(mailOptions);
 };
 
 export const sendEmailOtp = async (to, otp) => {
-  await transporter.sendMail({
+  await getTransporter().sendMail({
     from: process.env.EMAIL_USER,
     to,
     subject: "Your RMS verification OTP",
@@ -641,7 +670,7 @@ export const sendPasswordResetEmail = async (to, resetToken) => {
     process.env.FRONTEND_URL || "http://localhost:5173"
   }/reset-password?token=${resetToken}`;
 
-  await transporter.sendMail({
+  await getTransporter().sendMail({
     from: process.env.EMAIL_USER,
     to,
     subject: "Password Reset Request - RMS",
