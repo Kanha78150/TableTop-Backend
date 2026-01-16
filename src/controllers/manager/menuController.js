@@ -395,15 +395,8 @@ export const bulkUpdateGstRate = async (req, res, next) => {
         continue;
       }
 
-      // Add to GST history
-      item.gstHistory.push({
-        rate: gstRate,
-        changedBy: req.manager._id,
-        changedByModel: "Manager",
-        changedAt: new Date(),
-      });
-
       // Update GST rate
+      const oldGstRate = item.gstRate;
       item.gstRate = gstRate;
       item.lastModifiedBy = req.manager._id;
 
@@ -412,7 +405,7 @@ export const bulkUpdateGstRate = async (req, res, next) => {
       updatedItems.push({
         id: item._id,
         name: item.name,
-        oldGstRate: item.gstHistory[item.gstHistory.length - 2]?.rate,
+        oldGstRate: oldGstRate,
         newGstRate: gstRate,
       });
     }

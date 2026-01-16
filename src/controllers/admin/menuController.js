@@ -469,14 +469,6 @@ export const createFoodItem = async (req, res, next) => {
       nutritionalInfo,
       images,
       gstRate,
-      gstHistory: [
-        {
-          rate: gstRate,
-          changedBy: req.admin._id,
-          changedByModel: "Admin",
-          changedAt: new Date(),
-        },
-      ],
       createdBy: req.admin._id,
       lastModifiedBy: req.admin._id,
       ...otherFields,
@@ -582,17 +574,6 @@ export const updateFoodItem = async (req, res, next) => {
       }
     }
 
-    // Track GST rate changes
-    if (updates.gstRate !== undefined && updates.gstRate !== foodItem.gstRate) {
-      foodItem.gstHistory.push({
-        rate: updates.gstRate,
-        changedBy: req.admin._id,
-        changedByModel: "Admin",
-        changedAt: new Date(),
-      });
-    }
-
-    // Set lastModifiedBy field
     updates.lastModifiedBy = req.admin._id;
 
     // Update the food item fields
@@ -1087,15 +1068,8 @@ export const bulkUpdateGstRate = async (req, res, next) => {
         continue;
       }
 
-      // Add to GST history
-      item.gstHistory.push({
-        rate: gstRate,
-        changedBy: req.admin._id,
-        changedByModel: "Admin",
-        changedAt: new Date(),
-      });
-
       // Update GST rate
+      const oldGstRate = item.gstRate;
       item.gstRate = gstRate;
       item.lastModifiedBy = req.admin._id;
 
@@ -1104,7 +1078,7 @@ export const bulkUpdateGstRate = async (req, res, next) => {
       updatedItems.push({
         id: item._id,
         name: item.name,
-        oldGstRate: item.gstHistory[item.gstHistory.length - 2]?.rate,
+        oldGstRate: oldGstRate,
         newGstRate: gstRate,
       });
     }

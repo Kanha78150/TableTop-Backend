@@ -211,26 +211,6 @@ const foodItemSchema = new mongoose.Schema(
         message: "GST rate must be one of: 0%, 5%, 12%, 18%, or 28%",
       },
     },
-    gstHistory: [
-      {
-        rate: {
-          type: Number,
-          required: true,
-        },
-        changedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          refPath: "gstHistory.changedByModel",
-        },
-        changedByModel: {
-          type: String,
-          enum: ["Admin", "Manager"],
-        },
-        changedAt: {
-          type: Date,
-          default: Date.now,
-        },
-      },
-    ],
     // Audit
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
