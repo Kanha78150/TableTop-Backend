@@ -64,6 +64,11 @@ import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { generateOtp } from "../../utils/otpGenerator.js";
+import {
+  CookieOptions,
+  AccessTokenCookieOptions,
+  RefreshTokenCookieOptions,
+} from "../../config/jwtOptions.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
@@ -121,21 +126,8 @@ export const resetAdminPassword = async (req, res, next) => {
   }
 };
 const setAuthCookies = (res, tokens) => {
-  const cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-  };
-
-  res.cookie("accessToken", tokens.accessToken, {
-    ...cookieOptions,
-    maxAge: 15 * 60 * 1000, // 15 minutes
-  });
-
-  res.cookie("refreshToken", tokens.refreshToken, {
-    ...cookieOptions,
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
+  res.cookie("accessToken", tokens.accessToken, AccessTokenCookieOptions);
+  res.cookie("refreshToken", tokens.refreshToken, RefreshTokenCookieOptions);
 };
 
 // Admin login
@@ -149,13 +141,13 @@ export const loginAdmin = async (req, res, next) => {
     const { email, password } = req.body;
 
     // Find admin by email
- const admin = await Admin.findOne({ email }).populate({
+    const admin = await Admin.findOne({ email }).populate({
       path: "assignedBranches",
       select: "name branchId location hotel",
       populate: {
         path: "hotel",
-        select: "_id name hotelId"
-      }
+        select: "_id name hotelId",
+      },
     });
 
     if (!admin) {
@@ -199,34 +191,36 @@ export const loginAdmin = async (req, res, next) => {
     // Reset login attempts on successful login
     await admin.resetLoginAttempts();
 
-        // Auto-assign branches if admin has no assigned branches
+    // Auto-assign branches if admin has no assigned branches
     if (!admin.assignedBranches || admin.assignedBranches.length === 0) {
       // Find all hotels created by this admin
-      const adminHotels = await Hotel.find({ createdBy: admin._id }).select('_id');
-      
+      const adminHotels = await Hotel.find({ createdBy: admin._id }).select(
+        "_id"
+      );
+
       if (adminHotels.length > 0) {
         // Find all branches for these hotels
-        const hotelIds = adminHotels.map(hotel => hotel._id);
-        const branches = await Branch.find({ 
+        const hotelIds = adminHotels.map((hotel) => hotel._id);
+        const branches = await Branch.find({
           hotel: { $in: hotelIds },
-          status: 'active'
-        }).select('_id');
-        
+          status: "active",
+        }).select("_id");
+
         if (branches.length > 0) {
           // Auto-assign all branches to admin
-          admin.assignedBranches = branches.map(branch => branch._id);
+          admin.assignedBranches = branches.map((branch) => branch._id);
           await admin.save();
-          
+
           // Re-fetch admin with populated branches
           const updatedAdmin = await Admin.findById(admin._id).populate({
             path: "assignedBranches",
             select: "name branchId location hotel",
             populate: {
               path: "hotel",
-              select: "_id name hotelId"
-            }
+              select: "_id name hotelId",
+            },
           });
-          
+
           // Update admin object with populated data
           admin.assignedBranches = updatedAdmin.assignedBranches;
         }
@@ -293,14 +287,8 @@ export const logoutAdmin = async (req, res, next) => {
     });
 
     // Clear cookies
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    };
-
-    res.clearCookie("accessToken", cookieOptions);
-    res.clearCookie("refreshToken", cookieOptions);
+    res.clearCookie("accessToken", CookieOptions);
+    res.clearCookie("refreshToken", CookieOptions);
 
     res
       .status(200)

@@ -2,6 +2,10 @@ import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import {
+  AccessTokenCookieOptions,
+  RefreshTokenCookieOptions,
+} from "../../config/jwtOptions.js";
+import {
   findUserByIdentifier,
   validateAccountStatus,
   verifyPassword,
@@ -14,21 +18,8 @@ import {
  * Helper function to set auth cookies
  */
 const setAuthCookies = (res, tokens) => {
-  const cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "Lax",
-  };
-
-  res.cookie("accessToken", tokens.accessToken, {
-    ...cookieOptions,
-    maxAge: 15 * 60 * 1000, // 15 minutes
-  });
-
-  res.cookie("refreshToken", tokens.refreshToken, {
-    ...cookieOptions,
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
+  res.cookie("accessToken", tokens.accessToken, AccessTokenCookieOptions);
+  res.cookie("refreshToken", tokens.refreshToken, RefreshTokenCookieOptions);
 };
 
 /**
@@ -116,13 +107,17 @@ export const unifiedLogin = async (req, res, next) => {
       additionalData
     );
 
-    res.status(200).json(
-      new APIResponse(
-        200,
-        responseData,
-        `${userType.charAt(0).toUpperCase() + userType.slice(1)} logged in successfully`
-      )
-    );
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          responseData,
+          `${
+            userType.charAt(0).toUpperCase() + userType.slice(1)
+          } logged in successfully`
+        )
+      );
   } catch (error) {
     next(error);
   }

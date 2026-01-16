@@ -15,7 +15,10 @@ import {
   sendPasswordResetEmail,
 } from "../../utils/emailService.js";
 import { generateResetToken, hashToken } from "../../utils/tokenGenerator.js";
-import { CookieOptions } from "../../config/jwtOptions.js";
+import {
+  AccessTokenCookieOptions,
+  RefreshTokenCookieOptions,
+} from "../../config/jwtOptions.js";
 import fs from "fs";
 
 export const Signup = async (req, res) => {
@@ -212,8 +215,8 @@ export const Login = async (req, res) => {
     await user.save();
 
     // Set cookies
-    res.cookie("accessToken", accessToken, CookieOptions);
-    res.cookie("refreshToken", refreshToken, CookieOptions);
+    res.cookie("accessToken", accessToken, AccessTokenCookieOptions);
+    res.cookie("refreshToken", refreshToken, RefreshTokenCookieOptions);
 
     // Return user data without sensitive information
     const userResponse = {
