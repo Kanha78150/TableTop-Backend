@@ -425,6 +425,111 @@ class PaymentService {
       });
     }
 
+    // 📧 GENERATE AND SEND INVOICE AFTER PAYMENT CONFIRMATION
+    try {
+      const { invoiceService } = await import("./invoiceService.js");
+      const { EmailQueue } = await import("../models/EmailQueue.model.js");
+
+      logger.info("Starting invoice generation in payment callback", {
+        orderId: order._id,
+      });
+
+      // Populate order for invoice generation
+      const populatedOrder = await Order.findById(order._id)
+        .populate("user", "name email phone")
+        .populate("hotel", "name email contactNumber gstin")
+        .populate("branch", "name email contactNumber address")
+        .populate("items.foodItem", "name price");
+
+      if (populatedOrder && !populatedOrder.invoiceNumber) {
+        // Generate invoice number
+        const invoiceNumber = `INV-${Date.now()}-${order._id
+          .toString()
+          .slice(-8)
+          .toUpperCase()}`;
+
+        // Create invoice snapshot
+        populatedOrder.invoiceNumber = invoiceNumber;
+        populatedOrder.invoiceGeneratedAt = new Date();
+        populatedOrder.invoiceSnapshot = {
+          hotelName: populatedOrder.hotel?.name || "Hotel Name",
+          hotelEmail: populatedOrder.hotel?.email || "",
+          hotelPhone: populatedOrder.hotel?.contactNumber || "",
+          hotelGSTIN: populatedOrder.hotel?.gstin || "",
+          branchName: populatedOrder.branch?.name || "Branch Name",
+          branchAddress: populatedOrder.branch?.address || "",
+          branchPhone: populatedOrder.branch?.contactNumber || "",
+          branchEmail: populatedOrder.branch?.email || "",
+          customerName: populatedOrder.user?.name || "Guest",
+          customerEmail: populatedOrder.user?.email || "",
+          customerPhone: populatedOrder.user?.phone || "",
+          tableNumber: populatedOrder.tableNumber || "",
+        };
+
+        // Generate invoice PDF
+        const invoice = await invoiceService.generateOrderInvoice(
+          populatedOrder,
+          { showCancelledStamp: false }
+        );
+
+        // Try to send email
+        if (populatedOrder.user?.email) {
+          try {
+            await invoiceService.sendInvoiceEmail(
+              invoice,
+              populatedOrder.user.email,
+              populatedOrder.user.name,
+              "invoice"
+            );
+            populatedOrder.invoiceEmailStatus = "sent";
+            logger.info("✅ Invoice email sent in callback", {
+              orderId: order._id,
+              invoiceNumber: invoiceNumber,
+            });
+          } catch (emailError) {
+            // Email failed - add to queue
+            logger.warn("Failed to send invoice email, adding to queue", {
+              orderId: order._id,
+              error: emailError.message,
+            });
+
+            await EmailQueue.create({
+              type: "invoice",
+              orderId: populatedOrder._id,
+              recipientEmail: populatedOrder.user.email,
+              recipientName: populatedOrder.user.name,
+              status: "pending",
+              emailData: {
+                subject: `Invoice ${invoiceNumber} - TableTop`,
+                invoiceNumber: invoiceNumber,
+                amount: populatedOrder.totalPrice,
+              },
+              scheduledFor: new Date(Date.now() + 5 * 60 * 1000),
+            });
+
+            populatedOrder.invoiceEmailStatus = "failed";
+            populatedOrder.invoiceEmailAttempts = 1;
+          }
+        } else {
+          populatedOrder.invoiceEmailStatus = "no_email";
+        }
+
+        // Save order with invoice data
+        await populatedOrder.save();
+        logger.info("✅ Invoice generated in callback", {
+          orderId: order._id,
+          invoiceNumber: invoiceNumber,
+        });
+      }
+    } catch (invoiceError) {
+      // Log invoice error but don't fail the payment confirmation
+      logger.error("Invoice generation error in callback", {
+        orderId: order._id,
+        error: invoiceError.message,
+        stack: invoiceError.stack,
+      });
+    }
+
     return {
       transactionId: order.payment.transactionId,
       orderId: order._id,
