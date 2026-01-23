@@ -36,8 +36,13 @@ export const notifyManagerNewComplaint = async (complaint, manager) => {
     // Socket notification to manager
     if (io) {
       io.to(`manager_${manager._id}`).emit("complaint:new", notificationData);
-      io.to(`branch_${complaint.branch}`).emit("complaint:new", notificationData);
-      logger.info(`Socket notification sent to manager ${manager._id} for new complaint ${complaint.complaintId}`);
+      io.to(`branch_${complaint.branch}`).emit(
+        "complaint:new",
+        notificationData
+      );
+      logger.info(
+        `Socket notification sent to manager ${manager._id} for new complaint ${complaint.complaintId}`
+      );
     }
 
     // TODO: Email notification (Phase 7 enhancement)
@@ -48,7 +53,9 @@ export const notifyManagerNewComplaint = async (complaint, manager) => {
     //   html: emailHtml,
     // });
 
-    logger.info(`Manager ${manager._id} notified of new complaint ${complaint.complaintId}`);
+    logger.info(
+      `Manager ${manager._id} notified of new complaint ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying manager of new complaint:", error);
     // Don't throw - notification failure shouldn't block complaint creation
@@ -75,7 +82,9 @@ export const notifyStaffComplaintAssigned = async (complaint, staffId) => {
     // Socket notification to staff
     if (io) {
       io.to(`staff_${staffId}`).emit("complaint:assigned", notificationData);
-      logger.info(`Socket notification sent to staff ${staffId} for complaint assignment ${complaint.complaintId}`);
+      logger.info(
+        `Socket notification sent to staff ${staffId} for complaint assignment ${complaint.complaintId}`
+      );
     }
 
     // TODO: Email notification
@@ -87,7 +96,9 @@ export const notifyStaffComplaintAssigned = async (complaint, staffId) => {
     //   html: emailHtml,
     // });
 
-    logger.info(`Staff ${staffId} notified of complaint assignment ${complaint.complaintId}`);
+    logger.info(
+      `Staff ${staffId} notified of complaint assignment ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying staff of assignment:", error);
   }
@@ -99,7 +110,11 @@ export const notifyStaffComplaintAssigned = async (complaint, staffId) => {
  * @param {Object} updatedBy - The user who made the update
  * @param {String} updateType - Type of update (status_changed, response_added, resolved)
  */
-export const notifyStaffComplaintUpdated = async (complaint, updatedBy, updateType) => {
+export const notifyStaffComplaintUpdated = async (
+  complaint,
+  updatedBy,
+  updateType
+) => {
   try {
     if (!complaint.assignedTo) return;
 
@@ -122,14 +137,21 @@ export const notifyStaffComplaintUpdated = async (complaint, updatedBy, updateTy
 
     // Socket notification to assigned staff
     if (io) {
-      io.to(`staff_${complaint.assignedTo}`).emit("complaint:updated", notificationData);
-      logger.info(`Socket notification sent to staff ${complaint.assignedTo} for complaint update ${complaint.complaintId}`);
+      io.to(`staff_${complaint.assignedTo}`).emit(
+        "complaint:updated",
+        notificationData
+      );
+      logger.info(
+        `Socket notification sent to staff ${complaint.assignedTo} for complaint update ${complaint.complaintId}`
+      );
     }
 
     // TODO: Email notification (batched - sent once daily)
     // Can implement email digest for all updates
 
-    logger.info(`Staff ${complaint.assignedTo} notified of complaint update ${complaint.complaintId}`);
+    logger.info(
+      `Staff ${complaint.assignedTo} notified of complaint update ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying staff of update:", error);
   }
@@ -141,7 +163,11 @@ export const notifyStaffComplaintUpdated = async (complaint, updatedBy, updateTy
  * @param {String} staffId - The staff member ID (old or new)
  * @param {String} action - "removed" or "assigned"
  */
-export const notifyStaffComplaintReassigned = async (complaint, staffId, action) => {
+export const notifyStaffComplaintReassigned = async (
+  complaint,
+  staffId,
+  action
+) => {
   try {
     const message =
       action === "removed"
@@ -158,10 +184,14 @@ export const notifyStaffComplaintReassigned = async (complaint, staffId, action)
     // Socket notification
     if (io) {
       io.to(`staff_${staffId}`).emit("complaint:reassigned", notificationData);
-      logger.info(`Socket notification sent to staff ${staffId} for complaint reassignment ${complaint.complaintId}`);
+      logger.info(
+        `Socket notification sent to staff ${staffId} for complaint reassignment ${complaint.complaintId}`
+      );
     }
 
-    logger.info(`Staff ${staffId} notified of complaint reassignment ${complaint.complaintId}`);
+    logger.info(
+      `Staff ${staffId} notified of complaint reassignment ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying staff of reassignment:", error);
   }
@@ -173,7 +203,11 @@ export const notifyStaffComplaintReassigned = async (complaint, staffId, action)
  * @param {Object} response - The response object
  * @param {Object} user - The user object
  */
-export const notifyUserComplaintResponse = async (complaint, response, user) => {
+export const notifyUserComplaintResponse = async (
+  complaint,
+  response,
+  user
+) => {
   try {
     const notificationData = {
       complaintId: complaint.complaintId,
@@ -185,7 +219,9 @@ export const notifyUserComplaintResponse = async (complaint, response, user) => 
     // Socket notification to user
     if (io) {
       io.to(`user_${user._id}`).emit("complaint:response", notificationData);
-      logger.info(`Socket notification sent to user ${user._id} for complaint response ${complaint.complaintId}`);
+      logger.info(
+        `Socket notification sent to user ${user._id} for complaint response ${complaint.complaintId}`
+      );
     }
 
     // TODO: Email notification
@@ -196,7 +232,9 @@ export const notifyUserComplaintResponse = async (complaint, response, user) => 
     //   html: emailHtml,
     // });
 
-    logger.info(`User ${user._id} notified of complaint response ${complaint.complaintId}`);
+    logger.info(
+      `User ${user._id} notified of complaint response ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying user of response:", error);
   }
@@ -221,7 +259,9 @@ export const notifyUserComplaintResolved = async (complaint, user) => {
     // Socket notification to user
     if (io) {
       io.to(`user_${user._id}`).emit("complaint:resolved", notificationData);
-      logger.info(`Socket notification sent to user ${user._id} for complaint resolution ${complaint.complaintId}`);
+      logger.info(
+        `Socket notification sent to user ${user._id} for complaint resolution ${complaint.complaintId}`
+      );
     }
 
     // TODO: Email notification with rating request
@@ -232,7 +272,9 @@ export const notifyUserComplaintResolved = async (complaint, user) => {
     //   html: emailHtml,
     // });
 
-    logger.info(`User ${user._id} notified of complaint resolution ${complaint.complaintId}`);
+    logger.info(
+      `User ${user._id} notified of complaint resolution ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying user of resolution:", error);
   }
@@ -247,7 +289,8 @@ export const notifyUserComplaintUpdated = async (complaint, status) => {
   try {
     const notificationData = {
       complaintId: complaint.complaintId,
-      oldStatus: complaint.statusHistory[complaint.statusHistory.length - 2]?.status,
+      oldStatus:
+        complaint.statusHistory[complaint.statusHistory.length - 2]?.status,
       newStatus: status,
       message: `Your complaint status has been updated to ${status}`,
       timestamp: new Date(),
@@ -255,11 +298,18 @@ export const notifyUserComplaintUpdated = async (complaint, status) => {
 
     // Socket notification to user
     if (io) {
-      io.to(`user_${complaint.user}`).emit("complaint:status_updated", notificationData);
-      logger.info(`Socket notification sent to user ${complaint.user} for status update ${complaint.complaintId}`);
+      io.to(`user_${complaint.user}`).emit(
+        "complaint:status_updated",
+        notificationData
+      );
+      logger.info(
+        `Socket notification sent to user ${complaint.user} for status update ${complaint.complaintId}`
+      );
     }
 
-    logger.info(`User ${complaint.user} notified of complaint status update ${complaint.complaintId}`);
+    logger.info(
+      `User ${complaint.user} notified of complaint status update ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying user of status update:", error);
   }
@@ -270,7 +320,10 @@ export const notifyUserComplaintUpdated = async (complaint, status) => {
  * @param {Object} complaint - The complaint object
  * @param {Object} manager - The manager object
  */
-export const notifyManagementComplaintEscalated = async (complaint, manager) => {
+export const notifyManagementComplaintEscalated = async (
+  complaint,
+  manager
+) => {
   try {
     const notificationData = {
       complaintId: complaint.complaintId,
@@ -278,20 +331,33 @@ export const notifyManagementComplaintEscalated = async (complaint, manager) => 
       priority: complaint.priority,
       escalatedAt: complaint.escalatedAt,
       escalationReason: complaint.escalationReason,
-      daysPending: Math.floor((new Date() - complaint.createdAt) / (1000 * 60 * 60 * 24)),
+      daysPending: Math.floor(
+        (new Date() - complaint.createdAt) / (1000 * 60 * 60 * 24)
+      ),
       message: "URGENT: Complaint has been escalated",
     };
 
     // Socket notification to managers and admins
     if (io) {
-      io.to(`branch_${complaint.branch}`).emit("complaint:escalated", notificationData);
-      io.to(`hotel_${complaint.hotel}`).emit("complaint:escalated", notificationData);
-      logger.info(`Socket notification sent for complaint escalation ${complaint.complaintId}`);
+      io.to(`branch_${complaint.branch}`).emit(
+        "complaint:escalated",
+        notificationData
+      );
+      io.to(`hotel_${complaint.hotel}`).emit(
+        "complaint:escalated",
+        notificationData
+      );
+      logger.info(
+        `Socket notification sent for complaint escalation ${complaint.complaintId}`
+      );
     }
 
     // Also notify assigned staff
     if (complaint.assignedTo) {
-      io.to(`staff_${complaint.assignedTo}`).emit("complaint:escalated", notificationData);
+      io.to(`staff_${complaint.assignedTo}`).emit(
+        "complaint:escalated",
+        notificationData
+      );
     }
 
     // TODO: Email notification to management
@@ -303,7 +369,9 @@ export const notifyManagementComplaintEscalated = async (complaint, manager) => 
     //   priority: 'high',
     // });
 
-    logger.info(`Management notified of complaint escalation ${complaint.complaintId}`);
+    logger.info(
+      `Management notified of complaint escalation ${complaint.complaintId}`
+    );
   } catch (error) {
     logger.error("Error notifying management of escalation:", error);
   }
@@ -324,18 +392,262 @@ export const notifyManagerUserFollowUp = async (complaint) => {
 
     // Notify manager and assigned staff
     if (io) {
-      io.to(`branch_${complaint.branch}`).emit("complaint:followup", notificationData);
-      
+      io.to(`branch_${complaint.branch}`).emit(
+        "complaint:followup",
+        notificationData
+      );
+
       if (complaint.assignedTo) {
-        io.to(`staff_${complaint.assignedTo}`).emit("complaint:followup", notificationData);
+        io.to(`staff_${complaint.assignedTo}`).emit(
+          "complaint:followup",
+          notificationData
+        );
       }
-      
-      logger.info(`Manager and staff notified of user follow-up ${complaint.complaintId}`);
+
+      logger.info(
+        `Manager and staff notified of user follow-up ${complaint.complaintId}`
+      );
     }
   } catch (error) {
     logger.error("Error notifying of user follow-up:", error);
   }
 };
+
+// ==================== ORDER ASSIGNMENT NOTIFICATIONS ====================
+
+/**
+ * Notify staff when order is assigned (automatic assignment)
+ * @param {Object} order - Populated order object
+ * @param {Object} staff - Staff member object
+ * @param {String} assignmentMethod - 'automatic' | 'load-balancing' | 'round-robin'
+ */
+export const notifyStaffOrderAssigned = async (
+  order,
+  staff,
+  assignmentMethod = "automatic"
+) => {
+  try {
+    if (!io) {
+      logger.warn(
+        "Socket.IO not initialized, skipping order assignment notification"
+      );
+      return;
+    }
+
+    // Determine priority based on assignment method
+    let priority = "normal";
+    if (assignmentMethod === "queue") {
+      priority = "high";
+    }
+
+    // Build notification payload
+    const notificationData = {
+      orderId: order._id.toString(),
+      orderNumber:
+        order.orderNumber || order._id.toString().slice(-8).toUpperCase(),
+      tableNumber: order.tableNumber || order.table?.tableNumber || "N/A",
+      totalPrice: order.totalPrice,
+      itemCount: order.items?.length || 0,
+      items:
+        order.items?.map((item) => ({
+          name: item.foodItemName || item.foodItem?.name,
+          quantity: item.quantity,
+          price: item.price,
+        })) || [],
+      specialInstructions: order.specialInstructions || "",
+      assignmentMethod: assignmentMethod,
+      priority: priority,
+      assignedAt: new Date(),
+      estimatedTime: order.estimatedTime,
+      hotel: order.hotel,
+      branch: order.branch,
+    };
+
+    // Emit to staff's personal room
+    io.to(`staff_${staff._id}`).emit("order:assigned", notificationData);
+
+    logger.info(
+      `Order assignment notification sent to staff ${staff._id} (${staff.name}) - Order: ${order._id}, Priority: ${priority}`
+    );
+
+    // Update order with notification timestamp
+    await import("../models/Order.model.js").then(({ Order }) => {
+      Order.findByIdAndUpdate(order._id, {
+        notificationSentAt: new Date(),
+        priority: priority,
+      })
+        .exec()
+        .catch((err) =>
+          logger.error("Failed to update order notification timestamp:", err)
+        );
+    });
+
+    return { success: true, notificationSent: true };
+  } catch (error) {
+    logger.error("Error notifying staff of order assignment:", {
+      error: error.message,
+      orderId: order?._id,
+      staffId: staff?._id,
+      stack: error.stack,
+    });
+    // Don't throw - notification failure shouldn't break assignment
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Notify staff when order is assigned from queue (higher priority)
+ * @param {Object} order - Populated order object
+ * @param {Object} staff - Staff member object
+ * @param {Number} queuePosition - Position in queue before assignment
+ */
+export const notifyStaffOrderFromQueue = async (
+  order,
+  staff,
+  queuePosition = null
+) => {
+  try {
+    if (!io) {
+      logger.warn(
+        "Socket.IO not initialized, skipping queue order notification"
+      );
+      return;
+    }
+
+    // Queue assignments are HIGH priority
+    const priority = "high";
+
+    const notificationData = {
+      orderId: order._id.toString(),
+      orderNumber:
+        order.orderNumber || order._id.toString().slice(-8).toUpperCase(),
+      tableNumber: order.tableNumber || order.table?.tableNumber || "N/A",
+      totalPrice: order.totalPrice,
+      itemCount: order.items?.length || 0,
+      items:
+        order.items?.map((item) => ({
+          name: item.foodItemName || item.foodItem?.name,
+          quantity: item.quantity,
+          price: item.price,
+        })) || [],
+      specialInstructions: order.specialInstructions || "",
+      assignmentMethod: "queue",
+      priority: priority,
+      assignedAt: new Date(),
+      estimatedTime: order.estimatedTime,
+      queuePosition: queuePosition,
+      queuedDuration: order.queuedAt
+        ? Math.round((Date.now() - new Date(order.queuedAt).getTime()) / 60000)
+        : null, // Duration in minutes
+      hotel: order.hotel,
+      branch: order.branch,
+      urgent: true, // Flag for special UI treatment
+    };
+
+    // Emit to staff's personal room
+    io.to(`staff_${staff._id}`).emit("order:from_queue", notificationData);
+
+    logger.info(
+      `HIGH PRIORITY queue order notification sent to staff ${staff._id} (${staff.name}) - Order: ${order._id}, Queue position: ${queuePosition}`
+    );
+
+    // Update order with notification timestamp and priority
+    await import("../models/Order.model.js").then(({ Order }) => {
+      Order.findByIdAndUpdate(order._id, {
+        notificationSentAt: new Date(),
+        priority: priority,
+      })
+        .exec()
+        .catch((err) =>
+          logger.error("Failed to update order notification timestamp:", err)
+        );
+    });
+
+    return { success: true, notificationSent: true, priority };
+  } catch (error) {
+    logger.error("Error notifying staff of queue order assignment:", {
+      error: error.message,
+      orderId: order?._id,
+      staffId: staff?._id,
+      stack: error.stack,
+    });
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Notify manager when order is assigned (for oversight)
+ * @param {Object} order - Populated order object
+ * @param {String} managerId - Manager ID
+ * @param {Object} assignmentDetails - Details about the assignment
+ */
+export const notifyManagerOrderAssigned = async (
+  order,
+  managerId,
+  assignmentDetails = {}
+) => {
+  try {
+    if (!io) {
+      logger.warn("Socket.IO not initialized, skipping manager notification");
+      return;
+    }
+
+    const {
+      staff,
+      assignmentMethod = "automatic",
+      isManualAssignment = false,
+      reason = null,
+    } = assignmentDetails;
+
+    const notificationData = {
+      orderId: order._id.toString(),
+      orderNumber:
+        order.orderNumber || order._id.toString().slice(-8).toUpperCase(),
+      tableNumber: order.tableNumber || order.table?.tableNumber || "N/A",
+      totalPrice: order.totalPrice,
+      itemCount: order.items?.length || 0,
+      staffId: staff?._id || order.staff,
+      staffName: staff?.name || "Unknown",
+      assignmentMethod: assignmentMethod,
+      isManualAssignment: isManualAssignment,
+      reason: reason,
+      assignedAt: new Date(),
+      priority: order.priority || "normal",
+      hotel: order.hotel,
+      branch: order.branch,
+    };
+
+    // Emit to manager's personal room
+    io.to(`manager_${managerId}`).emit(
+      "order:assignment:success",
+      notificationData
+    );
+
+    // Also emit to branch room if branch exists
+    if (order.branch) {
+      io.to(`branch_${order.branch}`).emit(
+        "order:assignment:branch",
+        notificationData
+      );
+    }
+
+    logger.info(
+      `Order assignment notification sent to manager ${managerId} - Order: ${order._id}, Staff: ${staff?._id}`
+    );
+
+    return { success: true, notificationSent: true };
+  } catch (error) {
+    logger.error("Error notifying manager of order assignment:", {
+      error: error.message,
+      orderId: order?._id,
+      managerId: managerId,
+      stack: error.stack,
+    });
+    return { success: false, error: error.message };
+  }
+};
+
+// ==================== EXPORTS ====================
 
 export default {
   setSocketIO,
@@ -348,4 +660,7 @@ export default {
   notifyUserComplaintUpdated,
   notifyManagementComplaintEscalated,
   notifyManagerUserFollowUp,
+  notifyStaffOrderAssigned,
+  notifyStaffOrderFromQueue,
+  notifyManagerOrderAssigned,
 };

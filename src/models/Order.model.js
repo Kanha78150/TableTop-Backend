@@ -19,6 +19,13 @@ const orderSchema = new mongoose.Schema(
     table: { type: mongoose.Schema.Types.ObjectId, ref: "Table" },
     tableNumber: { type: String }, // Cached table number for easy access
     staff: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" },
+
+    // Order notification and acknowledgment tracking
+    notificationSentAt: { type: Date },
+    acknowledgedAt: { type: Date },
+    acknowledgedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" },
+    viewedAt: { type: Date },
+
     items: [
       {
         foodItem: {
@@ -173,10 +180,10 @@ const orderSchema = new mongoose.Schema(
     queuedAt: { type: Date },
     priority: {
       type: String,
-      enum: ["low", "normal", "high"],
+      enum: ["low", "normal", "high", "urgent"],
       default: "normal",
     },
-    priorityValue: { type: Number, default: 2 }, // For sorting
+    priorityValue: { type: Number, default: 2 }, // For sorting (1=low, 2=normal, 3=high, 4=urgent)
     estimatedAssignmentTime: { type: Date },
 
     // Assignment history for tracking reassignments

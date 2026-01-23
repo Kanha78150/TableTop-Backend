@@ -8,6 +8,11 @@ import { Manager } from "../models/Manager.model.js";
 import { APIError } from "../utils/APIError.js";
 import queueService from "./queueService.js";
 import { logger } from "../utils/logger.js";
+import {
+  notifyStaffOrderAssigned,
+  notifyStaffOrderFromQueue,
+  notifyManagerOrderAssigned,
+} from "./notificationService.js";
 
 /**
  * Assignment Service for Managing Waiter-Order Assignments
@@ -289,25 +294,28 @@ class AssignmentService {
    * @param {Object} waiter - Selected waiter
    * @returns {Object} Assignment result
    */
-  async performAssignment(order, waiter) {
+  async performAssignment(order, waiter, fromQueue = false) {
     try {
+      // Determine assignment method
+      const assignmentMethod = fromQueue
+        ? "queue"
+        : waiter.activeOrdersCount === 0
+          ? "round-robin"
+          : "load-balancing";
+
       // Update order with assignment
       const updatedOrder = await Order.findByIdAndUpdate(
         order._id,
         {
           staff: waiter._id,
           assignedAt: new Date(),
-          assignmentMethod:
-            waiter.activeOrdersCount === 0 ? "round-robin" : "load-balancing",
+          assignmentMethod: assignmentMethod,
           $push: {
             assignmentHistory: {
               waiter: waiter._id,
               assignedAt: new Date(),
-              method:
-                waiter.activeOrdersCount === 0
-                  ? "round-robin"
-                  : "load-balancing",
-              reason: "automatic-assignment",
+              method: assignmentMethod,
+              reason: fromQueue ? "queue-assignment" : "automatic-assignment",
             },
           },
         },
@@ -325,6 +333,30 @@ class AssignmentService {
         lastAssignedAt: new Date(),
         $inc: { "assignmentStats.totalAssignments": 1 },
       });
+
+      // Send socket notification to staff
+      try {
+        await notifyStaffOrderAssigned(updatedOrder, waiter, assignmentMethod);
+
+        // Notify manager if available
+        if (waiter.manager) {
+          await notifyManagerOrderAssigned(updatedOrder, waiter.manager, {
+            staff: waiter,
+            assignmentMethod: assignmentMethod,
+            isManualAssignment: false,
+          });
+        }
+
+        logger.info(
+          `Socket notifications sent for order ${order._id} assignment to staff ${waiter._id}`
+        );
+      } catch (socketError) {
+        logger.error(
+          `Socket notification failed for order ${order._id}:`,
+          socketError.message
+        );
+        // Continue - don't fail assignment on socket error
+      }
 
       return {
         success: true,
@@ -433,17 +465,26 @@ class AssignmentService {
       // Remove from queue
       await queueService.removeFromQueue(nextOrder._id);
 
-      // Assign the order
-      const assignmentResult = await this.performAssignment(nextOrder, {
-        ...waiter.toObject(),
-        activeOrdersCount,
-      });
+      // Assign the order (fromQueue = true for high-priority notification)
+      const assignmentResult = await this.performAssignment(
+        nextOrder,
+        {
+          ...waiter.toObject(),
+          activeOrdersCount,
+        },
+        true // fromQueue parameter
+      );
 
       // Update order status from queued to pending
       await Order.findByIdAndUpdate(nextOrder._id, {
         status: "pending",
         $unset: { queuePosition: 1, queuedAt: 1, estimatedAssignmentTime: 1 },
       });
+
+      // NOTE: High-priority socket notification sent by performAssignment() with method='queue'
+      logger.info(
+        `Order ${nextOrder._id} assigned from queue with HIGH PRIORITY notification`
+      );
 
       logger.info(
         `Order ${nextOrder._id} assigned from queue to waiter ${waiterId}`
@@ -561,7 +602,47 @@ class AssignmentService {
             reason: reason,
           },
         },
+        priority: "urgent", // Manual assignments are urgent priority
       });
+
+      // Send URGENT socket notification to staff
+      try {
+        // For manual assignment, include reason in notification
+        const populatedOrder = await Order.findById(orderId)
+          .populate("user", "name phone")
+          .populate("table", "tableNumber")
+          .populate("items.foodItem", "name price");
+
+        await notifyStaffOrderAssigned(
+          populatedOrder || order,
+          waiter,
+          "manual"
+        );
+
+        // Notify manager about manual assignment success
+        if (waiter.manager) {
+          await notifyManagerOrderAssigned(
+            populatedOrder || order,
+            waiter.manager,
+            {
+              staff: waiter,
+              assignmentMethod: "manual",
+              isManualAssignment: true,
+              reason: reason,
+            }
+          );
+        }
+
+        logger.info(
+          `URGENT socket notification sent for manual order ${orderId} assignment`
+        );
+      } catch (socketError) {
+        logger.error(
+          `Socket notification failed for manual assignment ${orderId}:`,
+          socketError.message
+        );
+        // Continue - don't fail assignment on socket error
+      }
 
       logger.info(
         `Manual assignment: Order ${orderId} assigned to waiter ${waiterId}`

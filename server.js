@@ -11,6 +11,8 @@ import scheduledJobsService from "./src/services/scheduledJobs.js";
 import { startAllJobs } from "./src/services/subscriptionJobs.js";
 import { emailQueueService } from "./src/services/emailQueueService.js";
 import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
+import { setupOrderEvents } from "./src/socket/socketHandler.js";
+import socketAuthMiddleware from "./src/middleware/socket.auth.middleware.js";
 import { setIO } from "./src/utils/socketService.js";
 import { logger } from "./src/utils/logger.js";
 import {
@@ -43,13 +45,25 @@ const io = new Server(server, {
   },
 });
 
+// Register socket authentication middleware
+io.use(socketAuthMiddleware);
+console.log("🔒 Socket authentication middleware registered");
+
+// Setup socket event handlers
 setupComplaintEvents(io);
+setupOrderEvents(io);
+console.log("📡 Socket event handlers initialized (complaints & orders)");
+
+// Set global socket instance
 setIO(io);
 
 io.on("connection", (socket) => {
-  console.log("⚡ Socket connected:", socket.id);
+  const userData = socket.data.user;
+  console.log(
+    `⚡ Socket connected: ${socket.id} - ${userData?.userModel || "Unknown"} ${userData?.name || "N/A"}`
+  );
   socket.on("disconnect", () => {
-    console.log("❌ Socket disconnected:", socket.id);
+    console.log(`❌ Socket disconnected: ${socket.id}`);
   });
 });
 
