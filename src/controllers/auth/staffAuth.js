@@ -78,9 +78,17 @@ export const loginStaff = async (req, res, next) => {
       // Generate tokens - pass staff object directly since generateTokens expects user._id
       const tokens = generateTokens(staff);
 
-      // Update last login but don't change isFirstLogin here (will be changed after password update)
-      staff.lastLogin = new Date();
-      await staff.save();
+      // Save refresh token to database (using update to avoid triggering password hash)
+      await Staff.findByIdAndUpdate(
+        staff._id,
+        {
+          $set: {
+            refreshToken: tokens.refreshToken,
+            lastLogin: new Date(),
+          },
+        },
+        { new: false, runValidators: false }
+      );
 
       // Prepare response data
       const staffData = {
@@ -133,8 +141,8 @@ export const loginStaff = async (req, res, next) => {
           isFirstLogin
             ? "Staff login successful. Password change required."
             : wasInactive
-            ? "Staff login successful. Account has been automatically reactivated. Welcome back!"
-            : "Staff login successful"
+              ? "Staff login successful. Account has been automatically reactivated. Welcome back!"
+              : "Staff login successful"
         )
       );
     } catch (tokenError) {

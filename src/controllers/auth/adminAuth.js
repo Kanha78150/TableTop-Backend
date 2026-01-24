@@ -298,54 +298,6 @@ export const logoutAdmin = async (req, res, next) => {
   }
 };
 
-// Refresh token
-export const refreshToken = async (req, res, next) => {
-  try {
-    const incomingRefreshToken =
-      req.cookies.refreshToken || req.body.refreshToken;
-
-    if (!incomingRefreshToken) {
-      return next(new APIError(401, "Refresh token is required"));
-    }
-
-    const decoded = jwt.verify(
-      incomingRefreshToken,
-      process.env.JWT_REFRESH_SECRET
-    );
-    const admin = await Admin.findById(decoded._id);
-
-    if (!admin || admin.refreshToken !== incomingRefreshToken) {
-      return next(new APIError(401, "Invalid refresh token"));
-    }
-
-    // Generate new tokens
-    const tokens = generateTokens({
-      id: admin._id,
-      role: admin.role,
-      permissions: admin.permissions,
-    });
-
-    // Update refresh token
-    admin.refreshToken = tokens.refreshToken;
-    await admin.save();
-
-    // Set new cookies
-    setAuthCookies(res, tokens);
-
-    res
-      .status(200)
-      .json(new APIResponse(200, { tokens }, "Tokens refreshed successfully"));
-  } catch (error) {
-    if (
-      error.name === "JsonWebTokenError" ||
-      error.name === "TokenExpiredError"
-    ) {
-      return next(new APIError(401, "Invalid refresh token"));
-    }
-    next(error);
-  }
-};
-
 // Get admin profile
 export const getAdminProfile = async (req, res, next) => {
   try {

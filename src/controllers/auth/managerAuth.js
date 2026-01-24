@@ -79,9 +79,17 @@ export const loginManager = async (req, res, next) => {
       // Generate tokens - pass manager object directly since generateTokens expects user._id
       const tokens = generateTokens(manager);
 
-      // Update last login but don't change isFirstLogin here (will be changed after password update)
-      manager.lastLogin = new Date();
-      await manager.save();
+      // Save refresh token to database (using update to avoid triggering password hash)
+      await Manager.findByIdAndUpdate(
+        manager._id,
+        {
+          $set: {
+            refreshToken: tokens.refreshToken,
+            lastLogin: new Date(),
+          },
+        },
+        { new: false, runValidators: false }
+      );
 
       // Prepare response data
       const managerData = {
@@ -125,8 +133,8 @@ export const loginManager = async (req, res, next) => {
           isFirstLogin
             ? "Manager login successful. Password change required."
             : wasInactive
-            ? "Manager login successful. Account has been automatically reactivated. Welcome back!"
-            : "Manager login successful"
+              ? "Manager login successful. Account has been automatically reactivated. Welcome back!"
+              : "Manager login successful"
         )
       );
     } catch (tokenError) {
@@ -197,9 +205,8 @@ export const changeManagerPassword = async (req, res, next) => {
       return next(new APIError(404, "Manager not found"));
     }
 
-    const isCurrentPasswordValid = await manager.comparePassword(
-      currentPassword
-    );
+    const isCurrentPasswordValid =
+      await manager.comparePassword(currentPassword);
     if (!isCurrentPasswordValid) {
       return next(new APIError(400, "Current password is incorrect"));
     }

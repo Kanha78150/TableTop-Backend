@@ -3,7 +3,6 @@ import {
   registerAdmin,
   loginAdmin,
   logoutAdmin,
-  refreshToken,
   getAdminProfile,
   changePassword,
   updateAdminProfile,
@@ -41,7 +40,6 @@ router.post(
   rateLimitSensitiveOps,
   resendVerificationOtp
 );
-router.post("/refresh-token", refreshToken);
 
 // Protected routes (authentication required)
 router.use(authenticateAdmin); // All routes below require authentication
