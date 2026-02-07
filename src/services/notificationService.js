@@ -647,6 +647,209 @@ export const notifyManagerOrderAssigned = async (
   }
 };
 
+// ==================== PAYMENT CONFIGURATION NOTIFICATIONS ====================
+
+/**
+ * Notify Super Admins when production config needs activation
+ */
+export const notifyPendingActivation = async ({
+  hotel,
+  paymentConfig,
+  provider,
+  admin,
+}) => {
+  try {
+    const { Admin } = await import("../models/Admin.model.js");
+    const { Hotel } = await import("../models/Hotel.model.js");
+
+    // Get all super admins
+    const superAdmins = await Admin.find({ role: "super_admin" });
+    const hotelData = await Hotel.findById(hotel);
+
+    for (const superAdmin of superAdmins) {
+      // Socket notification
+      if (io) {
+        io.to(`admin_${superAdmin._id}`).emit("payment:pending_activation", {
+          hotelId: hotel,
+          hotelName: hotelData?.name,
+          provider: provider.toUpperCase(),
+          adminName: admin.name,
+          adminEmail: admin.email,
+          configId: paymentConfig._id,
+          message: `Production ${provider.toUpperCase()} gateway requires activation`,
+          priority: "high",
+          actionUrl: `/api/v1/payment-config/${hotel}/activate`,
+        });
+        logger.info(
+          `Socket notification sent to super admin ${superAdmin._id} for pending activation`
+        );
+      }
+
+      // TODO: Queue email (requires general email service, not EmailQueue which is invoice-only)
+      // When implementing, use a general email service:
+      // await sendEmail({
+      //   to: superAdmin.email,
+      //   subject: `🔔 Action Required: Production Payment Gateway Activation - ${hotelData?.name}`,
+      //   html: emailTemplate
+      // });
+    }
+
+    logger.info(
+      `✅ Pending activation notifications sent to ${superAdmins.length} super admins (Socket.IO)`
+    );
+  } catch (error) {
+    logger.error("Failed to send pending activation notifications:", error);
+  }
+};
+
+/**
+ * Notify admin when production config is activated
+ */
+export const notifyActivated = async ({
+  hotel,
+  paymentConfig,
+  provider,
+  admin,
+  activatedBy,
+}) => {
+  try {
+    const { Hotel } = await import("../models/Hotel.model.js");
+
+    const hotelData = await Hotel.findById(hotel);
+
+    // Socket notification
+    if (io) {
+      io.to(`admin_${admin._id}`).emit("payment:activated", {
+        hotelId: hotel,
+        hotelName: hotelData?.name,
+        provider: provider.toUpperCase(),
+        activatedBy: activatedBy.name,
+        configId: paymentConfig._id,
+        message: `${provider.toUpperCase()} production gateway is now ACTIVE`,
+        priority: "high",
+      });
+      logger.info(
+        `Socket notification sent to admin ${admin._id} for activation`
+      );
+    }
+
+    // TODO: Queue email (requires general email service)
+    // await sendEmail({
+    //   to: admin.email,
+    //   subject: `✅ ${provider.toUpperCase()} Production Gateway Activated - ${hotelData?.name}`,
+    //   html: emailTemplate
+    // });
+
+    logger.info(
+      `✅ Activation notification sent to admin ${admin.email} (Socket.IO)`
+    );
+  } catch (error) {
+    logger.error("Failed to send activation notification:", error);
+  }
+};
+
+/**
+ * Notify admin when config is deactivated
+ */
+export const notifyDeactivated = async ({
+  hotel,
+  paymentConfig,
+  provider,
+  admin,
+  deactivatedBy,
+  reason,
+}) => {
+  try {
+    const { Hotel } = await import("../models/Hotel.model.js");
+
+    const hotelData = await Hotel.findById(hotel);
+
+    // Socket notification
+    if (io) {
+      io.to(`admin_${admin._id}`).emit("payment:deactivated", {
+        hotelId: hotel,
+        hotelName: hotelData?.name,
+        provider: provider.toUpperCase(),
+        deactivatedBy: deactivatedBy.name,
+        reason: reason || "No reason provided",
+        configId: paymentConfig._id,
+        message: `${provider.toUpperCase()} gateway has been DEACTIVATED`,
+        priority: "urgent",
+      });
+      logger.info(
+        `Socket notification sent to admin ${admin._id} for deactivation`
+      );
+    }
+
+    // TODO: Queue email (requires general email service)
+    // await sendEmail({
+    //   to: admin.email,
+    //   subject: `⚠️ ${provider.toUpperCase()} Production Gateway Deactivated - ${hotelData?.name}`,
+    //   html: emailTemplate
+    // });
+
+    logger.info(
+      `✅ Deactivation notification sent to admin ${admin.email} (Socket.IO)`
+    );
+  } catch (error) {
+    logger.error("Failed to send deactivation notification:", error);
+  }
+};
+
+/**
+ * Notify Super Admins when admin requests deactivation
+ */
+export const notifyDeactivationRequest = async ({
+  hotel,
+  paymentConfig,
+  provider,
+  admin,
+  reason,
+}) => {
+  try {
+    const { Admin } = await import("../models/Admin.model.js");
+    const { Hotel } = await import("../models/Hotel.model.js");
+
+    // Get all super admins
+    const superAdmins = await Admin.find({ role: "super_admin" });
+    const hotelData = await Hotel.findById(hotel);
+
+    for (const superAdmin of superAdmins) {
+      // Socket notification
+      if (io) {
+        io.to(`admin_${superAdmin._id}`).emit("payment:deactivation_request", {
+          hotelId: hotel,
+          hotelName: hotelData?.name,
+          provider: provider.toUpperCase(),
+          adminName: admin.name,
+          adminEmail: admin.email,
+          reason: reason,
+          configId: paymentConfig._id,
+          message: `Admin requests deactivation of ${provider.toUpperCase()} gateway`,
+          priority: "high",
+          actionUrl: `/api/v1/payment-config/${hotel}/deactivate`,
+        });
+        logger.info(
+          `Socket notification sent to super admin ${superAdmin._id} for deactivation request`
+        );
+      }
+
+      // TODO: Queue email
+      // await sendEmail({
+      //   to: superAdmin.email,
+      //   subject: `🔔 Deactivation Request: ${hotelData?.name} - ${provider.toUpperCase()}`,
+      //   html: emailTemplate
+      // });
+    }
+
+    logger.info(
+      `✅ Deactivation request notifications sent to ${superAdmins.length} super admins (Socket.IO)`
+    );
+  } catch (error) {
+    logger.error("Failed to send deactivation request notifications:", error);
+  }
+};
+
 // ==================== EXPORTS ====================
 
 export default {
@@ -663,4 +866,9 @@ export default {
   notifyStaffOrderAssigned,
   notifyStaffOrderFromQueue,
   notifyManagerOrderAssigned,
+  // Payment notifications
+  notifyPendingActivation,
+  notifyActivated,
+  notifyDeactivated,
+  notifyDeactivationRequest,
 };

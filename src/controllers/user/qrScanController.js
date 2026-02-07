@@ -284,7 +284,16 @@ export const getTableInfo = async (req, res, next) => {
  */
 export const recordScanEvent = async (req, res, next) => {
   try {
-    const { hotelId, branchId, tableNo, userAgent, ip } = req.body;
+    const { hotelId, branchId, tableNo } = req.body;
+
+    // Automatically extract userAgent and IP from request
+    const userAgent = req.headers["user-agent"] || "Unknown";
+    const ip =
+      req.headers["x-forwarded-for"]?.split(",")[0] ||
+      req.headers["x-real-ip"] ||
+      req.ip ||
+      req.connection.remoteAddress ||
+      "Unknown";
 
     // Find table
     const table = await Table.findByQRData(hotelId, branchId, tableNo);
@@ -297,9 +306,28 @@ export const recordScanEvent = async (req, res, next) => {
     table.lastUsed = new Date();
     await table.save();
 
-    res
-      .status(200)
-      .json(new APIResponse(200, null, "Scan event recorded successfully"));
+    // Log analytics data (in production, save to analytics collection)
+    console.log("QR Scan Event:", {
+      hotelId,
+      branchId,
+      tableNo,
+      userAgent,
+      ip,
+      timestamp: new Date(),
+    });
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          recorded: true,
+          timestamp: new Date(),
+          userAgent,
+          ip,
+        },
+        "Scan event recorded successfully"
+      )
+    );
   } catch (error) {
     next(error);
   }

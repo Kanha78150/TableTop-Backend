@@ -79,13 +79,14 @@ export const loginManager = async (req, res, next) => {
       // Generate tokens - pass manager object directly since generateTokens expects user._id
       const tokens = generateTokens(manager);
 
-      // Save refresh token to database (using update to avoid triggering password hash)
+      // Save refresh token and update first login flag
       await Manager.findByIdAndUpdate(
         manager._id,
         {
           $set: {
             refreshToken: tokens.refreshToken,
             lastLogin: new Date(),
+            isFirstLogin: false, // Mark first login as complete
           },
         },
         { new: false, runValidators: false }

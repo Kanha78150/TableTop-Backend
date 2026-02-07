@@ -92,7 +92,7 @@ const orderSchema = new mongoose.Schema(
     payment: {
       paymentMethod: {
         type: String,
-        enum: ["cash", "card", "upi", "wallet", "razorpay"],
+        enum: ["cash", "card", "upi", "wallet", "razorpay", "phonepe", "paytm"],
         default: "cash",
       },
       paymentStatus: {
@@ -106,6 +106,16 @@ const orderSchema = new mongoose.Schema(
           "cancelled",
         ],
         default: "pending",
+      },
+
+      // Multi-provider payment fields
+      provider: {
+        type: String,
+        enum: ["razorpay", "phonepe", "paytm", "cash", "company"],
+      },
+      gatewayAccountId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Hotel", // Which hotel's payment gateway was used
       },
       transactionId: {
         type: String,
@@ -136,6 +146,24 @@ const orderSchema = new mongoose.Schema(
         initiatedAt: Date,
         completedAt: Date,
         gatewayResponse: Object,
+      },
+
+      // Commission tracking for multi-provider system
+      commissionAmount: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      commissionRate: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 1,
+      },
+      commissionStatus: {
+        type: String,
+        enum: ["pending", "collected", "waived", "disputed"],
+        default: "pending",
       },
     },
 

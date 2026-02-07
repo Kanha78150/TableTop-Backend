@@ -12,10 +12,14 @@ import userRoutes from "./user.route.js";
 import scanRoutes from "./scan.route.js";
 import paymentRoutes from "./payment.route.js";
 import assignmentRoutes from "./assignment.route.js";
+import paymentConfigRoutes from "./payment/paymentConfig.route.js";
+import dynamicPaymentRoutes from "./payment/payment.route.js";
+import webhookRoutes from "./payment/webhook.route.js";
 import superAdminDashboardRoutes from "./superAdmin/dashboard.route.js";
 import superAdminSubscriptionPlanRoutes from "./superAdmin/subscriptionPlan.route.js";
 import superAdminSubscriptionJobsRoutes from "./superAdmin/subscriptionJobs.route.js";
 import superAdminAccountingRoutes from "./superAdmin/accounting.route.js";
+import superAdminCommissionRoutes from "./superAdmin/commission.route.js";
 import adminSubscriptionRoutes from "./admin/subscription.route.js";
 import { getPublicSubscriptionPlans } from "../controllers/superAdmin/subscriptionPlan.controller.js";
 import { ensureDbReady } from "../middleware/dbReady.middleware.js";
@@ -57,6 +61,7 @@ router.use(
   ensureDbReady,
   superAdminAccountingRoutes
 );
+router.use("/super-admin", ensureDbReady, superAdminCommissionRoutes);
 
 // Admin subscription routes
 router.use("/subscription", ensureDbReady, adminSubscriptionRoutes);
@@ -78,6 +83,11 @@ router.use("/scan", ensureDbReady, scanRoutes);
 
 // Payment routes (Razorpay integration)
 router.use("/payment", ensureDbReady, paymentRoutes);
+
+// Multi-Provider Payment System Routes
+router.use("/payment-config", ensureDbReady, paymentConfigRoutes);
+router.use("/payments", ensureDbReady, dynamicPaymentRoutes);
+router.use("/webhooks", ensureDbReady, webhookRoutes);
 
 // Health check endpoints for Cloud Run
 router.get("/", (req, res) => {

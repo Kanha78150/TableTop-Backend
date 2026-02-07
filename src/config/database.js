@@ -1,7 +1,7 @@
 // src/config/database.js
 import mongoose from "mongoose";
 
-const connectDB = async () => {
+const connectDB = async (retries = 5) => {
   try {
     if (!process.env.MONGO_URI) {
       throw new Error("❌ MONGO_URI is not set");
@@ -9,22 +9,29 @@ const connectDB = async () => {
 
     console.log("🔌 Connecting to MongoDB...");
 
-    const conn = await mongoose.connect(
-      `${process.env.MONGO_URI}?retryWrites=true&w=majority`,
-      {
-        maxPoolSize: 5,
-        minPoolSize: 1,
-        serverSelectionTimeoutMS: 20000,
-        socketTimeoutMS: 45000,
-        connectTimeoutMS: 20000,
-        heartbeatFrequencyMS: 10000,
-      }
-    );
+    await mongoose.connect(process.env.MONGO_URI, {
+      family: 4, // 🔑 IMPORTANT for Windows
+      maxPoolSize: 5,
+      minPoolSize: 1,
+      serverSelectionTimeoutMS: 60000, // ⬅️ increase to 60s
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 30000,
+      heartbeatFrequencyMS: 10000,
+      retryWrites: true,
+    });
 
-    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+    console.log("✅ MongoDB Connected");
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error.message);
-    throw error;
+
+    if (retries <= 0) {
+      console.error("❌ No retries left. Exiting.");
+      throw error;
+    }
+
+    console.log(`🔁 Retrying MongoDB connection (${retries})...`);
+    await new Promise((res) => setTimeout(res, 5000));
+    return connectDB(retries - 1);
   }
 };
 

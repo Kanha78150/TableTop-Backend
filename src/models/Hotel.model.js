@@ -130,6 +130,44 @@ const hotelSchema = new mongoose.Schema(
       ref: "Admin",
       required: [true, "Created by admin is required"],
     },
+
+    // Commission configuration for multi-provider payment system
+    // Completely separate from subscription - per-hotel commission rates
+    commissionConfig: {
+      type: {
+        type: String,
+        enum: ["percentage", "fixed", "none"],
+        default: "none", // No commission by default (must be explicitly set)
+      },
+      rate: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 1, // For percentage (0-100% represented as 0-1)
+      },
+      fixedAmount: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      status: {
+        type: String,
+        enum: ["active", "suspended", "waived"],
+        default: "active",
+      },
+      notes: {
+        type: String,
+        maxlength: [500, "Notes cannot exceed 500 characters"],
+      },
+      setBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Admin", // SuperAdmin who set this rate
+      },
+      lastModified: {
+        type: Date,
+        default: Date.now,
+      },
+    },
   },
   {
     timestamps: true,
@@ -143,6 +181,14 @@ hotelSchema.virtual("branches", {
   ref: "Branch",
   localField: "_id",
   foreignField: "hotel",
+});
+
+// Virtual field to get payment configuration
+hotelSchema.virtual("paymentConfig", {
+  ref: "PaymentConfig",
+  localField: "_id",
+  foreignField: "hotel",
+  justOne: true,
 });
 
 // Pre-save middleware to auto-generate hotelId

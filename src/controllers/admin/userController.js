@@ -386,15 +386,11 @@ export const createManager = async (req, res, next) => {
       password,
       hotel: hotelId,
       branch: branchId,
+      department,
+      profileImage,
+      permissions,
+      emergencyContact,
     } = req.body;
-
-    console.log("Creating manager with data:", {
-      name,
-      email,
-      phone,
-      hotel: hotelId,
-      branch: branchId,
-    });
 
     // Only admins can create managers
     if (!["admin", "super_admin", "branch_admin"].includes(req.admin.role)) {
@@ -472,6 +468,10 @@ export const createManager = async (req, res, next) => {
       hotel: hotel._id, // Always use MongoDB ObjectId for reference
       branch: branch ? branch._id : null, // Use MongoDB ObjectId if branch exists, null if optional
       createdBy: req.admin._id, // Associate manager with creating admin
+      department: department || "operations",
+      profileImage: profileImage || null,
+      permissions: permissions || undefined, // Use provided permissions or model defaults
+      emergencyContact: emergencyContact || undefined,
     });
 
     await manager.save();
@@ -1038,18 +1038,10 @@ export const createStaff = async (req, res, next) => {
       role,
       department,
       manager: managerId,
+      profileImage,
+      permissions,
+      emergencyContact,
     } = req.body;
-
-    console.log("Creating staff with data:", {
-      name,
-      email,
-      phone,
-      hotel: hotelId,
-      branch: branchId,
-      role,
-      department,
-      manager: managerId,
-    });
 
     // Only admins and managers can create staff
     if (
@@ -1223,6 +1215,9 @@ export const createStaff = async (req, res, next) => {
       department,
       manager: manager ? manager._id : null, // Use MongoDB ObjectId if manager exists, null if not assigned
       createdBy: req.admin ? req.admin._id : req.manager?.createdBy, // Associate staff with creating admin
+      profileImage: profileImage || null,
+      permissions: permissions || undefined,
+      emergencyContact: emergencyContact || undefined,
     });
 
     console.log("Staff object before save:", {
