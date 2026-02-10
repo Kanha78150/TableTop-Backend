@@ -174,21 +174,29 @@ class PaymentService {
             };
           }
 
-          await Order.findByIdAndUpdate(order._id, updateData);
+          // Use {new: true} to get updated order in one query (eliminates redundant fetch)
+          const updatedOrder = await Order.findByIdAndUpdate(
+            order._id,
+            updateData,
+            {
+              new: true,
+            }
+          );
 
           // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
-          if (!order.staff) {
+          // Use updatedOrder (not stale 'order') to prevent race condition
+          if (!updatedOrder.staff) {
             try {
               logger.info(
                 "Triggering staff assignment after payment status update",
                 {
-                  orderId: order._id,
+                  orderId: updatedOrder._id,
                 }
               );
 
-              const assignmentResult = await assignmentService.assignOrder(
-                order._id.toString()
-              );
+              // Pass order object to avoid re-fetching from DB
+              const assignmentResult =
+                await assignmentService.assignOrder(updatedOrder);
 
               if (
                 assignmentResult.success &&
@@ -198,7 +206,7 @@ class PaymentService {
                 logger.info(
                   "Staff assignment successful after payment status update",
                   {
-                    orderId: order._id,
+                    orderId: updatedOrder._id,
                     waiterId: assignmentResult.assignment.waiter._id,
                     waiterName: assignmentResult.assignment.waiter.name,
                     method: assignmentResult.assignment.method,
@@ -208,7 +216,7 @@ class PaymentService {
                 logger.warn(
                   "Staff assignment failed after payment status update",
                   {
-                    orderId: order._id,
+                    orderId: updatedOrder._id,
                     reason: assignmentResult.message || "No available staff",
                   }
                 );
@@ -218,21 +226,21 @@ class PaymentService {
               logger.error(
                 "Staff assignment error after payment status update",
                 {
-                  orderId: order._id,
+                  orderId: updatedOrder._id,
                   error: assignmentError.message,
                   stack: assignmentError.stack,
                 }
               );
             }
-          } // End of if (!order.staff)
+          } // End of if (!updatedOrder.staff)
 
           // 🛒 CLEAR CART AND PROCESS COINS AFTER PAYMENT STATUS UPDATE
           try {
-            await this.clearCartAfterPayment(order);
+            await this.clearCartAfterPayment(updatedOrder);
           } catch (cartError) {
             // Log cart clearing error but don't fail the payment status update
             logger.error("Cart clearing error after payment status update", {
-              orderId: order._id,
+              orderId: updatedOrder._id,
               error: cartError.message,
               stack: cartError.stack,
             });
@@ -386,15 +394,15 @@ class PaymentService {
       };
     }
 
-    await Order.findByIdAndUpdate(order._id, updateData);
+    // Use {new: true} to get updated order in one query (eliminates redundant fetch)
+    const updatedOrder = await Order.findByIdAndUpdate(order._id, updateData, {
+      new: true,
+    });
 
     logger.info("Standard Razorpay callback processed successfully", {
       orderId: order._id,
       razorpayPaymentId: razorpay_payment_id,
     });
-
-    // Refresh order to get updated data
-    const updatedOrder = await Order.findById(order._id);
 
     // Create transaction record for accounting
     try {
@@ -407,15 +415,16 @@ class PaymentService {
     }
 
     // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
-    if (!order.staff) {
+    // Use updatedOrder (not stale 'order') to prevent race condition
+    if (!updatedOrder.staff) {
       try {
         logger.info("Triggering staff assignment after payment confirmation", {
-          orderId: order._id,
+          orderId: updatedOrder._id,
         });
 
-        const assignmentResult = await assignmentService.assignOrder(
-          order._id.toString()
-        );
+        // Pass order object to avoid re-fetching from DB
+        const assignmentResult =
+          await assignmentService.assignOrder(updatedOrder);
 
         if (
           assignmentResult.success &&
@@ -423,14 +432,14 @@ class PaymentService {
           assignmentResult.assignment.waiter
         ) {
           logger.info("Staff assignment successful after payment", {
-            orderId: order._id,
+            orderId: updatedOrder._id,
             waiterId: assignmentResult.assignment.waiter._id,
             waiterName: assignmentResult.assignment.waiter.name,
             method: assignmentResult.assignment.method,
           });
         } else {
           logger.warn("Staff assignment failed after payment", {
-            orderId: order._id,
+            orderId: updatedOrder._id,
             reason: assignmentResult.message || "No available staff",
             assignmentResult: assignmentResult, // Log full result for debugging
           });
@@ -438,13 +447,13 @@ class PaymentService {
       } catch (assignmentError) {
         // Log assignment error but don't fail the payment confirmation
         logger.error("Staff assignment error after payment confirmation", {
-          orderId: order._id,
+          orderId: updatedOrder._id,
           error: assignmentError.message,
           stack: assignmentError.stack,
         });
         // Payment is still successful even if assignment fails
       }
-    } // End of if (!order.staff)
+    } // End of if (!updatedOrder.staff)
 
     // 🛒 CLEAR CART AND PROCESS COINS AFTER PAYMENT CONFIRMATION
     try {
@@ -631,15 +640,15 @@ class PaymentService {
       };
     }
 
-    await Order.findByIdAndUpdate(order._id, updateData);
+    // Use {new: true} to get updated order in one query (eliminates redundant fetch)
+    const updatedOrder = await Order.findByIdAndUpdate(order._id, updateData, {
+      new: true,
+    });
 
     logger.info("Success callback processed successfully", {
       orderId: order._id,
       transactionId: order.payment.transactionId,
     });
-
-    // Refresh order to get updated data
-    const updatedOrder = await Order.findById(order._id);
 
     // Create transaction record for accounting
     try {
@@ -652,15 +661,16 @@ class PaymentService {
     }
 
     // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
-    if (!order.staff) {
+    // Use updatedOrder (not stale 'order') to prevent race condition
+    if (!updatedOrder.staff) {
       try {
         logger.info("Triggering staff assignment after success callback", {
-          orderId: order._id,
+          orderId: updatedOrder._id,
         });
 
-        const assignmentResult = await assignmentService.assignOrder(
-          order._id.toString()
-        );
+        // Pass order object to avoid re-fetching from DB
+        const assignmentResult =
+          await assignmentService.assignOrder(updatedOrder);
 
         if (
           assignmentResult.success &&
@@ -668,14 +678,14 @@ class PaymentService {
           assignmentResult.assignment.waiter
         ) {
           logger.info("Staff assignment successful after success callback", {
-            orderId: order._id,
+            orderId: updatedOrder._id,
             waiterId: assignmentResult.assignment.waiter._id,
             waiterName: assignmentResult.assignment.waiter.name,
             method: assignmentResult.assignment.method,
           });
         } else {
           logger.warn("Staff assignment failed after success callback", {
-            orderId: order._id,
+            orderId: updatedOrder._id,
             reason: assignmentResult.message || "No available staff",
             assignmentResult: assignmentResult, // Log full result for debugging
           });
@@ -683,20 +693,20 @@ class PaymentService {
       } catch (assignmentError) {
         // Log assignment error but don't fail the payment confirmation
         logger.error("Staff assignment error after success callback", {
-          orderId: order._id,
+          orderId: updatedOrder._id,
           error: assignmentError.message,
           stack: assignmentError.stack,
         });
       }
-    } // End of if (!order.staff)
+    } // End of if (!updatedOrder.staff)
 
     // 🛒 CLEAR CART AND PROCESS COINS AFTER PAYMENT CONFIRMATION
     try {
-      await this.clearCartAfterPayment(order);
+      await this.clearCartAfterPayment(updatedOrder);
     } catch (cartError) {
       // Log cart clearing error but don't fail the payment confirmation
       logger.error("Cart clearing error after success callback", {
-        orderId: order._id,
+        orderId: updatedOrder._id,
         error: cartError.message,
         stack: cartError.stack,
       });
@@ -757,7 +767,14 @@ class PaymentService {
         };
       }
 
-      await Order.findByIdAndUpdate(order._id, updateData);
+      // Use {new: true} to get updated order in one query (eliminates redundant fetch)
+      const updatedOrder = await Order.findByIdAndUpdate(
+        order._id,
+        updateData,
+        {
+          new: true,
+        }
+      );
 
       logger.info(
         "Custom callback processed successfully - payment confirmed",
@@ -766,9 +783,6 @@ class PaymentService {
           transactionId: currentStatus.transactionId,
         }
       );
-
-      // Refresh order to get updated data
-      const updatedOrder = await Order.findById(order._id);
 
       // Create transaction record for accounting
       try {
@@ -1829,11 +1843,14 @@ class PaymentService {
             };
           }
 
-          // Update order first
-          await Order.findByIdAndUpdate(orderId, updateData);
-
-          // Refresh order to get updated data
-          const updatedOrder = await Order.findById(orderId);
+          // Use {new: true} to get updated order in one query (eliminates redundant fetch)
+          const updatedOrder = await Order.findByIdAndUpdate(
+            orderId,
+            updateData,
+            {
+              new: true,
+            }
+          );
 
           // Create transaction record for accounting
           try {
@@ -1846,10 +1863,12 @@ class PaymentService {
           }
 
           // Trigger staff assignment only if no staff assigned yet
-          if (!order.staff) {
+          // Use updatedOrder (not stale 'order') to prevent race condition
+          if (!updatedOrder.staff) {
             try {
+              // Pass order object to avoid re-fetching from DB
               const assignmentResult =
-                await assignmentService.assignOrder(orderId);
+                await assignmentService.assignOrder(updatedOrder);
               if (assignmentResult.success) {
                 logger.info("Staff assigned after payment sync", {
                   orderId,

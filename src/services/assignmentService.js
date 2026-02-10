@@ -52,9 +52,11 @@ class AssignmentService {
           `Starting assignment process for order ${orderParam} (fetched from DB)`
         );
       } else {
-        // If it's already an order object
-        order = orderParam;
-        logger.info(`Starting assignment process for order ${order._id}`);
+        // If it's already an order object, convert to plain object if Mongoose doc
+        order = orderParam.toObject ? orderParam.toObject() : orderParam;
+        logger.info(
+          `Starting assignment process for order ${order._id} (using provided object)`
+        );
       }
 
       // Get all available waiters for this branch/hotel
@@ -173,20 +175,36 @@ class AssignmentService {
         );
       });
 
-      // Calculate active orders for each valid waiter
-      const waitersWithCounts = await Promise.all(
-        validWaiters.map(async (waiter) => {
-          const activeOrdersCount = await Order.countDocuments({
-            staff: waiter._id,
-            status: { $in: ["pending", "confirmed", "preparing", "ready"] },
-          });
+      // Calculate active orders for each valid waiter using aggregation (eliminates N+1 query problem)
+      // Build a map of waiter IDs for efficient lookup
+      const waiterIds = validWaiters.map((w) => w._id);
 
-          return {
-            ...waiter,
-            activeOrdersCount,
-          };
-        })
+      // Single aggregation query to get order counts for all waiters at once
+      const orderCounts = await Order.aggregate([
+        {
+          $match: {
+            staff: { $in: waiterIds },
+            status: { $in: ["pending", "confirmed", "preparing", "ready"] },
+          },
+        },
+        {
+          $group: {
+            _id: "$staff",
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      // Create a map for O(1) lookup
+      const orderCountMap = new Map(
+        orderCounts.map((item) => [item._id.toString(), item.count])
       );
+
+      // Merge counts with waiter data
+      const waitersWithCounts = validWaiters.map((waiter) => ({
+        ...waiter,
+        activeOrdersCount: orderCountMap.get(waiter._id.toString()) || 0,
+      }));
 
       logger.info(
         `Found ${waitersWithCounts.length} valid waiters for hotel ${hotelId}${
