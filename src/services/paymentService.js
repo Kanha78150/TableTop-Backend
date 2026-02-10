@@ -160,11 +160,11 @@ class PaymentService {
             "payment.paymentStatus": "paid",
             "payment.razorpayPaymentId": payment.id,
             "payment.paidAt": new Date(),
-            status: "confirmed",
           };
 
-          // Only add to statusHistory if status is NOT already "confirmed"
-          if (order.status !== "confirmed") {
+          // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
+          if (order.status === "pending") {
+            updateData.status = "confirmed";
             updateData.$push = {
               statusHistory: {
                 status: "confirmed",
@@ -176,50 +176,55 @@ class PaymentService {
 
           await Order.findByIdAndUpdate(order._id, updateData);
 
-          // 🎯 TRIGGER STAFF ASSIGNMENT AFTER PAYMENT STATUS UPDATE
-          try {
-            logger.info(
-              "Triggering staff assignment after payment status update",
-              {
-                orderId: order._id,
-              }
-            );
-
-            const assignmentResult = await assignmentService.assignOrder(
-              order._id.toString()
-            );
-
-            if (
-              assignmentResult.success &&
-              assignmentResult.assignment &&
-              assignmentResult.assignment.waiter
-            ) {
+          // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
+          if (!order.staff) {
+            try {
               logger.info(
-                "Staff assignment successful after payment status update",
+                "Triggering staff assignment after payment status update",
                 {
                   orderId: order._id,
-                  waiterId: assignmentResult.assignment.waiter._id,
-                  waiterName: assignmentResult.assignment.waiter.name,
-                  method: assignmentResult.assignment.method,
                 }
               );
-            } else {
-              logger.warn(
-                "Staff assignment failed after payment status update",
+
+              const assignmentResult = await assignmentService.assignOrder(
+                order._id.toString()
+              );
+
+              if (
+                assignmentResult.success &&
+                assignmentResult.assignment &&
+                assignmentResult.assignment.waiter
+              ) {
+                logger.info(
+                  "Staff assignment successful after payment status update",
+                  {
+                    orderId: order._id,
+                    waiterId: assignmentResult.assignment.waiter._id,
+                    waiterName: assignmentResult.assignment.waiter.name,
+                    method: assignmentResult.assignment.method,
+                  }
+                );
+              } else {
+                logger.warn(
+                  "Staff assignment failed after payment status update",
+                  {
+                    orderId: order._id,
+                    reason: assignmentResult.message || "No available staff",
+                  }
+                );
+              }
+            } catch (assignmentError) {
+              // Log assignment error but don't fail the payment status update
+              logger.error(
+                "Staff assignment error after payment status update",
                 {
                   orderId: order._id,
-                  reason: assignmentResult.message || "No available staff",
+                  error: assignmentError.message,
+                  stack: assignmentError.stack,
                 }
               );
             }
-          } catch (assignmentError) {
-            // Log assignment error but don't fail the payment status update
-            logger.error("Staff assignment error after payment status update", {
-              orderId: order._id,
-              error: assignmentError.message,
-              stack: assignmentError.stack,
-            });
-          }
+          } // End of if (!order.staff)
 
           // 🛒 CLEAR CART AND PROCESS COINS AFTER PAYMENT STATUS UPDATE
           try {
@@ -367,11 +372,11 @@ class PaymentService {
       "payment.razorpayPaymentId": razorpay_payment_id,
       "payment.paidAt": new Date(),
       "payment.paymentMethod": "razorpay",
-      status: "confirmed",
     };
 
-    // Only add to statusHistory if status is NOT already "confirmed"
-    if (order.status !== "confirmed") {
+    // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
+    if (order.status === "pending") {
+      updateData.status = "confirmed";
       updateData.$push = {
         statusHistory: {
           status: "confirmed",
@@ -401,43 +406,45 @@ class PaymentService {
       });
     }
 
-    // 🎯 TRIGGER STAFF ASSIGNMENT AFTER PAYMENT CONFIRMATION
-    try {
-      logger.info("Triggering staff assignment after payment confirmation", {
-        orderId: order._id,
-      });
-
-      const assignmentResult = await assignmentService.assignOrder(
-        order._id.toString()
-      );
-
-      if (
-        assignmentResult.success &&
-        assignmentResult.assignment &&
-        assignmentResult.assignment.waiter
-      ) {
-        logger.info("Staff assignment successful after payment", {
+    // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
+    if (!order.staff) {
+      try {
+        logger.info("Triggering staff assignment after payment confirmation", {
           orderId: order._id,
-          waiterId: assignmentResult.assignment.waiter._id,
-          waiterName: assignmentResult.assignment.waiter.name,
-          method: assignmentResult.assignment.method,
         });
-      } else {
-        logger.warn("Staff assignment failed after payment", {
+
+        const assignmentResult = await assignmentService.assignOrder(
+          order._id.toString()
+        );
+
+        if (
+          assignmentResult.success &&
+          assignmentResult.assignment &&
+          assignmentResult.assignment.waiter
+        ) {
+          logger.info("Staff assignment successful after payment", {
+            orderId: order._id,
+            waiterId: assignmentResult.assignment.waiter._id,
+            waiterName: assignmentResult.assignment.waiter.name,
+            method: assignmentResult.assignment.method,
+          });
+        } else {
+          logger.warn("Staff assignment failed after payment", {
+            orderId: order._id,
+            reason: assignmentResult.message || "No available staff",
+            assignmentResult: assignmentResult, // Log full result for debugging
+          });
+        }
+      } catch (assignmentError) {
+        // Log assignment error but don't fail the payment confirmation
+        logger.error("Staff assignment error after payment confirmation", {
           orderId: order._id,
-          reason: assignmentResult.message || "No available staff",
-          assignmentResult: assignmentResult, // Log full result for debugging
+          error: assignmentError.message,
+          stack: assignmentError.stack,
         });
+        // Payment is still successful even if assignment fails
       }
-    } catch (assignmentError) {
-      // Log assignment error but don't fail the payment confirmation
-      logger.error("Staff assignment error after payment confirmation", {
-        orderId: order._id,
-        error: assignmentError.message,
-        stack: assignmentError.stack,
-      });
-      // Payment is still successful even if assignment fails
-    }
+    } // End of if (!order.staff)
 
     // 🛒 CLEAR CART AND PROCESS COINS AFTER PAYMENT CONFIRMATION
     try {
@@ -610,11 +617,11 @@ class PaymentService {
       "payment.paymentStatus": "paid",
       "payment.paidAt": new Date(),
       "payment.paymentMethod": "razorpay",
-      status: "confirmed",
     };
 
-    // Only add to statusHistory if status is NOT already "confirmed"
-    if (order.status !== "confirmed") {
+    // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
+    if (order.status === "pending") {
+      updateData.status = "confirmed";
       updateData.$push = {
         statusHistory: {
           status: "confirmed",
@@ -644,42 +651,44 @@ class PaymentService {
       });
     }
 
-    // 🎯 TRIGGER STAFF ASSIGNMENT AFTER PAYMENT CONFIRMATION
-    try {
-      logger.info("Triggering staff assignment after success callback", {
-        orderId: order._id,
-      });
-
-      const assignmentResult = await assignmentService.assignOrder(
-        order._id.toString()
-      );
-
-      if (
-        assignmentResult.success &&
-        assignmentResult.assignment &&
-        assignmentResult.assignment.waiter
-      ) {
-        logger.info("Staff assignment successful after success callback", {
+    // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
+    if (!order.staff) {
+      try {
+        logger.info("Triggering staff assignment after success callback", {
           orderId: order._id,
-          waiterId: assignmentResult.assignment.waiter._id,
-          waiterName: assignmentResult.assignment.waiter.name,
-          method: assignmentResult.assignment.method,
         });
-      } else {
-        logger.warn("Staff assignment failed after success callback", {
+
+        const assignmentResult = await assignmentService.assignOrder(
+          order._id.toString()
+        );
+
+        if (
+          assignmentResult.success &&
+          assignmentResult.assignment &&
+          assignmentResult.assignment.waiter
+        ) {
+          logger.info("Staff assignment successful after success callback", {
+            orderId: order._id,
+            waiterId: assignmentResult.assignment.waiter._id,
+            waiterName: assignmentResult.assignment.waiter.name,
+            method: assignmentResult.assignment.method,
+          });
+        } else {
+          logger.warn("Staff assignment failed after success callback", {
+            orderId: order._id,
+            reason: assignmentResult.message || "No available staff",
+            assignmentResult: assignmentResult, // Log full result for debugging
+          });
+        }
+      } catch (assignmentError) {
+        // Log assignment error but don't fail the payment confirmation
+        logger.error("Staff assignment error after success callback", {
           orderId: order._id,
-          reason: assignmentResult.message || "No available staff",
-          assignmentResult: assignmentResult, // Log full result for debugging
+          error: assignmentError.message,
+          stack: assignmentError.stack,
         });
       }
-    } catch (assignmentError) {
-      // Log assignment error but don't fail the payment confirmation
-      logger.error("Staff assignment error after success callback", {
-        orderId: order._id,
-        error: assignmentError.message,
-        stack: assignmentError.stack,
-      });
-    }
+    } // End of if (!order.staff)
 
     // 🛒 CLEAR CART AND PROCESS COINS AFTER PAYMENT CONFIRMATION
     try {
@@ -734,11 +743,11 @@ class PaymentService {
         "payment.paymentStatus": "paid",
         "payment.paidAt": new Date(),
         "payment.paymentMethod": "razorpay",
-        status: "confirmed",
       };
 
-      // Only add to statusHistory if status is NOT already "confirmed"
-      if (order.status !== "confirmed") {
+      // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
+      if (order.status === "pending") {
+        updateData.status = "confirmed";
         updateData.$push = {
           statusHistory: {
             status: "confirmed",
@@ -1807,10 +1816,10 @@ class PaymentService {
         if (actualStatus === "paid" && razorpayPayment) {
           updateData["payment.razorpayPaymentId"] = razorpayPayment.id;
           updateData["payment.paidAt"] = new Date();
-          updateData.status = "confirmed";
 
-          // Only add to statusHistory if status is NOT already "confirmed"
-          if (order.status !== "confirmed") {
+          // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
+          if (order.status === "pending") {
+            updateData.status = "confirmed";
             updateData.$push = {
               statusHistory: {
                 status: "confirmed",
@@ -1836,21 +1845,23 @@ class PaymentService {
             });
           }
 
-          // Trigger staff assignment for successful payments
-          try {
-            const assignmentResult =
-              await assignmentService.assignOrder(orderId);
-            if (assignmentResult.success) {
-              logger.info("Staff assigned after payment sync", {
+          // Trigger staff assignment only if no staff assigned yet
+          if (!order.staff) {
+            try {
+              const assignmentResult =
+                await assignmentService.assignOrder(orderId);
+              if (assignmentResult.success) {
+                logger.info("Staff assigned after payment sync", {
+                  orderId,
+                  waiterId: assignmentResult.assignment?.waiter?._id,
+                });
+              }
+            } catch (assignmentError) {
+              logger.error("Staff assignment failed during sync", {
                 orderId,
-                waiterId: assignmentResult.assignment?.waiter?._id,
+                error: assignmentError.message,
               });
             }
-          } catch (assignmentError) {
-            logger.error("Staff assignment failed during sync", {
-              orderId,
-              error: assignmentError.message,
-            });
           }
 
           // Clear cart
