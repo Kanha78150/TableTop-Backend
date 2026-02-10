@@ -307,11 +307,15 @@ class DynamicPaymentService {
       if (paymentStatus.status === "success") {
         order.status = "confirmed";
         order.paymentStatus = "paid";
-        order.statusHistory.push({
-          status: "confirmed",
-          timestamp: new Date(),
-          updatedBy: null,
-        });
+
+        // Only add to statusHistory if status is NOT already "confirmed"
+        if (!order.statusHistory.some((h) => h.status === "confirmed")) {
+          order.statusHistory.push({
+            status: "confirmed",
+            timestamp: new Date(),
+            updatedBy: null,
+          });
+        }
       }
 
       await order.save();
@@ -618,11 +622,15 @@ class DynamicPaymentService {
       if (paymentInfo.status === "completed") {
         order.status = "confirmed";
         order.paymentStatus = "paid";
-        order.statusHistory.push({
-          status: "confirmed",
-          timestamp: new Date(),
-          updatedBy: null,
-        });
+
+        // Only add to statusHistory if status is NOT already "confirmed"
+        if (!order.statusHistory.some((h) => h.status === "confirmed")) {
+          order.statusHistory.push({
+            status: "confirmed",
+            timestamp: new Date(),
+            updatedBy: null,
+          });
+        }
       } else if (paymentInfo.status === "failed") {
         order.status = "payment_failed";
         order.paymentStatus = "failed";

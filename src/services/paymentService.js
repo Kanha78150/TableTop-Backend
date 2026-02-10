@@ -156,19 +156,25 @@ class PaymentService {
           paymentStatus === "paid" &&
           order.payment.paymentStatus !== "paid"
         ) {
-          await Order.findByIdAndUpdate(order._id, {
+          const updateData = {
             "payment.paymentStatus": "paid",
             "payment.razorpayPaymentId": payment.id,
             "payment.paidAt": new Date(),
             status: "confirmed",
-            $push: {
+          };
+
+          // Only add to statusHistory if status is NOT already "confirmed"
+          if (order.status !== "confirmed") {
+            updateData.$push = {
               statusHistory: {
                 status: "confirmed",
                 timestamp: new Date(),
                 updatedBy: null,
               },
-            },
-          });
+            };
+          }
+
+          await Order.findByIdAndUpdate(order._id, updateData);
 
           // 🎯 TRIGGER STAFF ASSIGNMENT AFTER PAYMENT STATUS UPDATE
           try {
@@ -356,20 +362,26 @@ class PaymentService {
     const payment = await this.razorpay.payments.fetch(razorpay_payment_id);
 
     // Update order status
-    await Order.findByIdAndUpdate(order._id, {
+    const updateData = {
       "payment.paymentStatus": "paid",
       "payment.razorpayPaymentId": razorpay_payment_id,
       "payment.paidAt": new Date(),
       "payment.paymentMethod": "razorpay",
       status: "confirmed",
-      $push: {
+    };
+
+    // Only add to statusHistory if status is NOT already "confirmed"
+    if (order.status !== "confirmed") {
+      updateData.$push = {
         statusHistory: {
           status: "confirmed",
           timestamp: new Date(),
           updatedBy: null,
         },
-      },
-    });
+      };
+    }
+
+    await Order.findByIdAndUpdate(order._id, updateData);
 
     logger.info("Standard Razorpay callback processed successfully", {
       orderId: order._id,
@@ -594,19 +606,25 @@ class PaymentService {
     }
 
     // Update order status to confirmed and payment status to paid
-    await Order.findByIdAndUpdate(order._id, {
+    const updateData = {
       "payment.paymentStatus": "paid",
       "payment.paidAt": new Date(),
       "payment.paymentMethod": "razorpay",
       status: "confirmed",
-      $push: {
+    };
+
+    // Only add to statusHistory if status is NOT already "confirmed"
+    if (order.status !== "confirmed") {
+      updateData.$push = {
         statusHistory: {
           status: "confirmed",
           timestamp: new Date(),
-          updatedBy: null, // System-generated status change
+          updatedBy: null,
         },
-      },
-    });
+      };
+    }
+
+    await Order.findByIdAndUpdate(order._id, updateData);
 
     logger.info("Success callback processed successfully", {
       orderId: order._id,
@@ -712,19 +730,25 @@ class PaymentService {
 
     if (currentStatus.status === "paid") {
       // Update order if payment is successful
-      await Order.findByIdAndUpdate(order._id, {
+      const updateData = {
         "payment.paymentStatus": "paid",
         "payment.paidAt": new Date(),
         "payment.paymentMethod": "razorpay",
         status: "confirmed",
-        $push: {
+      };
+
+      // Only add to statusHistory if status is NOT already "confirmed"
+      if (order.status !== "confirmed") {
+        updateData.$push = {
           statusHistory: {
             status: "confirmed",
             timestamp: new Date(),
             updatedBy: null,
           },
-        },
-      });
+        };
+      }
+
+      await Order.findByIdAndUpdate(order._id, updateData);
 
       logger.info(
         "Custom callback processed successfully - payment confirmed",
@@ -1784,13 +1808,17 @@ class PaymentService {
           updateData["payment.razorpayPaymentId"] = razorpayPayment.id;
           updateData["payment.paidAt"] = new Date();
           updateData.status = "confirmed";
-          updateData.$push = {
-            statusHistory: {
-              status: "confirmed",
-              timestamp: new Date(),
-              updatedBy: null,
-            },
-          };
+
+          // Only add to statusHistory if status is NOT already "confirmed"
+          if (order.status !== "confirmed") {
+            updateData.$push = {
+              statusHistory: {
+                status: "confirmed",
+                timestamp: new Date(),
+                updatedBy: null,
+              },
+            };
+          }
 
           // Update order first
           await Order.findByIdAndUpdate(orderId, updateData);
