@@ -161,6 +161,13 @@ class PaymentService {
             "payment.razorpayPaymentId": payment.id,
             "payment.paidAt": new Date(),
             status: "confirmed",
+            $push: {
+              statusHistory: {
+                status: "confirmed",
+                timestamp: new Date(),
+                updatedBy: null,
+              },
+            },
           });
 
           // 🎯 TRIGGER STAFF ASSIGNMENT AFTER PAYMENT STATUS UPDATE
@@ -355,6 +362,13 @@ class PaymentService {
       "payment.paidAt": new Date(),
       "payment.paymentMethod": "razorpay",
       status: "confirmed",
+      $push: {
+        statusHistory: {
+          status: "confirmed",
+          timestamp: new Date(),
+          updatedBy: null,
+        },
+      },
     });
 
     logger.info("Standard Razorpay callback processed successfully", {
@@ -585,6 +599,13 @@ class PaymentService {
       "payment.paidAt": new Date(),
       "payment.paymentMethod": "razorpay",
       status: "confirmed",
+      $push: {
+        statusHistory: {
+          status: "confirmed",
+          timestamp: new Date(),
+          updatedBy: null, // System-generated status change
+        },
+      },
     });
 
     logger.info("Success callback processed successfully", {
@@ -696,6 +717,13 @@ class PaymentService {
         "payment.paidAt": new Date(),
         "payment.paymentMethod": "razorpay",
         status: "confirmed",
+        $push: {
+          statusHistory: {
+            status: "confirmed",
+            timestamp: new Date(),
+            updatedBy: null,
+          },
+        },
       });
 
       logger.info(
@@ -776,14 +804,12 @@ class PaymentService {
         // If we have gatewayTransactionId (Razorpay order ID), get payments for this order
         try {
           const razorpayOrderId = order.payment.gatewayTransactionId;
-          const razorpayOrder = await this.razorpay.orders.fetch(
-            razorpayOrderId
-          );
+          const razorpayOrder =
+            await this.razorpay.orders.fetch(razorpayOrderId);
 
           // Get payments for this order
-          const payments = await this.razorpay.orders.fetchPayments(
-            razorpayOrderId
-          );
+          const payments =
+            await this.razorpay.orders.fetchPayments(razorpayOrderId);
 
           if (payments.items && payments.items.length > 0) {
             // Find the successful payment
@@ -1758,6 +1784,13 @@ class PaymentService {
           updateData["payment.razorpayPaymentId"] = razorpayPayment.id;
           updateData["payment.paidAt"] = new Date();
           updateData.status = "confirmed";
+          updateData.$push = {
+            statusHistory: {
+              status: "confirmed",
+              timestamp: new Date(),
+              updatedBy: null,
+            },
+          };
 
           // Update order first
           await Order.findByIdAndUpdate(orderId, updateData);
@@ -1777,9 +1810,8 @@ class PaymentService {
 
           // Trigger staff assignment for successful payments
           try {
-            const assignmentResult = await assignmentService.assignOrder(
-              orderId
-            );
+            const assignmentResult =
+              await assignmentService.assignOrder(orderId);
             if (assignmentResult.success) {
               logger.info("Staff assigned after payment sync", {
                 orderId,

@@ -307,6 +307,11 @@ class DynamicPaymentService {
       if (paymentStatus.status === "success") {
         order.status = "confirmed";
         order.paymentStatus = "paid";
+        order.statusHistory.push({
+          status: "confirmed",
+          timestamp: new Date(),
+          updatedBy: null,
+        });
       }
 
       await order.save();
@@ -613,9 +618,19 @@ class DynamicPaymentService {
       if (paymentInfo.status === "completed") {
         order.status = "confirmed";
         order.paymentStatus = "paid";
+        order.statusHistory.push({
+          status: "confirmed",
+          timestamp: new Date(),
+          updatedBy: null,
+        });
       } else if (paymentInfo.status === "failed") {
         order.status = "payment_failed";
         order.paymentStatus = "failed";
+        order.statusHistory.push({
+          status: "payment_failed",
+          timestamp: new Date(),
+          updatedBy: null,
+        });
       }
 
       await order.save();
