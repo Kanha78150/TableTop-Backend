@@ -6,6 +6,7 @@
 
 import { Order } from "../../models/Order.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
+import { PaymentConfig } from "../../models/PaymentConfig.model.js";
 import dynamicPaymentService from "../../services/dynamicPaymentService.js";
 
 /**
@@ -93,9 +94,9 @@ export const initiatePayment = async (req, res) => {
 
     // Create payment order
     const paymentResponse = await dynamicPaymentService.createOrder({
-      hotelId: order.hotel._id,
-      orderId: order._id,
-      amount: order.totalAmount,
+      hotelId: order.hotel._id.toString(),
+      orderId: order._id.toString(),
+      amount: order.totalPrice, // Fixed: was totalAmount, should be totalPrice
       currency: "INR",
       customerInfo,
       metadata,
@@ -550,6 +551,79 @@ export const getCommissionSummary = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch commission summary",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get payment gateway public key for frontend checkout
+ * @route GET /api/v1/payments/public-key/:hotelId
+ * @access Public (no auth required - public key is safe to expose)
+ */
+export const getPaymentPublicKey = async (req, res) => {
+  try {
+    const { hotelId } = req.params;
+
+    if (!hotelId) {
+      return res.status(400).json({
+        success: false,
+        message: "Hotel ID is required",
+      });
+    }
+
+    // Fetch hotel
+    const hotel = await Hotel.findById(hotelId);
+    if (!hotel) {
+      return res.status(404).json({
+        success: false,
+        message: "Hotel not found",
+      });
+    }
+
+    // Fetch payment config with credentials
+    const paymentConfig = await PaymentConfig.findOne({ hotel: hotelId }).select(
+      '+credentials.keyId'
+    );
+
+    if (!paymentConfig) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment configuration not found for this hotel",
+      });
+    }
+
+    if (!paymentConfig.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment gateway is currently disabled for this hotel",
+      });
+    }
+
+    // Get decrypted credentials
+    const credentials = paymentConfig.getDecryptedCredentials();
+
+    if (!credentials || !credentials.keyId) {
+      return res.status(500).json({
+        success: false,
+        message: "Payment gateway not properly configured",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment public key retrieved successfully",
+      data: {
+        provider: paymentConfig.provider,
+        keyId: credentials.keyId, // Public key - safe to expose
+        hotelName: hotel.name,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching payment public key:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch payment public key",
       error: error.message,
     });
   }

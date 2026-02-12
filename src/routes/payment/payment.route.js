@@ -13,11 +13,15 @@ import {
   getHotelPaymentHistory,
   getMyPayments,
   getCommissionSummary,
+  getPaymentPublicKey,
 } from "../../controllers/payment/paymentController.js";
 import { authenticateUser } from "../../middleware/auth.middleware.js";
 import { authenticate, rbac } from "../../middleware/roleAuth.middleware.js";
 
 const router = express.Router();
+
+// Public route - Get payment gateway public key for frontend
+router.get("/public-key/:hotelId", getPaymentPublicKey);
 
 // Customer routes - require user authentication
 router.post("/initiate", authenticateUser, initiatePayment);

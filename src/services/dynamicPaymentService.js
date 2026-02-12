@@ -19,20 +19,26 @@ class DynamicPaymentService {
    */
   async getPaymentConfig(hotelId) {
     try {
-      // Fetch hotel with payment config
-      const hotel = await Hotel.findById(hotelId).populate("paymentConfig");
+      // Fetch hotel
+      const hotel = await Hotel.findById(hotelId);
 
       if (!hotel) {
         throw new Error(`Hotel not found: ${hotelId}`);
       }
 
-      if (!hotel.paymentConfig) {
+      // Fetch payment config directly (more reliable than virtual populate)
+      // IMPORTANT: Each credential subfield has select: false, must explicitly select all
+      const paymentConfig = await PaymentConfig.findOne({ hotel: hotelId }).select(
+        '+credentials.keyId +credentials.keySecret +credentials.webhookSecret ' +
+        '+credentials.merchantId +credentials.saltKey +credentials.saltIndex ' +
+        '+credentials.merchantKey +credentials.websiteName'
+      );
+
+      if (!paymentConfig) {
         throw new Error(
           `Payment configuration not found for hotel: ${hotel.name}`
         );
       }
-
-      const paymentConfig = hotel.paymentConfig;
 
       // Check if payment config is active
       if (!paymentConfig.isActive) {
@@ -44,7 +50,7 @@ class DynamicPaymentService {
       // Get decrypted credentials
       const credentials = paymentConfig.getDecryptedCredentials();
 
-      if (!credentials) {
+      if (!credentials || !credentials.keyId || !credentials.keySecret) {
         throw new Error(
           `Failed to decrypt payment credentials for hotel: ${hotel.name}`
         );
@@ -57,7 +63,6 @@ class DynamicPaymentService {
         paymentConfig,
       };
     } catch (error) {
-      console.error("Error fetching payment config:", error.message);
       throw error;
     }
   }

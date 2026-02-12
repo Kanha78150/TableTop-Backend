@@ -2,10 +2,16 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// ========================================
 // Razorpay Payment Gateway Configuration
+// ========================================
+// IMPORTANT: These credentials are ONLY used for ADMIN SUBSCRIPTION PAYMENTS
+// User food orders use dynamic credentials from PaymentConfig database (per hotel)
+// See: dynamicPaymentService.js for user payment flow
+// ========================================
 export const razorpayConfig = {
-  keyId: process.env.RAZORPAY_KEY_ID,
-  keySecret: process.env.RAZORPAY_KEY_SECRET,
+  keyId: process.env.RAZORPAY_KEY_ID, // Platform's Razorpay key (for admin subscriptions)
+  keySecret: process.env.RAZORPAY_KEY_SECRET, // Platform's Razorpay secret
   webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
   mode: process.env.NODE_ENV === "production" ? "PRODUCTION" : "TEST",
   hostUrl: "https://api.razorpay.com/v1", // Same for both test and production

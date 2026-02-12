@@ -65,19 +65,20 @@ const requiredEnvVars = {
     minLength: 32,
   },
 
-  // Razorpay Payment Gateway
+  // Razorpay Payment Gateway (Platform credentials for Admin Subscriptions ONLY)
+  // Note: User food orders use hotel-specific credentials from PaymentConfig database
   RAZORPAY_KEY_ID: {
     required: true,
-    description: "Razorpay key ID",
+    description: "Razorpay key ID (for admin subscription payments)",
     pattern: /^rzp_(test|live)_[a-zA-Z0-9]+$/,
   },
   RAZORPAY_KEY_SECRET: {
     required: true,
-    description: "Razorpay key secret",
+    description: "Razorpay key secret (for admin subscription payments)",
   },
   RAZORPAY_WEBHOOK_SECRET: {
     required: true,
-    description: "Razorpay webhook secret",
+    description: "Razorpay webhook secret (for admin subscription payments)",
   },
 
   // Frontend URL
