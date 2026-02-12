@@ -81,10 +81,11 @@ router.use("/user", ensureDbReady, userRoutes);
 // Public QR scan routes (no authentication required)
 router.use("/scan", ensureDbReady, scanRoutes);
 
-// Payment routes (Razorpay integration)
-router.use("/payment", ensureDbReady, paymentRoutes);
+// ⚠️ OLD PAYMENT ROUTES DISABLED - Using new dynamic payment system below
+// Payment routes (Razorpay integration - OLD HARDCODED CREDENTIALS)
+// router.use("/payment", ensureDbReady, paymentRoutes);
 
-// Multi-Provider Payment System Routes
+// ✅ NEW Multi-Provider Dynamic Payment System (Uses PaymentConfig from database)
 router.use("/payment-config", ensureDbReady, paymentConfigRoutes);
 router.use("/payments", ensureDbReady, dynamicPaymentRoutes);
 router.use("/webhooks", ensureDbReady, webhookRoutes);
