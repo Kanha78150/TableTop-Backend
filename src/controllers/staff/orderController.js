@@ -488,7 +488,14 @@ const validateStatusUpdate = (data) => {
   const schema = Joi.object({
     orderId: Joi.string().length(24).hex().required(),
     status: Joi.string()
-      .valid("preparing", "ready", "served", "completed", "cancelled")
+      .valid(
+        "confirmed",
+        "preparing",
+        "ready",
+        "served",
+        "completed",
+        "cancelled"
+      )
       .required(),
     notes: Joi.string().max(500).optional(),
   });
