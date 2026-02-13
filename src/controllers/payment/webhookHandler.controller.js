@@ -765,7 +765,7 @@ async function processOrderPayment(entity, status) {
     order.payment.paymentId = paymentId; // Also set generic paymentId for dynamic payment system
     order.payment.paymentMethod = order.payment.provider || "razorpay"; // Use provider, not raw Razorpay method
     order.payment.paidAt = new Date();
-    order.status = "confirmed";
+    // Order stays "pending" — staff will confirm it manually
 
     await order.save();
 

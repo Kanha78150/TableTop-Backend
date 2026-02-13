@@ -323,11 +323,8 @@ class DynamicPaymentService {
         order.payment.commissionStatus = "due";
       }
 
-      // Update overall order status
-      if (isPaymentSuccessful) {
-        order.status = "confirmed";
-        // Note: pre-save middleware automatically adds to statusHistory when status changes
-      }
+      // Order stays "pending" — staff will confirm it manually
+      // Payment status (paid/failed) is tracked separately in order.payment.paymentStatus
 
       await order.save();
 
