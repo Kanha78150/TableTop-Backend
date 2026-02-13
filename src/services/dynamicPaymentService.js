@@ -299,24 +299,25 @@ class DynamicPaymentService {
         order.payment.gatewayOrderId
       );
 
+      // Check if payment is successful (Razorpay: "captured" or "authorized", others: "success")
+      const isPaymentSuccessful =
+        paymentStatus.status === "captured" ||
+        paymentStatus.status === "authorized" ||
+        paymentStatus.status === "success";
+
       // Update order with payment success
       order.payment.paymentId = paymentId;
-      order.payment.paymentStatus =
-        paymentStatus.status === "success" ? "paid" : "failed";
-      order.payment.paidAt =
-        paymentStatus.status === "success" ? new Date() : null;
+      order.payment.paymentStatus = isPaymentSuccessful ? "paid" : "failed";
+      order.payment.paidAt = isPaymentSuccessful ? new Date() : null;
       order.payment.gatewayResponse = paymentStatus;
 
       // Update commission status if payment is successful
-      if (
-        paymentStatus.status === "success" &&
-        order.commissionStatus === "pending"
-      ) {
-        order.commissionStatus = "due";
+      if (isPaymentSuccessful && order.payment.commissionStatus === "pending") {
+        order.payment.commissionStatus = "due";
       }
 
       // Update overall order status
-      if (paymentStatus.status === "success") {
+      if (isPaymentSuccessful) {
         order.status = "confirmed";
 
         // Only add to statusHistory if status is NOT already "confirmed"
