@@ -105,7 +105,7 @@ export const updateOrderStatus = async (req, res, next) => {
     }
 
     // Check if staff is assigned to this order
-    if (order.staff.toString() !== staffId.toString()) {
+    if (!order.staff || order.staff.toString() !== staffId.toString()) {
       return next(new APIError(403, "You are not assigned to this order"));
     }
 

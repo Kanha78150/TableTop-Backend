@@ -751,11 +751,19 @@ async function processOrderPayment(entity, status) {
       return { success: false, message: "Order not found" };
     }
 
+    // Idempotency guard: skip if payment already processed
+    if (order.payment.paymentStatus === "paid") {
+      logger.info("Order payment already processed, skipping webhook", {
+        orderId: order._id,
+      });
+      return { success: true, message: "Payment already processed" };
+    }
+
     // Update order status
     order.payment.paymentStatus = "paid";
     order.payment.razorpayPaymentId = paymentId;
     order.payment.paymentId = paymentId; // Also set generic paymentId for dynamic payment system
-    order.payment.paymentMethod = method;
+    order.payment.paymentMethod = order.payment.provider || "razorpay"; // Use provider, not raw Razorpay method
     order.payment.paidAt = new Date();
     order.status = "confirmed";
 

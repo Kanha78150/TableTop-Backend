@@ -227,7 +227,7 @@ export const getPaymentStatus = async (req, res) => {
         success: true,
         data: {
           orderId: order._id,
-          paymentStatus: order.paymentStatus || "pending",
+          paymentStatus: order.payment?.paymentStatus || "pending",
           paymentInitiated: false,
         },
       });

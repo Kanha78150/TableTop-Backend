@@ -76,6 +76,7 @@ const orderSchema = new mongoose.Schema(
         "served",
         "completed",
         "cancelled",
+        "queued",
       ],
       default: "pending",
     },
@@ -92,7 +93,17 @@ const orderSchema = new mongoose.Schema(
     payment: {
       paymentMethod: {
         type: String,
-        enum: ["cash", "card", "upi", "wallet", "razorpay", "phonepe", "paytm"],
+        enum: [
+          "cash",
+          "card",
+          "upi",
+          "wallet",
+          "netbanking",
+          "paylater",
+          "razorpay",
+          "phonepe",
+          "paytm",
+        ],
         default: "cash",
       },
       paymentStatus: {

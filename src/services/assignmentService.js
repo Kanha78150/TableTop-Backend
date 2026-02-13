@@ -26,7 +26,8 @@ import {
 class AssignmentService {
   constructor() {
     // Configuration
-    this.MAX_ORDERS_PER_WAITER = process.env.MAX_ORDERS_PER_WAITER || 5;
+    this.MAX_ORDERS_PER_WAITER =
+      parseInt(process.env.MAX_ORDERS_PER_WAITER, 10) || 5;
     this.ASSIGNMENT_TIMEOUT = process.env.ASSIGNMENT_TIMEOUT || 30000; // 30 seconds
 
     // In-memory tracking for round-robin (will persist in database)
@@ -59,10 +60,15 @@ class AssignmentService {
         );
       }
 
+      // Extract raw IDs from potentially populated fields
+      // (populated objects have ._id, raw ObjectIds don't)
+      const hotelId = order.hotel?._id || order.hotel;
+      const branchId = order.branch?._id || order.branch;
+
       // Get all available waiters for this branch/hotel
       const availableWaiters = await this.getAvailableWaiters(
-        order.hotel,
-        order.branch
+        hotelId,
+        branchId
       );
 
       if (availableWaiters.length === 0) {
@@ -84,7 +90,7 @@ class AssignmentService {
       // Assign to best available waiter
       const selectedWaiter = await this.selectBestWaiter(
         eligibleWaiters,
-        order.branch
+        branchId
       );
 
       // Perform the assignment
@@ -118,10 +124,14 @@ class AssignmentService {
    */
   async getAvailableWaiters(hotelId, branchId = null) {
     try {
+      // Resolve populated objects to raw IDs (safety check)
+      const resolvedHotelId = hotelId?._id || hotelId;
+      const resolvedBranchId = branchId ? branchId._id || branchId : null;
+
       // First, validate the organizational hierarchy
       const hierarchyValidation = await this.validateOrganizationalHierarchy(
-        hotelId,
-        branchId
+        resolvedHotelId,
+        resolvedBranchId
       );
       if (!hierarchyValidation.isValid) {
         throw new APIError(
@@ -132,14 +142,14 @@ class AssignmentService {
 
       // Build query filter for waiters
       const filter = {
-        hotel: hotelId,
+        hotel: resolvedHotelId,
         role: "waiter",
         status: "active",
         isAvailable: true,
       };
 
-      if (branchId) {
-        filter.branch = branchId;
+      if (resolvedBranchId) {
+        filter.branch = resolvedBranchId;
       }
 
       // Get waiters and validate they belong to correct managers in the hierarchy
@@ -207,8 +217,8 @@ class AssignmentService {
       }));
 
       logger.info(
-        `Found ${waitersWithCounts.length} valid waiters for hotel ${hotelId}${
-          branchId ? `, branch ${branchId}` : ""
+        `Found ${waitersWithCounts.length} valid waiters for hotel ${resolvedHotelId}${
+          resolvedBranchId ? `, branch ${resolvedBranchId}` : ""
         }`
       );
       return waitersWithCounts;
@@ -385,8 +395,7 @@ class AssignmentService {
           staffId: waiter.staffId,
           activeOrdersCount: newActiveOrdersCount,
         },
-        assignmentMethod:
-          newActiveOrdersCount === 1 ? "round-robin" : "load-balancing",
+        assignmentMethod: assignmentMethod,
         assignedAt: new Date(),
         queuePosition: null,
       };
@@ -814,8 +823,14 @@ class AssignmentService {
    */
   async validateOrganizationalHierarchy(hotelId, branchId = null) {
     try {
+      // Resolve populated objects to raw IDs
+      const resolvedHotelId = hotelId?._id || hotelId;
+      const resolvedBranchId = branchId ? branchId._id || branchId : null;
+
       // Get hotel information with admin
-      const hotel = await Hotel.findById(hotelId).populate("createdBy").lean();
+      const hotel = await Hotel.findById(resolvedHotelId)
+        .populate("createdBy")
+        .lean();
       if (!hotel) {
         return {
           isValid: false,
@@ -833,8 +848,8 @@ class AssignmentService {
       const hotelAdminId = hotel.createdBy._id || hotel.createdBy;
 
       // If branch is specified, validate branch hierarchy
-      if (branchId) {
-        const branch = await Branch.findById(branchId)
+      if (resolvedBranchId) {
+        const branch = await Branch.findById(resolvedBranchId)
           .populate("createdBy")
           .lean();
         if (!branch) {
@@ -852,7 +867,7 @@ class AssignmentService {
         }
 
         // Verify branch belongs to the same hotel
-        if (branch.hotel.toString() !== hotelId.toString()) {
+        if (branch.hotel.toString() !== resolvedHotelId.toString()) {
           return {
             isValid: false,
             reason: "Branch does not belong to the specified hotel",
