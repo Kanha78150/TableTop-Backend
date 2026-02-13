@@ -117,6 +117,15 @@ const orderSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.ObjectId,
         ref: "Hotel", // Which hotel's payment gateway was used
       },
+      // Generic multi-provider fields used by dynamicPaymentService
+      gatewayOrderId: {
+        type: String,
+        sparse: true, // Gateway order ID (e.g., Razorpay order_xxxxx, PhonePe merchantTransactionId)
+      },
+      paymentId: {
+        type: String,
+        sparse: true, // Gateway payment ID (e.g., Razorpay pay_xxxxx)
+      },
       transactionId: {
         type: String,
         sparse: true, // Allow null values but ensure uniqueness when present
@@ -127,7 +136,7 @@ const orderSchema = new mongoose.Schema(
       },
       razorpayOrderId: {
         type: String,
-        sparse: true, // Razorpay order ID (order_xxxxx)
+        sparse: true, // Razorpay order ID (order_xxxxx) - legacy field
       },
       razorpayPaymentId: {
         type: String,

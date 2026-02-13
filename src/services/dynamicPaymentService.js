@@ -144,18 +144,17 @@ class DynamicPaymentService {
         throw new Error(`Order not found: ${orderId}`);
       }
 
-      // Update order with payment information
-      order.payment = {
-        provider,
-        gatewayOrderId: gatewayResponse.orderId,
-        paymentStatus: "pending",
-        gatewayResponse: {
-          orderId: gatewayResponse.orderId,
-          amount,
-          currency,
-          createdAt: new Date(),
-          metadata: gatewayResponse.metadata || {},
-        },
+      // Update order with payment information (preserve existing fields like paymentMethod)
+      order.payment.provider = provider;
+      order.payment.gatewayOrderId = gatewayResponse.orderId;
+      order.payment.paymentStatus = "pending";
+      order.payment.paymentMethod = provider; // Set paymentMethod to match the provider (e.g., "razorpay")
+      order.payment.gatewayResponse = {
+        orderId: gatewayResponse.orderId,
+        amount,
+        currency,
+        createdAt: new Date(),
+        metadata: gatewayResponse.metadata || {},
       };
 
       // Add commission information to payment object
@@ -313,6 +312,7 @@ class DynamicPaymentService {
       // Update order with payment success
       order.payment.paymentId = paymentId;
       order.payment.paymentStatus = isPaymentSuccessful ? "paid" : "failed";
+      order.payment.paymentMethod = provider; // Ensure paymentMethod reflects actual provider used
       order.payment.paidAt = isPaymentSuccessful ? new Date() : null;
       order.payment.gatewayResponse = paymentStatus;
 
