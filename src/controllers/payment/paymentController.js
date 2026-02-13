@@ -46,7 +46,7 @@ export const initiatePayment = async (req, res) => {
     }
 
     // Check if order is already paid
-    if (order.paymentStatus === "paid") {
+    if (order.payment?.paymentStatus === "paid") {
       return res.status(400).json({
         success: false,
         message: "Order is already paid",
@@ -61,8 +61,12 @@ export const initiatePayment = async (req, res) => {
       });
     }
 
-    // Check if payment already initiated
-    if (order.payment && order.payment.status === "pending") {
+    // Check if payment already initiated (has gatewayOrderId means initiation was done)
+    if (
+      order.payment &&
+      order.payment.gatewayOrderId &&
+      order.payment.paymentStatus === "pending"
+    ) {
       // Return existing payment details
       return res.status(200).json({
         success: true,
@@ -71,9 +75,9 @@ export const initiatePayment = async (req, res) => {
           orderId: order._id,
           gatewayOrderId: order.payment.gatewayOrderId,
           provider: order.payment.provider,
-          amount: order.payment.amount,
-          currency: order.payment.currency,
-          paymentDetails: order.payment.metadata,
+          amount: order.totalPrice,
+          currency: "INR",
+          paymentDetails: order.payment.gatewayResponse,
         },
       });
     }

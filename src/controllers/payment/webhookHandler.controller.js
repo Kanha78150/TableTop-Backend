@@ -248,9 +248,8 @@ async function handlePaymentFailed(entity) {
     if (notes?.type === "subscription") {
       // Handle subscription payment failure
       const subscriptionId = notes.subscriptionId;
-      const subscription = await AdminSubscription.findById(
-        subscriptionId
-      ).populate("admin plan");
+      const subscription =
+        await AdminSubscription.findById(subscriptionId).populate("admin plan");
 
       if (subscription) {
         subscription.paymentHistory.push({
@@ -279,7 +278,12 @@ async function handlePaymentFailed(entity) {
       }
     } else {
       // Handle order payment failure
-      const order = await Order.findOne({ "payment.razorpayOrderId": orderId });
+      const order = await Order.findOne({
+        $or: [
+          { "payment.gatewayOrderId": orderId },
+          { "payment.razorpayOrderId": orderId },
+        ],
+      });
 
       if (order) {
         order.payment.paymentStatus = "failed";
@@ -372,9 +376,8 @@ async function handleRefundProcessed(entity) {
       // Generate and send credit note
       try {
         // Find the refund request by razorpay refund ID
-        const { RefundRequest } = await import(
-          "../../models/RefundRequest.model.js"
-        );
+        const { RefundRequest } =
+          await import("../../models/RefundRequest.model.js");
         const refundRequest = await RefundRequest.findOne({
           refundTransactionId: refundId,
           order: order._id,
@@ -600,9 +603,8 @@ async function processSubscriptionPayment(entity, status) {
     const { id: paymentId, order_id: orderId, amount, method, notes } = entity;
     const subscriptionId = notes.subscriptionId;
 
-    const subscription = await AdminSubscription.findById(
-      subscriptionId
-    ).populate("plan admin");
+    const subscription =
+      await AdminSubscription.findById(subscriptionId).populate("plan admin");
 
     if (!subscription) {
       logger.error("Subscription not found", { subscriptionId });
@@ -737,7 +739,10 @@ async function processOrderPayment(entity, status) {
     const { id: paymentId, order_id: orderId, amount, method } = entity;
 
     const order = await Order.findOne({
-      "payment.razorpayOrderId": orderId,
+      $or: [
+        { "payment.gatewayOrderId": orderId },
+        { "payment.razorpayOrderId": orderId },
+      ],
     }).populate("user");
 
     if (!order) {

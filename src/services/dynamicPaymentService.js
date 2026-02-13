@@ -392,11 +392,21 @@ class DynamicPaymentService {
         order.payment.gatewayOrderId
       );
 
-      // Update order if status changed
-      if (paymentStatus.status !== order.payment.status) {
-        order.payment.status = paymentStatus.status;
-        order.payment.updatedAt = new Date();
+      // Update order payment status if changed
+      const mappedStatus =
+        paymentStatus.status === "captured" ||
+        paymentStatus.status === "authorized"
+          ? "paid"
+          : paymentStatus.status === "failed"
+            ? "failed"
+            : order.payment.paymentStatus;
+
+      if (mappedStatus !== order.payment.paymentStatus) {
+        order.payment.paymentStatus = mappedStatus;
         order.payment.gatewayResponse = paymentStatus;
+        if (mappedStatus === "paid" && !order.payment.paidAt) {
+          order.payment.paidAt = new Date();
+        }
         await order.save();
       }
 
@@ -406,8 +416,9 @@ class DynamicPaymentService {
         gatewayOrderId: order.payment.gatewayOrderId,
         paymentId: order.payment.paymentId,
         status: paymentStatus.status,
-        amount: order.payment.amount,
-        currency: order.payment.currency,
+        paymentStatus: order.payment.paymentStatus,
+        amount: order.totalPrice,
+        currency: "INR",
         provider,
         details: paymentStatus,
       };
@@ -437,19 +448,19 @@ class DynamicPaymentService {
         throw new Error(`Payment not found for order: ${orderId}`);
       }
 
-      if (order.payment.status !== "completed") {
+      if (order.payment.paymentStatus !== "paid") {
         throw new Error(
-          `Cannot refund order with status: ${order.payment.status}`
+          `Cannot refund order with payment status: ${order.payment.paymentStatus}`
         );
       }
 
       // Default to full refund
-      const refundAmount = amount || order.payment.amount;
+      const refundAmount = amount || order.totalPrice;
 
       // Validate refund amount
-      if (refundAmount <= 0 || refundAmount > order.payment.amount) {
+      if (refundAmount <= 0 || refundAmount > order.totalPrice) {
         throw new Error(
-          `Invalid refund amount: ${refundAmount}. Order amount: ${order.payment.amount}`
+          `Invalid refund amount: ${refundAmount}. Order amount: ${order.totalPrice}`
         );
       }
 
@@ -468,7 +479,7 @@ class DynamicPaymentService {
       const refundData = {
         paymentId: order.payment.paymentId,
         amount: refundAmount,
-        currency: order.payment.currency,
+        currency: "INR",
         reason,
         orderId: order.payment.gatewayOrderId,
       };
@@ -496,30 +507,28 @@ class DynamicPaymentService {
       );
 
       // Update payment status
-      if (totalRefunded >= order.payment.amount) {
-        order.payment.status = "refunded";
-        order.paymentStatus = "refunded";
+      if (totalRefunded >= order.totalPrice) {
+        order.payment.paymentStatus = "refunded";
       } else {
-        order.payment.status = "partially_refunded";
-        order.paymentStatus = "partially_refunded";
+        order.payment.paymentStatus = "refund_pending";
       }
 
       // Adjust commission if refunded
       if (
-        order.commissionStatus === "due" ||
-        order.commissionStatus === "paid"
+        order.payment.commissionStatus === "due" ||
+        order.payment.commissionStatus === "collected"
       ) {
-        const refundRatio = refundAmount / order.payment.amount;
-        const commissionAdjustment = order.commissionAmount * refundRatio;
+        const refundRatio = refundAmount / order.totalPrice;
+        const commissionAdjustment =
+          order.payment.commissionAmount * refundRatio;
 
-        order.commissionAmount -= commissionAdjustment;
+        order.payment.commissionAmount -= commissionAdjustment;
 
-        if (totalRefunded >= order.payment.amount) {
-          order.commissionStatus = "waived";
+        if (totalRefunded >= order.totalPrice) {
+          order.payment.commissionStatus = "waived";
         }
       }
 
-      order.payment.updatedAt = new Date();
       await order.save();
 
       return {
@@ -529,10 +538,10 @@ class DynamicPaymentService {
         amount: refundAmount,
         status: refundResponse.status || "processed",
         totalRefunded,
-        remainingAmount: order.payment.amount - totalRefunded,
+        remainingAmount: order.totalPrice - totalRefunded,
         commission: {
-          amount: order.commissionAmount,
-          status: order.commissionStatus,
+          amount: order.payment.commissionAmount,
+          status: order.payment.commissionStatus,
         },
         message: "Refund processed successfully",
       };
@@ -623,23 +632,22 @@ class DynamicPaymentService {
       }
 
       // Update order based on webhook event
-      order.payment.status = paymentInfo.status;
       order.payment.paymentId = paymentInfo.paymentId;
-      order.payment.webhookReceivedAt = new Date();
-      order.payment.webhookData = payload;
+      order.payment.gatewayResponse = payload;
 
       // Update commission status if payment successful
       if (
         paymentInfo.status === "completed" &&
-        order.commissionStatus === "pending"
+        order.payment.commissionStatus === "pending"
       ) {
-        order.commissionStatus = "due";
+        order.payment.commissionStatus = "due";
       }
 
       // Update overall order status
       if (paymentInfo.status === "completed") {
         order.status = "confirmed";
-        order.paymentStatus = "paid";
+        order.payment.paymentStatus = "paid";
+        order.payment.paidAt = new Date();
 
         // Only add to statusHistory if status is NOT already "confirmed"
         if (!order.statusHistory.some((h) => h.status === "confirmed")) {
@@ -650,13 +658,7 @@ class DynamicPaymentService {
           });
         }
       } else if (paymentInfo.status === "failed") {
-        order.status = "payment_failed";
-        order.paymentStatus = "failed";
-        order.statusHistory.push({
-          status: "payment_failed",
-          timestamp: new Date(),
-          updatedBy: null,
-        });
+        order.payment.paymentStatus = "failed";
       }
 
       await order.save();

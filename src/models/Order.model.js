@@ -145,6 +145,9 @@ const orderSchema = new mongoose.Schema(
       paidAt: {
         type: Date,
       },
+      failureReason: {
+        type: String,
+      },
       gatewayResponse: {
         type: Object, // Store raw gateway response
       },
@@ -171,7 +174,14 @@ const orderSchema = new mongoose.Schema(
       },
       commissionStatus: {
         type: String,
-        enum: ["pending", "collected", "waived", "disputed"],
+        enum: [
+          "pending",
+          "due",
+          "collected",
+          "waived",
+          "disputed",
+          "not_applicable",
+        ],
         default: "pending",
       },
     },
