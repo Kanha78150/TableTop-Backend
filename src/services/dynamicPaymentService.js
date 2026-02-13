@@ -9,6 +9,8 @@ import { PaymentConfig } from "../models/PaymentConfig.model.js";
 import { Hotel } from "../models/Hotel.model.js";
 import { Order } from "../models/Order.model.js";
 import * as commissionCalculator from "../utils/commissionCalculator.js";
+import assignmentService from "./assignmentService.js";
+import { paymentService } from "./paymentService.js";
 
 class DynamicPaymentService {
   /**
@@ -324,18 +326,71 @@ class DynamicPaymentService {
       // Update overall order status
       if (isPaymentSuccessful) {
         order.status = "confirmed";
-
-        // Only add to statusHistory if status is NOT already "confirmed"
-        if (!order.statusHistory.some((h) => h.status === "confirmed")) {
-          order.statusHistory.push({
-            status: "confirmed",
-            timestamp: new Date(),
-            updatedBy: null,
-          });
-        }
+        // Note: pre-save middleware automatically adds to statusHistory when status changes
       }
 
       await order.save();
+
+      // === POST-PAYMENT SUCCESS ACTIONS ===
+      if (isPaymentSuccessful) {
+        // Re-fetch the saved order with populated fields for post-payment processing
+        const savedOrder = await Order.findById(order._id)
+          .populate("user", "name email phone coins")
+          .populate("hotel", "name email contactNumber gstin hotelId")
+          .populate(
+            "branch",
+            "name branchId location email contactNumber address"
+          );
+
+        // 1. Trigger staff assignment
+        if (!savedOrder.staff) {
+          try {
+            console.log(
+              `\n🎯 ========== TRIGGERING STAFF ASSIGNMENT AFTER PAYMENT ==========`
+            );
+            console.log(`📦 Order: ${savedOrder._id}`);
+            console.log(
+              `🎯 =================================================================\n`
+            );
+
+            const assignmentResult =
+              await assignmentService.assignOrder(savedOrder);
+
+            if (assignmentResult.success && assignmentResult.waiter) {
+              console.log(
+                `✅ Staff assigned: ${assignmentResult.waiter.name} (${assignmentResult.waiter.id})`
+              );
+            } else {
+              console.log(
+                `⚠️ Staff assignment queued: ${assignmentResult.message || "No available staff"}`
+              );
+            }
+          } catch (assignmentError) {
+            console.error(
+              `❌ Staff assignment error: ${assignmentError.message}`
+            );
+            // Don't fail payment verification if assignment fails
+          }
+        }
+
+        // 2. Clear cart and process coins
+        try {
+          await paymentService.clearCartAfterPayment(savedOrder);
+          console.log(`🛒 Cart cleared for order: ${savedOrder._id}`);
+        } catch (cartError) {
+          console.error(`❌ Cart clearing error: ${cartError.message}`);
+        }
+
+        // 3. Create transaction record for accounting
+        try {
+          await paymentService.createTransactionRecord(savedOrder);
+          console.log(
+            `📊 Transaction record created for order: ${savedOrder._id}`
+          );
+        } catch (txError) {
+          console.error(`❌ Transaction record error: ${txError.message}`);
+        }
+      }
 
       return {
         success: true,

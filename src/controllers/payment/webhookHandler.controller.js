@@ -8,6 +8,7 @@ import { EmailQueue } from "../../models/EmailQueue.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { APIResponse } from "../../utils/APIResponse.js";
+import assignmentService from "../../services/assignmentService.js";
 
 /**
  * Comprehensive Razorpay Webhook Handler
@@ -753,11 +754,37 @@ async function processOrderPayment(entity, status) {
     // Update order status
     order.payment.paymentStatus = "paid";
     order.payment.razorpayPaymentId = paymentId;
+    order.payment.paymentId = paymentId; // Also set generic paymentId for dynamic payment system
     order.payment.paymentMethod = method;
     order.payment.paidAt = new Date();
     order.status = "confirmed";
 
     await order.save();
+
+    // Trigger staff assignment
+    if (!order.staff) {
+      try {
+        const assignmentResult = await assignmentService.assignOrder(order);
+        if (assignmentResult.success && assignmentResult.waiter) {
+          logger.info("Staff assigned via webhook", {
+            orderId: order._id,
+            staffId: assignmentResult.waiter.id,
+            staffName: assignmentResult.waiter.name,
+          });
+        } else {
+          logger.warn("Staff assignment queued via webhook", {
+            orderId: order._id,
+            reason: assignmentResult.message || "No available staff",
+          });
+        }
+      } catch (assignmentError) {
+        logger.error("Staff assignment error in webhook", {
+          orderId: order._id,
+          error: assignmentError.message,
+        });
+        // Don't fail webhook processing if assignment fails
+      }
+    }
 
     // Create transaction record for accounting
     try {
