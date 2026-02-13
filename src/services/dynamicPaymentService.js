@@ -28,10 +28,12 @@ class DynamicPaymentService {
 
       // Fetch payment config directly (more reliable than virtual populate)
       // IMPORTANT: Each credential subfield has select: false, must explicitly select all
-      const paymentConfig = await PaymentConfig.findOne({ hotel: hotelId }).select(
-        '+credentials.keyId +credentials.keySecret +credentials.webhookSecret ' +
-        '+credentials.merchantId +credentials.saltKey +credentials.saltIndex ' +
-        '+credentials.merchantKey +credentials.websiteName'
+      const paymentConfig = await PaymentConfig.findOne({
+        hotel: hotelId,
+      }).select(
+        "+credentials.keyId +credentials.keySecret +credentials.webhookSecret " +
+          "+credentials.merchantId +credentials.saltKey +credentials.saltIndex " +
+          "+credentials.merchantKey +credentials.websiteName"
       );
 
       if (!paymentConfig) {
@@ -146,17 +148,20 @@ class DynamicPaymentService {
       order.payment = {
         provider,
         gatewayOrderId: gatewayResponse.orderId,
-        amount,
-        currency,
-        status: "pending",
-        createdAt: new Date(),
-        metadata: gatewayResponse.metadata || {},
+        paymentStatus: "pending",
+        gatewayResponse: {
+          orderId: gatewayResponse.orderId,
+          amount,
+          currency,
+          createdAt: new Date(),
+          metadata: gatewayResponse.metadata || {},
+        },
       };
 
-      // Add commission information
-      order.commissionAmount = commissionResult.amount;
-      order.commissionRate = commissionResult.rate;
-      order.commissionStatus = commissionResult.applicable
+      // Add commission information to payment object
+      order.payment.commissionAmount = commissionResult.amount;
+      order.payment.commissionRate = commissionResult.rate;
+      order.payment.commissionStatus = commissionResult.applicable
         ? "pending"
         : "not_applicable";
 
@@ -273,9 +278,11 @@ class DynamicPaymentService {
 
       if (!isValid) {
         // Update order status to failed
-        order.payment.status = "failed";
-        order.payment.failureReason = "Payment verification failed";
-        order.payment.updatedAt = new Date();
+        order.payment.paymentStatus = "failed";
+        order.payment.gatewayResponse = {
+          error: "Payment verification failed",
+          verifiedAt: new Date(),
+        };
         await order.save();
 
         return {
@@ -294,10 +301,10 @@ class DynamicPaymentService {
 
       // Update order with payment success
       order.payment.paymentId = paymentId;
-      order.payment.status =
-        paymentStatus.status === "success" ? "completed" : paymentStatus.status;
-      order.payment.verifiedAt = new Date();
-      order.payment.updatedAt = new Date();
+      order.payment.paymentStatus =
+        paymentStatus.status === "success" ? "paid" : "failed";
+      order.payment.paidAt =
+        paymentStatus.status === "success" ? new Date() : null;
       order.payment.gatewayResponse = paymentStatus;
 
       // Update commission status if payment is successful
@@ -311,7 +318,6 @@ class DynamicPaymentService {
       // Update overall order status
       if (paymentStatus.status === "success") {
         order.status = "confirmed";
-        order.paymentStatus = "paid";
 
         // Only add to statusHistory if status is NOT already "confirmed"
         if (!order.statusHistory.some((h) => h.status === "confirmed")) {
@@ -330,11 +336,12 @@ class DynamicPaymentService {
         verified: true,
         orderId: order._id,
         paymentId,
-        status: order.payment.status,
-        amount: order.payment.amount,
+        paymentStatus: order.payment.paymentStatus,
+        orderStatus: order.status,
+        amount: order.totalPrice,
         commission: {
-          amount: order.commissionAmount,
-          status: order.commissionStatus,
+          amount: order.payment.commissionAmount,
+          status: order.payment.commissionStatus,
         },
         message: "Payment verified successfully",
       };
