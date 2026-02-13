@@ -252,11 +252,11 @@ class DynamicPaymentService {
 
       // Add provider-specific fields
       if (provider === "razorpay") {
-        // Razorpay uses orderId|paymentId for signature
+        // Razorpay verifyPayment expects orderId, paymentId, signature
         verificationData = {
-          razorpay_order_id: order.payment.gatewayOrderId,
-          razorpay_payment_id: paymentId,
-          razorpay_signature: signature,
+          orderId: order.payment.gatewayOrderId,
+          paymentId,
+          signature,
         };
       } else if (provider === "phonepe") {
         // PhonePe uses callback response
@@ -274,13 +274,18 @@ class DynamicPaymentService {
       }
 
       // Verify payment with gateway
-      const isValid = await gateway.verifyPayment(verificationData);
+      const verifyResult = await gateway.verifyPayment(verificationData);
+      console.log("🔍 [verifyPayment] Gateway verification result:", {
+        success: verifyResult.success,
+        verified: verifyResult.verified,
+        error: verifyResult.error || null,
+      });
 
-      if (!isValid) {
+      if (!verifyResult || !verifyResult.verified) {
         // Update order status to failed
         order.payment.paymentStatus = "failed";
         order.payment.gatewayResponse = {
-          error: "Payment verification failed",
+          error: verifyResult?.error || "Payment verification failed",
           verifiedAt: new Date(),
         };
         await order.save();
@@ -289,7 +294,7 @@ class DynamicPaymentService {
           success: false,
           verified: false,
           orderId: order._id,
-          message: "Payment verification failed",
+          message: verifyResult?.error || "Payment verification failed",
         };
       }
 
