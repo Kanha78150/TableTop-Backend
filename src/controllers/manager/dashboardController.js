@@ -230,6 +230,7 @@ export const getManagerProfile = async (req, res, next) => {
 
     const manager = await Manager.findById(managerId)
       .populate("branch", "name address city state phone email")
+      .populate("hotel", "name address city state phone email")
       .select("-password");
 
     if (!manager) {
@@ -258,6 +259,15 @@ export const getManagerProfile = async (req, res, next) => {
         state: manager.branch.state,
         phone: manager.branch.phone,
         email: manager.branch.email,
+      },
+      hotel: {
+        id: manager.hotel._id,
+        name: manager.hotel.name,
+        address: manager.hotel.address,
+        city: manager.hotel.city,
+        state: manager.hotel.state,
+        phone: manager.hotel.phone,
+        email: manager.hotel.email,
       },
       statistics: managerStats,
       permissions: manager.permissions || [],

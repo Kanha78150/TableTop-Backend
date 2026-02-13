@@ -581,9 +581,11 @@ export const getPaymentPublicKey = async (req, res) => {
       });
     }
 
-    // Fetch payment config with credentials
-    const paymentConfig = await PaymentConfig.findOne({ hotel: hotelId }).select(
-      '+credentials.keyId'
+    // Fetch payment config with ALL credentials
+    const paymentConfig = await PaymentConfig.findOne({
+      hotel: hotelId,
+    }).select(
+      "+credentials.keyId +credentials.keySecret +credentials.webhookSecret +credentials.merchantId +credentials.saltKey +credentials.saltIndex +credentials.merchantKey +credentials.websiteName"
     );
 
     if (!paymentConfig) {
@@ -600,8 +602,22 @@ export const getPaymentPublicKey = async (req, res) => {
       });
     }
 
-    // Get decrypted credentials
-    const credentials = paymentConfig.getDecryptedCredentials();
+    // Get decrypted credentials with proper error handling
+    let credentials;
+    try {
+      credentials = paymentConfig.getDecryptedCredentials();
+    } catch (decryptError) {
+      console.error(
+        "Decryption failed for payment config:",
+        decryptError.message
+      );
+      return res.status(500).json({
+        success: false,
+        message:
+          "Payment credentials are corrupted. Please reconfigure payment gateway in admin panel.",
+        error: "DECRYPTION_FAILED",
+      });
+    }
 
     if (!credentials || !credentials.keyId) {
       return res.status(500).json({

@@ -95,6 +95,7 @@ export const loginManager = async (req, res, next) => {
       // Prepare response data
       const managerData = {
         _id: manager._id,
+        id: manager._id.toString(),
         name: manager.name,
         email: manager.email,
         employeeId: manager.employeeId,
@@ -104,12 +105,14 @@ export const loginManager = async (req, res, next) => {
         status: manager.status,
         hotel: {
           _id: manager.hotel._id,
+          id: manager.hotel._id.toString(),
           name: manager.hotel.name,
           hotelId: manager.hotel.hotelId,
         },
         branch: manager.branch
           ? {
               _id: manager.branch._id,
+              id: manager.branch._id.toString(),
               name: manager.branch.name,
               branchId: manager.branch.branchId,
               location: manager.branch.location,

@@ -60,7 +60,15 @@ export const setupOrderEvents = (io) => {
         }
 
         socket.join(`staff_${staffId}`);
-        logger.info(`Staff ${staffId} joined order notifications room`);
+        console.log(`\n✅ ========== STAFF JOINED ORDERS ==========`);
+        console.log(`👤 Staff ID: ${staffId}`);
+        console.log(`👤 Staff Name: ${userData.name}`);
+        console.log(`📍 Room: staff_${staffId}`);
+        console.log(`🔌 Socket ID: ${socket.id}`);
+        console.log(`✅ ========================================\n`);
+        logger.info(
+          `✅ Staff ${staffId} (${userData.name}) joined order notifications room`
+        );
         socket.emit("joined", {
           room: `staff_${staffId}`,
           type: "orders",
@@ -80,7 +88,7 @@ export const setupOrderEvents = (io) => {
      */
     socket.on("join:manager:orders", (managerId) => {
       try {
-        const roleCheck = requireRole(socket, ["manager"]);
+        const roleCheck = requireRole(socket, ["manager", "branch_manager"]);
         if (!roleCheck.authorized) {
           socket.emit("action:error", {
             event: "join:manager:orders",
@@ -99,7 +107,15 @@ export const setupOrderEvents = (io) => {
         }
 
         socket.join(`manager_${managerId}`);
-        logger.info(`Manager ${managerId} joined order notifications room`);
+        console.log(`\n✅ ========== MANAGER JOINED ORDERS ==========`);
+        console.log(`👔 Manager ID: ${managerId}`);
+        console.log(`👔 Manager Name: ${userData.name}`);
+        console.log(`📍 Room: manager_${managerId}`);
+        console.log(`🔌 Socket ID: ${socket.id}`);
+        console.log(`✅ ==========================================\n`);
+        logger.info(
+          `✅ Manager ${managerId} (${userData.name}) joined order notifications room`
+        );
         socket.emit("joined", {
           room: `manager_${managerId}`,
           type: "orders",
@@ -122,6 +138,7 @@ export const setupOrderEvents = (io) => {
         // Only managers and staff can join branch rooms
         const roleCheck = requireRole(socket, [
           "manager",
+          "branch_manager",
           "staff",
           "waiter",
           "chef",
@@ -134,10 +151,13 @@ export const setupOrderEvents = (io) => {
           return;
         }
 
-        // Verify user belongs to this branch
-        if (userData.branch !== branchId) {
+        // Verify user belongs to this branch (convert both to strings for comparison)
+        const userBranchStr = userData.branch?.toString();
+        const branchIdStr = branchId?.toString();
+
+        if (userBranchStr !== branchIdStr) {
           logger.warn(
-            `User ${userData.id} attempted to join branch ${branchId} but belongs to ${userData.branch}`
+            `User ${userData.id} attempted to join branch ${branchIdStr} but belongs to ${userBranchStr}`
           );
           socket.emit("action:error", {
             event: "join:branch:orders",

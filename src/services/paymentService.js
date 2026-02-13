@@ -150,101 +150,223 @@ class PaymentService {
           default:
             paymentStatus = "pending";
         }
+      }
 
-        // Update order status if payment is successful
-        if (
-          paymentStatus === "paid" &&
-          order.payment.paymentStatus !== "paid"
-        ) {
-          const updateData = {
-            "payment.paymentStatus": "paid",
-            "payment.razorpayPaymentId": payment.id,
-            "payment.paidAt": new Date(),
+      // Check if staff assignment is needed (regardless of payment fetch)
+      const needsStatusUpdate =
+        paymentStatus === "paid" && order.payment.paymentStatus !== "paid";
+      const needsStaffAssignment = !order.staff && paymentStatus === "paid";
+
+      // 🔔 BACKUP NOTIFICATION: Check if order was recently assigned but notification might have been missed
+      // This handles race conditions where webhook assigns staff but notification fails
+      const wasRecentlyAssigned =
+        order.staff &&
+        order.assignedAt &&
+        Date.now() - new Date(order.assignedAt).getTime() < 60000; // Within last 60 seconds
+      const needsNotification =
+        wasRecentlyAssigned &&
+        !order.notificationSentAt &&
+        paymentStatus === "paid";
+
+      console.log(`\n📋 ========== PAYMENT STATUS CHECK ==========`);
+      console.log(`📦 Order: ${order._id}`);
+      console.log(`💰 Current Payment Status: ${order.payment.paymentStatus}`);
+      console.log(`💰 Razorpay Payment Status: ${paymentStatus}`);
+      console.log(`👤 Current Staff: ${order.staff || "None"}`);
+      console.log(`🔄 Needs Status Update: ${needsStatusUpdate}`);
+      console.log(`🎯 Needs Staff Assignment: ${needsStaffAssignment}`);
+      console.log(`🔔 Needs Notification: ${needsNotification}`);
+      console.log(`📋 ============================================\n`);
+
+      if (payment && needsStatusUpdate) {
+        console.log(`\n💳 ========== PAYMENT STATUS CHANGED ==========`);
+        console.log(`📦 Order: ${order._id}`);
+        console.log(`💰 Status: ${order.payment.paymentStatus} → paid`);
+        console.log(`💳 =============================================\n`);
+
+        const updateData = {
+          "payment.paymentStatus": "paid",
+          "payment.razorpayPaymentId": payment.id,
+          "payment.paidAt": new Date(),
+        };
+
+        // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
+        if (order.status === "pending") {
+          updateData.status = "confirmed";
+          updateData.$push = {
+            statusHistory: {
+              status: "confirmed",
+              timestamp: new Date(),
+              updatedBy: null,
+            },
           };
+        }
 
-          // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
-          if (order.status === "pending") {
-            updateData.status = "confirmed";
-            updateData.$push = {
-              statusHistory: {
-                status: "confirmed",
-                timestamp: new Date(),
-                updatedBy: null,
-              },
-            };
+        // Use {new: true} to get updated order in one query (eliminates redundant fetch)
+        const updatedOrder = await Order.findByIdAndUpdate(
+          order._id,
+          updateData,
+          {
+            new: true,
           }
+        );
 
-          // Use {new: true} to get updated order in one query (eliminates redundant fetch)
-          const updatedOrder = await Order.findByIdAndUpdate(
-            order._id,
-            updateData,
+        // Update order reference for assignment check below
+        order = updatedOrder;
+      }
+
+      // 🎯 TRIGGER STAFF ASSIGNMENT IF PAYMENT IS PAID AND NO STAFF ASSIGNED
+      // This handles both: 1) Status just changed to paid, 2) Payment was already paid but no staff assigned yet
+      if (needsStaffAssignment) {
+        try {
+          console.log(`\n🎯 ========== TRIGGERING STAFF ASSIGNMENT ==========`);
+          console.log(`📦 Order: ${order._id}`);
+          console.log(`💰 Payment Status: ${paymentStatus}`);
+          console.log(`👤 Current Staff: ${order.staff || "None"}`);
+          console.log(
+            `🎯 ===================================================\n`
+          );
+
+          logger.info(
+            "Triggering staff assignment after payment status check",
             {
-              new: true,
+              orderId: order._id,
+              paymentStatus: paymentStatus,
+              statusChanged: needsStatusUpdate,
             }
           );
 
-          // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
-          // Use updatedOrder (not stale 'order') to prevent race condition
-          if (!updatedOrder.staff) {
-            try {
-              logger.info(
-                "Triggering staff assignment after payment status update",
-                {
-                  orderId: updatedOrder._id,
-                }
-              );
+          // Pass order object to avoid re-fetching from DB
+          const assignmentResult = await assignmentService.assignOrder(order);
 
-              // Pass order object to avoid re-fetching from DB
-              const assignmentResult =
-                await assignmentService.assignOrder(updatedOrder);
+          if (assignmentResult.success && assignmentResult.waiter) {
+            console.log(`\n✅ ========== ASSIGNMENT SUCCESS ==========`);
+            console.log(
+              `👤 Staff: ${assignmentResult.waiter.name} (${assignmentResult.waiter.id})`
+            );
+            console.log(`📊 Method: ${assignmentResult.assignmentMethod}`);
+            console.log(`✅ ==========================================\n`);
 
-              if (
-                assignmentResult.success &&
-                assignmentResult.assignment &&
-                assignmentResult.assignment.waiter
-              ) {
-                logger.info(
-                  "Staff assignment successful after payment status update",
-                  {
-                    orderId: updatedOrder._id,
-                    waiterId: assignmentResult.assignment.waiter._id,
-                    waiterName: assignmentResult.assignment.waiter.name,
-                    method: assignmentResult.assignment.method,
-                  }
-                );
-              } else {
-                logger.warn(
-                  "Staff assignment failed after payment status update",
-                  {
-                    orderId: updatedOrder._id,
-                    reason: assignmentResult.message || "No available staff",
-                  }
-                );
+            logger.info(
+              "Staff assignment successful after payment status check",
+              {
+                orderId: order._id,
+                waiterId: assignmentResult.waiter.id,
+                waiterName: assignmentResult.waiter.name,
+                method: assignmentResult.assignmentMethod,
               }
-            } catch (assignmentError) {
-              // Log assignment error but don't fail the payment status update
-              logger.error(
-                "Staff assignment error after payment status update",
+            );
+          } else {
+            console.log(`\n⚠️ ========== ASSIGNMENT QUEUED/FAILED ==========`);
+            console.log(
+              `📋 Reason: ${assignmentResult.message || "No available staff"}`
+            );
+            console.log(
+              `⚠️ ================================================\n`
+            );
+
+            logger.warn("Staff assignment failed after payment status check", {
+              orderId: order._id,
+              reason: assignmentResult.message || "No available staff",
+            });
+          }
+        } catch (assignmentError) {
+          console.error(`\n❌ ========== ASSIGNMENT ERROR ==========`);
+          console.error(`💥 Error: ${assignmentError.message}`);
+          console.error(`📦 Order: ${order._id}`);
+          console.error(`❌ =========================================\n`);
+
+          // Log assignment error but don't fail the payment status check
+          logger.error("Staff assignment error after payment status check", {
+            orderId: order._id,
+            error: assignmentError.message,
+            stack: assignmentError.stack,
+          });
+        }
+      }
+
+      // � BACKUP NOTIFICATION: Send notification if staff was recently assigned but notification missed
+      // This handles race conditions where webhook/callback assigned staff but notification failed
+      if (needsNotification) {
+        try {
+          console.log(`\n🔔 ========== SENDING BACKUP NOTIFICATION ==========`);
+          console.log(`📦 Order: ${order._id}`);
+          console.log(`👤 Staff: ${order.staff}`);
+          console.log(`⏰ Assigned At:`, order.assignedAt);
+          console.log(
+            `🔔 ==================================================\n`
+          );
+
+          // Populate order for notification
+          const populatedOrder = await Order.findById(order._id)
+            .populate("staff", "name staffId email manager")
+            .populate("items.foodItem", "name preparationTime");
+
+          if (populatedOrder && populatedOrder.staff) {
+            const { notifyStaffOrderAssigned, notifyManagerOrderAssigned } =
+              await import("./notificationService.js");
+
+            // Send staff notification
+            await notifyStaffOrderAssigned(
+              populatedOrder,
+              populatedOrder.staff,
+              populatedOrder.assignmentMethod || "automatic"
+            );
+
+            // Send manager notification if manager exists
+            if (populatedOrder.staff.manager) {
+              await notifyManagerOrderAssigned(
+                populatedOrder,
+                populatedOrder.staff.manager,
                 {
-                  orderId: updatedOrder._id,
-                  error: assignmentError.message,
-                  stack: assignmentError.stack,
+                  staff: populatedOrder.staff,
+                  assignmentMethod:
+                    populatedOrder.assignmentMethod || "automatic",
+                  isManualAssignment: false,
                 }
               );
             }
-          } // End of if (!updatedOrder.staff)
 
-          // 🛒 CLEAR CART AND PROCESS COINS AFTER PAYMENT STATUS UPDATE
-          try {
-            await this.clearCartAfterPayment(updatedOrder);
-          } catch (cartError) {
-            // Log cart clearing error but don't fail the payment status update
-            logger.error("Cart clearing error after payment status update", {
-              orderId: updatedOrder._id,
-              error: cartError.message,
-              stack: cartError.stack,
-            });
+            console.log(`\n✅ ========== BACKUP NOTIFICATION SENT ==========`);
+            console.log(`👤 Staff: ${populatedOrder.staff.name}`);
+            console.log(`✅ ===============================================\n`);
+
+            logger.info(
+              "Backup notification sent for recently assigned order",
+              {
+                orderId: order._id,
+                staffId: populatedOrder.staff._id,
+                staffName: populatedOrder.staff.name,
+              }
+            );
           }
+        } catch (notificationError) {
+          console.error(`\n❌ ========== BACKUP NOTIFICATION ERROR ==========`);
+          console.error(`💥 Error: ${notificationError.message}`);
+          console.error(
+            `❌ =================================================\n`
+          );
+
+          logger.error("Backup notification failed", {
+            orderId: order._id,
+            error: notificationError.message,
+            stack: notificationError.stack,
+          });
+          // Don't fail the payment status check on notification error
+        }
+      }
+
+      // �🛒 CLEAR CART AFTER PAYMENT (only if status was updated)
+      if (needsStatusUpdate && payment) {
+        try {
+          await this.clearCartAfterPayment(order);
+        } catch (cartError) {
+          // Log cart clearing error but don't fail the payment status check
+          logger.error("Cart clearing error after payment status check", {
+            orderId: order._id,
+            error: cartError.message,
+            stack: cartError.stack,
+          });
         }
       }
 
@@ -418,6 +540,11 @@ class PaymentService {
     // Use updatedOrder (not stale 'order') to prevent race condition
     if (!updatedOrder.staff) {
       try {
+        console.log(`\n🎯 ========== TRIGGERING STAFF ASSIGNMENT ==========`);
+        console.log(`📦 Order: ${updatedOrder._id}`);
+        console.log(`💰 Payment Status: paid`);
+        console.log(`🎯 ===================================================\n`);
+
         logger.info("Triggering staff assignment after payment confirmation", {
           orderId: updatedOrder._id,
         });
@@ -426,18 +553,27 @@ class PaymentService {
         const assignmentResult =
           await assignmentService.assignOrder(updatedOrder);
 
-        if (
-          assignmentResult.success &&
-          assignmentResult.assignment &&
-          assignmentResult.assignment.waiter
-        ) {
+        if (assignmentResult.success && assignmentResult.waiter) {
+          console.log(`\n✅ ========== ASSIGNMENT SUCCESS ==========`);
+          console.log(
+            `👤 Staff: ${assignmentResult.waiter.name} (${assignmentResult.waiter.id})`
+          );
+          console.log(`📊 Method: ${assignmentResult.assignmentMethod}`);
+          console.log(`✅ ==========================================\n`);
+
           logger.info("Staff assignment successful after payment", {
             orderId: updatedOrder._id,
-            waiterId: assignmentResult.assignment.waiter._id,
-            waiterName: assignmentResult.assignment.waiter.name,
-            method: assignmentResult.assignment.method,
+            waiterId: assignmentResult.waiter.id,
+            waiterName: assignmentResult.waiter.name,
+            method: assignmentResult.assignmentMethod,
           });
         } else {
+          console.log(`\n⚠️ ========== ASSIGNMENT QUEUED/FAILED ==========`);
+          console.log(
+            `📋 Reason: ${assignmentResult.message || "No available staff"}`
+          );
+          console.log(`⚠️ ================================================\n`);
+
           logger.warn("Staff assignment failed after payment", {
             orderId: updatedOrder._id,
             reason: assignmentResult.message || "No available staff",
@@ -445,6 +581,11 @@ class PaymentService {
           });
         }
       } catch (assignmentError) {
+        console.error(`\n❌ ========== ASSIGNMENT ERROR ==========`);
+        console.error(`💥 Error: ${assignmentError.message}`);
+        console.error(`📦 Order: ${updatedOrder._id}`);
+        console.error(`❌ =========================================\n`);
+
         // Log assignment error but don't fail the payment confirmation
         logger.error("Staff assignment error after payment confirmation", {
           orderId: updatedOrder._id,

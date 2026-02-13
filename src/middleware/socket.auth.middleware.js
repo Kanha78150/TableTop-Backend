@@ -65,6 +65,7 @@ export const socketAuthMiddleware = async (socket, next) => {
         break;
 
       case "manager":
+      case "branch_manager":
         user = await Manager.findById(userId).select("-password -refreshToken");
         userModel = "Manager";
         break;

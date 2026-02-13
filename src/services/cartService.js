@@ -1035,6 +1035,45 @@ class CartService {
 
       // 12.5. Staff assignment will happen AFTER payment confirmation
       // No longer assigning staff during checkout - prevents assigning staff to unpaid orders
+      if (paymentMethod === "cash") {
+        try {
+          console.log(
+            `\n💰 ========== CASH ORDER: TRIGGERING ASSIGNMENT ==========`
+          );
+          console.log(`📦 Order ID: ${order._id}`);
+          console.log(`🏨 Hotel: ${hotelId}`);
+          console.log(`🏢 Branch: ${normalizedBranchId}`);
+          console.log(
+            `💰 ============================================================\n`
+          );
+
+          const assignmentResult = await assignmentService.assignOrder(order);
+
+          if (assignmentResult.success && assignmentResult.waiter) {
+            console.log(`\n✅ ========== ASSIGNMENT SUCCESS ==========`);
+            console.log(
+              `👤 Staff: ${assignmentResult.waiter.name} (${assignmentResult.waiter.id})`
+            );
+            console.log(`📊 Method: ${assignmentResult.assignmentMethod}`);
+            console.log(`✅ ==========================================\n`);
+
+            // Populate staff in order for response
+            await order.populate({
+              path: "staff",
+              select: "name staffId role",
+            });
+          } else {
+            console.log(`\n⚠️ ========== ASSIGNMENT QUEUED ==========`);
+            console.log(`📋 Order added to queue`);
+            console.log(`⚠️ ==========================================\n`);
+          }
+        } catch (assignmentError) {
+          console.error(`\n❌ ========== ASSIGNMENT ERROR ==========`);
+          console.error(`💥 Error: ${assignmentError.message}`);
+          console.error(`❌ =========================================\n`);
+          // Don't fail checkout on assignment error
+        }
+      }
 
       // 13. Handle cart based on payment method
       if (paymentMethod === "cash") {

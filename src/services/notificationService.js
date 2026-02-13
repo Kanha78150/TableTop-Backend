@@ -419,12 +419,14 @@ export const notifyManagerUserFollowUp = async (complaint) => {
  * Notify staff when order is assigned (automatic assignment)
  * @param {Object} order - Populated order object
  * @param {Object} staff - Staff member object
- * @param {String} assignmentMethod - 'automatic' | 'load-balancing' | 'round-robin'
+ * @param {String} assignmentMethod - 'automatic' | 'load-balancing' | 'round-robin' | 'manual'
+ * @param {String} reason - Optional reason for manual assignments
  */
 export const notifyStaffOrderAssigned = async (
   order,
   staff,
-  assignmentMethod = "automatic"
+  assignmentMethod = "automatic",
+  reason = undefined
 ) => {
   try {
     if (!io) {
@@ -461,13 +463,25 @@ export const notifyStaffOrderAssigned = async (
       estimatedTime: order.estimatedTime,
       hotel: order.hotel,
       branch: order.branch,
+      ...(reason && { reason: reason }), // Include reason for manual assignments
     };
 
     // Emit to staff's personal room
-    io.to(`staff_${staff._id}`).emit("order:assigned", notificationData);
+    const staffIdString = staff._id?.toString() || staff.toString();
+    const roomName = `staff_${staffIdString}`;
+
+    console.log(`\n🔔 ========== ORDER NOTIFICATION ==========`);
+    console.log(`📤 Emitting event: order:assigned`);
+    console.log(`📍 To room: ${roomName}`);
+    console.log(`👤 Staff: ${staff.name} (${staffIdString})`);
+    console.log(`📦 Order: ${order._id}`);
+    console.log(`⚡ Priority: ${priority}`);
+    console.log(`🔔 =========================================\n`);
+
+    io.to(roomName).emit("order:assigned", notificationData);
 
     logger.info(
-      `Order assignment notification sent to staff ${staff._id} (${staff.name}) - Order: ${order._id}, Priority: ${priority}`
+      `✅ Order assignment notification emitted to ${roomName} - Order: ${order._id}, Priority: ${priority}`
     );
 
     // Update order with notification timestamp
@@ -545,7 +559,18 @@ export const notifyStaffOrderFromQueue = async (
     };
 
     // Emit to staff's personal room
-    io.to(`staff_${staff._id}`).emit("order:from_queue", notificationData);
+    const staffIdString = staff._id?.toString() || staff.toString();
+    const roomName = `staff_${staffIdString}`;
+
+    console.log(`\n⚡ ========== QUEUE ORDER NOTIFICATION ==========`);
+    console.log(`📤 Emitting event: order:from_queue`);
+    console.log(`📍 To room: ${roomName}`);
+    console.log(`👤 Staff: ${staff.name} (${staffIdString})`);
+    console.log(`📦 Order: ${order._id}`);
+    console.log(`⏰ Queue duration: ${notificationData.queuedDuration} min`);
+    console.log(`⚡ ===============================================\n`);
+
+    io.to(roomName).emit("order:from_queue", notificationData);
 
     logger.info(
       `HIGH PRIORITY queue order notification sent to staff ${staff._id} (${staff.name}) - Order: ${order._id}, Queue position: ${queuePosition}`
@@ -578,7 +603,7 @@ export const notifyStaffOrderFromQueue = async (
 /**
  * Notify manager when order is assigned (for oversight)
  * @param {Object} order - Populated order object
- * @param {String} managerId - Manager ID
+ * @param {String|Object} managerId - Manager ID (string, ObjectId, or populated object)
  * @param {Object} assignmentDetails - Details about the assignment
  */
 export const notifyManagerOrderAssigned = async (
@@ -592,12 +617,27 @@ export const notifyManagerOrderAssigned = async (
       return;
     }
 
+    // Handle managerId being an object, ObjectId, or string
+    const managerIdString =
+      managerId?._id?.toString() || managerId?.toString() || managerId;
+
+    if (!managerIdString) {
+      logger.warn(
+        "No valid manager ID provided for order assignment notification"
+      );
+      return { success: false, error: "Invalid manager ID" };
+    }
+
     const {
       staff,
       assignmentMethod = "automatic",
       isManualAssignment = false,
       reason = null,
     } = assignmentDetails;
+
+    // Handle staff ID being an object or ObjectId
+    const staffIdString = staff?._id?.toString() || order.staff?.toString();
+    const staffNameString = staff?.name || "Unknown";
 
     const notificationData = {
       orderId: order._id.toString(),
@@ -606,33 +646,42 @@ export const notifyManagerOrderAssigned = async (
       tableNumber: order.tableNumber || order.table?.tableNumber || "N/A",
       totalPrice: order.totalPrice,
       itemCount: order.items?.length || 0,
-      staffId: staff?._id || order.staff,
-      staffName: staff?.name || "Unknown",
+      staffId: staffIdString,
+      staffName: staffNameString,
       assignmentMethod: assignmentMethod,
       isManualAssignment: isManualAssignment,
       reason: reason,
       assignedAt: new Date(),
       priority: order.priority || "normal",
-      hotel: order.hotel,
-      branch: order.branch,
+      hotel: order.hotel?.toString() || order.hotel,
+      branch: order.branch?.toString() || order.branch,
     };
 
     // Emit to manager's personal room
-    io.to(`manager_${managerId}`).emit(
+    io.to(`manager_${managerIdString}`).emit(
       "order:assignment:success",
       notificationData
     );
 
+    logger.info(
+      `✅ Order assignment notification emitted to manager_${managerIdString} room`
+    );
+
     // Also emit to branch room if branch exists
-    if (order.branch) {
-      io.to(`branch_${order.branch}`).emit(
+    const branchIdString =
+      order.branch?._id?.toString() || order.branch?.toString();
+    if (branchIdString) {
+      io.to(`branch_${branchIdString}`).emit(
         "order:assignment:branch",
         notificationData
+      );
+      logger.info(
+        `✅ Order assignment notification also emitted to branch_${branchIdString} room`
       );
     }
 
     logger.info(
-      `Order assignment notification sent to manager ${managerId} - Order: ${order._id}, Staff: ${staff?._id}`
+      `Order assignment notification sent to manager ${managerIdString} - Order: ${order._id}, Staff: ${staffIdString}`
     );
 
     return { success: true, notificationSent: true };

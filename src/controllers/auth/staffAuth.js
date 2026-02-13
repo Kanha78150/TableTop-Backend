@@ -94,6 +94,7 @@ export const loginStaff = async (req, res, next) => {
       // Prepare response data
       const staffData = {
         _id: staff._id,
+        id: staff._id.toString(),
         name: staff.name,
         email: staff.email,
         staffId: staff.staffId,
@@ -104,12 +105,14 @@ export const loginStaff = async (req, res, next) => {
         currentShift: staff.currentShift,
         hotel: {
           _id: staff.hotel._id,
+          id: staff.hotel._id.toString(),
           name: staff.hotel.name,
           hotelId: staff.hotel.hotelId,
         },
         branch: staff.branch
           ? {
               _id: staff.branch._id,
+              id: staff.branch._id.toString(),
               name: staff.branch.name,
               branchId: staff.branch.branchId,
               location: staff.branch.location,
@@ -118,6 +121,7 @@ export const loginStaff = async (req, res, next) => {
         manager: staff.manager
           ? {
               _id: staff.manager._id,
+              id: staff.manager._id.toString(),
               name: staff.manager.name,
               employeeId: staff.manager.employeeId,
               email: staff.manager.email,

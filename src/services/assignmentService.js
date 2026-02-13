@@ -634,7 +634,8 @@ class AssignmentService {
         await notifyStaffOrderAssigned(
           populatedOrder || order,
           waiter,
-          "manual"
+          "manual",
+          reason
         );
 
         // Notify manager about manual assignment success

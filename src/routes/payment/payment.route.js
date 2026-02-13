@@ -15,7 +15,10 @@ import {
   getCommissionSummary,
   getPaymentPublicKey,
 } from "../../controllers/payment/paymentController.js";
-import { authenticateUser } from "../../middleware/auth.middleware.js";
+import {
+  authenticateUser,
+  authenticateAny,
+} from "../../middleware/auth.middleware.js";
 import { authenticate, rbac } from "../../middleware/roleAuth.middleware.js";
 
 const router = express.Router();
@@ -29,7 +32,8 @@ router.post("/verify", authenticateUser, verifyPayment);
 router.get("/my-payments", authenticateUser, getMyPayments);
 
 // Payment status - accessible by customer, manager, admin
-router.get("/:orderId/status", authenticate, getPaymentStatus);
+// router.get("/:orderId/status", authenticate, getPaymentStatus);
+router.get("/:orderId/status", authenticateAny, getPaymentStatus);
 
 // Refund - Manager/Admin only
 router.post(

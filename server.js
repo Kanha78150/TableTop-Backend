@@ -14,6 +14,7 @@ import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
 import { setupOrderEvents } from "./src/socket/socketHandler.js";
 import socketAuthMiddleware from "./src/middleware/socket.auth.middleware.js";
 import { setIO } from "./src/utils/socketService.js";
+import { setSocketIO } from "./src/services/notificationService.js";
 import { logger } from "./src/utils/logger.js";
 import {
   validateEnvironment,
@@ -54,8 +55,10 @@ setupComplaintEvents(io);
 setupOrderEvents(io);
 console.log("📡 Socket event handlers initialized (complaints & orders)");
 
-// Set global socket instance
+// Set global socket instance for socketService and notificationService
 setIO(io);
+setSocketIO(io);
+console.log("✅ Socket instances registered in services");
 
 io.on("connection", (socket) => {
   const userData = socket.data.user;
