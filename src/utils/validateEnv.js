@@ -7,7 +7,6 @@ import { logger } from "./logger.js";
 
 const requiredEnvVars = {
   // Server Configuration
-  PORT: { required: true, description: "Server port number" },
   NODE_ENV: {
     required: true,
     description: "Environment mode",
@@ -89,6 +88,9 @@ const requiredEnvVars = {
 };
 
 const optionalEnvVars = {
+  // Server Configuration (Cloud Run injects PORT automatically)
+  PORT: { description: "Server port number", default: "8080" },
+
   // Twilio SMS (Optional - if SMS functionality is used)
   TWILIO_SID: { description: "Twilio account SID" },
   TWILIO_AUTH_TOKEN: { description: "Twilio auth token" },
