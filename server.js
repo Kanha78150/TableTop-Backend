@@ -111,13 +111,14 @@ const initializeBackgroundServices = async () => {
 /* ---------------- START SERVER ---------------- */
 const startServer = async () => {
   try {
-    await connectDB();
-    isDbConnected = true;
-
     server.listen(PORT, "0.0.0.0", () => {
       logger.info(`Server running on port ${PORT}`);
       logger.info(`Health endpoint: http://localhost:${PORT}/health`);
     });
+
+    // Connect to DB AFTER server is listening
+    await connectDB();
+    isDbConnected = true;
 
     // Start background services AFTER DB is ready
     initializeBackgroundServices();
