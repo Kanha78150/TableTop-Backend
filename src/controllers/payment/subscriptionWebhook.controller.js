@@ -2,7 +2,7 @@ import { AdminSubscription } from "../../models/AdminSubscription.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
-import { paymentService } from "../../services/paymentService.js";
+import { paymentService } from "../../services/payment.service.js";
 import { sendEmail } from "../../utils/emailService.js";
 
 /**
@@ -92,9 +92,8 @@ const handleSuccessfulPayment = async (payload) => {
     const subscriptionId = notes.subscriptionId;
 
     // Find subscription
-    const subscription = await AdminSubscription.findById(
-      subscriptionId
-    ).populate("plan admin");
+    const subscription =
+      await AdminSubscription.findById(subscriptionId).populate("plan admin");
 
     if (!subscription) {
       console.error("Subscription not found:", subscriptionId);
@@ -191,9 +190,8 @@ const handleFailedPayment = async (payload) => {
     const subscriptionId = notes.subscriptionId;
 
     // Find subscription
-    const subscription = await AdminSubscription.findById(
-      subscriptionId
-    ).populate("admin");
+    const subscription =
+      await AdminSubscription.findById(subscriptionId).populate("admin");
 
     if (!subscription) {
       console.error("Subscription not found:", subscriptionId);
@@ -249,9 +247,8 @@ const handleRefundedPayment = async (payload) => {
     const subscriptionId = notes.subscriptionId;
 
     // Find subscription
-    const subscription = await AdminSubscription.findById(
-      subscriptionId
-    ).populate("admin plan");
+    const subscription =
+      await AdminSubscription.findById(subscriptionId).populate("admin plan");
 
     if (!subscription) {
       console.error("Subscription not found:", subscriptionId);
@@ -332,9 +329,8 @@ export const verifySubscriptionPayment = async (req, res, next) => {
     }
 
     // Get payment details
-    const paymentDetails = await paymentService.fetchPaymentDetails(
-      razorpay_payment_id
-    );
+    const paymentDetails =
+      await paymentService.fetchPaymentDetails(razorpay_payment_id);
 
     // Find subscription
     const subscription = await AdminSubscription.findById(subscriptionId);

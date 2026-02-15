@@ -693,6 +693,40 @@ export const sendPasswordResetEmail = async (to, resetToken) => {
   });
 };
 
+// Send password reset email for admin accounts
+export const sendAdminPasswordResetEmail = async (
+  to,
+  resetToken,
+  adminName
+) => {
+  const resetUrl = `${
+    process.env.FRONTEND_URL || "http://localhost:5173"
+  }/admin/reset-password?token=${resetToken}`;
+
+  await getTransporter().sendMail({
+    from: process.env.EMAIL_USER,
+    to,
+    subject: "Admin Password Reset Request - RMS",
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Password Reset Request</h2>
+        <p>Hello ${adminName},</p>
+        <p>You have requested to reset your admin account password.</p>
+        <p>Click the button below to reset your password:</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetUrl}" style="background-color: #dc3545; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
+        </div>
+        <p>Or copy and paste this link in your browser:</p>
+        <p style="word-break: break-all; background-color: #f0f0f0; padding: 10px;">${resetUrl}</p>
+        <p><strong>This link will expire in 15 minutes.</strong></p>
+        <p>If you didn't request this password reset, please ignore this email or contact support.</p>
+        <hr style="margin: 30px 0;">
+        <p style="color: #666; font-size: 12px;">Hotel Management System - Admin Panel</p>
+      </div>
+    `,
+  });
+};
+
 // Send welcome email to newly created manager
 export const sendManagerWelcomeEmail = async (
   managerData,
@@ -770,8 +804,8 @@ export const sendSubscriptionRenewalReminderEmail = async (
         
         <p style="font-size: 16px; color: #555; line-height: 1.6;">
           This is a friendly reminder that your <strong>${planName}</strong> subscription will expire in <strong style="color: #ff9800;">${daysRemaining} day${
-      daysRemaining > 1 ? "s" : ""
-    }</strong>.
+            daysRemaining > 1 ? "s" : ""
+          }</strong>.
         </p>
         
         <div style="background-color: #fff3e0; border-left: 4px solid #ff9800; padding: 15px; margin: 20px 0;">
@@ -832,10 +866,10 @@ export const sendSubscriptionExpiringEmail = async (
         
         <p style="font-size: 16px; color: #555; line-height: 1.6;">
           Your <strong>${planName}</strong> subscription is expiring ${
-      daysRemaining === 0
-        ? "today"
-        : `in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""}`
-    }!
+            daysRemaining === 0
+              ? "today"
+              : `in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""}`
+          }!
         </p>
         
         <div style="background-color: #ffebee; border-left: 4px solid #f44336; padding: 15px; margin: 20px 0;">
@@ -974,8 +1008,8 @@ export const sendReviewInvitationEmail = async (order, user) => {
           
           <p style="font-size: 16px; color: #555; line-height: 1.6;">
             Thank you for dining with us at <strong>${hotelName}</strong>${
-        branchName ? ` - ${branchName}` : ""
-      }! We hope you enjoyed your meal.
+              branchName ? ` - ${branchName}` : ""
+            }! We hope you enjoyed your meal.
           </p>
           
           <div style="background-color: #f5f7fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #667eea;">
@@ -983,8 +1017,8 @@ export const sendReviewInvitationEmail = async (order, user) => {
             <p style="margin: 5px 0; color: #555;"><strong>Order ID:</strong> ${orderId}</p>
             <p style="margin: 5px 0; color: #555;"><strong>Date:</strong> ${completedDate}</p>
             <p style="margin: 5px 0; color: #555;"><strong>Items:</strong> ${itemCount} item${
-        itemCount !== 1 ? "s" : ""
-      }</p>
+              itemCount !== 1 ? "s" : ""
+            }</p>
             <p style="margin: 5px 0; color: #555;"><strong>Total:</strong> ₹${totalAmount.toFixed(
               2
             )}</p>
@@ -1091,8 +1125,8 @@ export const sendReviewResponseEmail = async (review, user, admin, message) => {
           
           <p style="font-size: 16px; color: #555; line-height: 1.6;">
             <strong>${hotelName}</strong>${
-        branchName ? ` - ${branchName}` : ""
-      } has responded to your review. We appreciate you taking the time to share your experience with us!
+              branchName ? ` - ${branchName}` : ""
+            } has responded to your review. We appreciate you taking the time to share your experience with us!
           </p>
           
           <div style="background-color: #f5f7fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #667eea;">

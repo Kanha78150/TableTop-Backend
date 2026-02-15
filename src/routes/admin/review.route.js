@@ -9,7 +9,7 @@ import {
   updateResponse,
   deleteResponse,
   getReviewAnalytics,
-} from "../../controllers/admin/reviewModerationController.js";
+} from "../../controllers/admin/reviewModeration.controller.js";
 import {
   authenticateAdmin,
   requireAdmin,

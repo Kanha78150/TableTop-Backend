@@ -7,12 +7,12 @@ import {
   getBranchWiseAccounting,
   getSettlements,
   exportReport,
-} from "../../controllers/admin/accountingController.js";
+} from "../../controllers/admin/accounting.controller.js";
 
 import {
   getAccountingDashboard,
   getFinancialSummary,
-} from "../../controllers/admin/accountingDashboardController.js";
+} from "../../controllers/admin/accountingDashboard.controller.js";
 
 import {
   validateTransactionQueryMiddleware,

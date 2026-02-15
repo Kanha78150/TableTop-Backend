@@ -6,7 +6,7 @@ import {
   changeManagerPassword,
   deactivateAccount,
   reactivateAccount,
-} from "../../controllers/auth/managerAuth.js";
+} from "../../controllers/auth/managerAuth.controller.js";
 import { authenticateManager } from "../../middleware/auth.middleware.js";
 
 const router = Router();

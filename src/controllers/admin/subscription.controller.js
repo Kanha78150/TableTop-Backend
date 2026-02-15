@@ -4,7 +4,7 @@ import { AdminSubscription } from "../../models/AdminSubscription.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { sendEmail } from "../../utils/emailService.js";
-import { paymentService } from "../../services/paymentService.js";
+import { paymentService } from "../../services/payment.service.js";
 
 /**
  * Get Available Plans
@@ -195,9 +195,8 @@ export const activateSubscription = async (req, res, next) => {
     }
 
     // Find subscription
-    const subscription = await AdminSubscription.findById(
-      subscriptionId
-    ).populate("plan admin");
+    const subscription =
+      await AdminSubscription.findById(subscriptionId).populate("plan admin");
 
     if (!subscription) {
       return next(new APIError(404, "Subscription not found"));
@@ -760,9 +759,8 @@ export const syncUsage = async (req, res, next) => {
   try {
     const adminId = req.admin._id;
 
-    const { syncResourceUsage } = await import(
-      "../../middleware/subscriptionAuth.middleware.js"
-    );
+    const { syncResourceUsage } =
+      await import("../../middleware/subscriptionAuth.middleware.js");
 
     // Sync all resource types
     const resourceTypes = ["hotels", "branches", "managers", "staff", "tables"];

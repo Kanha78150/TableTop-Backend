@@ -6,7 +6,7 @@ import {
   changeStaffPassword,
   deactivateAccount,
   reactivateAccount,
-} from "../../controllers/auth/staffAuth.js";
+} from "../../controllers/auth/staffAuth.controller.js";
 import { authenticateStaff } from "../../middleware/auth.middleware.js";
 
 const router = Router();

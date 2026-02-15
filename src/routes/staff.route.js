@@ -1,13 +1,17 @@
 // src/routes/staff.route.js - Staff Routes with Assignment System Integration
 import express from "express";
-import staffOrderController from "../controllers/staff/orderController.js";
+
+// Import controllers
+import staffOrderController from "../controllers/staff/order.controller.js";
 import {
   getMyAssignedComplaints,
   getComplaintDetails,
   markComplaintAsViewed,
   getStaffComplaintDashboard,
-} from "../controllers/staff/complaintController.js";
-import staffMenuController from "../controllers/staff/menuController.js";
+} from "../controllers/staff/complaint.controller.js";
+import staffMenuController from "../controllers/staff/menu.controller.js";
+
+// Import middleware
 import { authenticate } from "../middleware/roleAuth.middleware.js";
 import { requireRole } from "../middleware/roleAuth.middleware.js";
 
@@ -60,7 +64,8 @@ router.put("/complaints/:complaintId/viewed", markComplaintAsViewed);
 router.put("/complaints/:complaintId/status", (req, res) => {
   return res.status(403).json({
     success: false,
-    message: "Staff have read-only access to complaints. Only managers and admins can update complaint status.",
+    message:
+      "Staff have read-only access to complaints. Only managers and admins can update complaint status.",
   });
 });
 
@@ -68,7 +73,8 @@ router.put("/complaints/:complaintId/status", (req, res) => {
 router.post("/complaints/:complaintId/response", (req, res) => {
   return res.status(403).json({
     success: false,
-    message: "Staff have read-only access to complaints. Only managers and admins can add responses.",
+    message:
+      "Staff have read-only access to complaints. Only managers and admins can add responses.",
   });
 });
 
@@ -76,7 +82,8 @@ router.post("/complaints/:complaintId/response", (req, res) => {
 router.put("/complaints/:complaintId/resolve", (req, res) => {
   return res.status(403).json({
     success: false,
-    message: "Staff have read-only access to complaints. Only managers and admins can resolve complaints.",
+    message:
+      "Staff have read-only access to complaints. Only managers and admins can resolve complaints.",
   });
 });
 
@@ -93,7 +100,10 @@ router.get("/menu/categories", staffMenuController.getFoodCategories);
 router.get("/menu/categories/:categoryId", staffMenuController.getCategoryById);
 
 // Get food items by category
-router.get("/menu/categories/:categoryId/items", staffMenuController.getItemsByCategory);
+router.get(
+  "/menu/categories/:categoryId/items",
+  staffMenuController.getItemsByCategory
+);
 
 // Get all food items
 router.get("/menu/items", staffMenuController.getFoodItems);

@@ -1,6 +1,10 @@
 // src/routes/assignment.route.js - Waiter Assignment System Routes
 import express from "express";
-import assignmentController from "../controllers/assignmentController.js";
+
+// Import controllers
+import assignmentController from "../controllers/assignment.controller.js";
+
+// Import middleware
 import { authenticate } from "../middleware/roleAuth.middleware.js";
 import { requireRole } from "../middleware/roleAuth.middleware.js";
 

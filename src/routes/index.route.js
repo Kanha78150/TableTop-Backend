@@ -10,7 +10,7 @@ import managerRoutes from "./manager.route.js";
 import staffRoutes from "./staff.route.js";
 import userRoutes from "./user.route.js";
 import scanRoutes from "./scan.route.js";
-import paymentRoutes from "./payment.route.js";
+// import paymentRoutes from "./payment.route.js";
 import assignmentRoutes from "./assignment.route.js";
 import paymentConfigRoutes from "./payment/paymentConfig.route.js";
 import dynamicPaymentRoutes from "./payment/payment.route.js";
@@ -85,14 +85,14 @@ router.use("/scan", ensureDbReady, scanRoutes);
 // Payment routes (Razorpay integration - OLD HARDCODED CREDENTIALS)
 // router.use("/payment", ensureDbReady, paymentRoutes);
 
-// ✅ NEW Multi-Provider Dynamic Payment System (Uses PaymentConfig from database)
+// NEW Multi-Provider Dynamic Payment System (Uses PaymentConfig from database)
 router.use("/payment-config", ensureDbReady, paymentConfigRoutes);
 router.use("/payments", ensureDbReady, dynamicPaymentRoutes);
 router.use("/webhooks", ensureDbReady, webhookRoutes);
 
 // Health check endpoints for Cloud Run
 router.get("/", (req, res) => {
-  res.json({ message: "API Root 🚀", status: "ok" });
+  res.json({ message: "Beanrow API Root 🚀", status: "ok" });
 });
 
 router.get("/health", async (req, res) => {

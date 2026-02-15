@@ -6,15 +6,15 @@ import mongoose from "mongoose";
 
 import app from "./src/app.js";
 import connectDB from "./src/config/database.js";
-import assignmentSystemInit from "./src/services/assignmentSystemInit.js";
-import scheduledJobsService from "./src/services/scheduledJobs.js";
-import { startAllJobs } from "./src/services/subscriptionJobs.js";
-import { emailQueueService } from "./src/services/emailQueueService.js";
+import assignmentSystemInit from "./src/services/assignmentSystemInit.service.js";
+import scheduledJobsService from "./src/services/scheduledJobs.service.js";
+import { startAllJobs } from "./src/services/subscriptionJobs.service.js";
+import { emailQueueService } from "./src/services/emailQueue.service.js";
 import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
 import { setupOrderEvents } from "./src/socket/socketHandler.js";
 import socketAuthMiddleware from "./src/middleware/socket.auth.middleware.js";
 import { setIO } from "./src/utils/socketService.js";
-import { setSocketIO } from "./src/services/notificationService.js";
+import { setSocketIO } from "./src/services/notification.service.js";
 import { logger } from "./src/utils/logger.js";
 import {
   validateEnvironment,
@@ -23,15 +23,15 @@ import {
 
 /* ---------------- ENV SETUP ---------------- */
 dotenv.config();
-console.log("🔧 Starting Hotel Management Backend...");
-console.log("📍 Node:", process.version);
+logger.info("Beanrow Server starting...");
+logger.info("Node Version:", process.version);
 
 /* ---------------- ENV VALIDATION ---------------- */
 try {
   const valid = validateEnvironment();
   if (valid) printEnvironmentSummary();
 } catch (err) {
-  console.warn("⚠️ Env validation warning:", err.message);
+  logger.warn("Env validation warning:", err.message);
 }
 
 /* ---------------- SERVER SETUP ---------------- */
@@ -41,32 +41,34 @@ const server = http.createServer(app);
 /* ---------------- SOCKET.IO ---------------- */
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || "*",
+    origin:
+      process.env.CORS_ORIGIN ||
+      "https://beanrow-user-panel.vercel.app,https://beanrow-admin.vercel.app,http://localhost:3001,http://localhost:3000,https://www.beanrow.com",
     credentials: true,
   },
 });
 
 // Register socket authentication middleware
 io.use(socketAuthMiddleware);
-console.log("🔒 Socket authentication middleware registered");
+logger.info("Socket authentication middleware registered");
 
 // Setup socket event handlers
 setupComplaintEvents(io);
 setupOrderEvents(io);
-console.log("📡 Socket event handlers initialized (complaints & orders)");
 
 // Set global socket instance for socketService and notificationService
 setIO(io);
 setSocketIO(io);
-console.log("✅ Socket instances registered in services");
+logger.info("Socket instances registered in services");
 
 io.on("connection", (socket) => {
   const userData = socket.data.user;
-  console.log(
-    `⚡ Socket connected: ${socket.id} - ${userData?.userModel || "Unknown"} ${userData?.name || "N/A"}`
+  logger.info(
+    `Socket connected: ${socket.id} - ${userData?.userModel || "Unknown"} ${userData?.name || "N/A"}`
   );
+
   socket.on("disconnect", () => {
-    console.log(`❌ Socket disconnected: ${socket.id}`);
+    logger.info(`Socket disconnected: ${socket.id}`);
   });
 });
 
@@ -85,58 +87,57 @@ const initializeBackgroundServices = async () => {
       skipTimeTracker: false,
       autoRepairData: true,
     });
-    logger.info("✅ Assignment system initialized");
+    logger.info("Assignment system initialized");
 
     await scheduledJobsService.initialize();
-    logger.info("✅ Scheduled jobs initialized");
+    logger.info("Scheduled jobs initialized");
 
     if (process.env.ENABLE_SUBSCRIPTION_JOBS !== "false") {
       startAllJobs();
-      logger.info("✅ Subscription jobs started");
+      logger.info("Subscription jobs started");
     }
 
     if (process.env.ENABLE_EMAIL_QUEUE !== "false") {
       emailQueueService.startQueueProcessor();
-      logger.info("✅ Email queue started");
+      logger.info("Email queue started");
     }
 
-    console.log("✅ ALL BACKGROUND SERVICES READY");
+    logger.info("ALL BACKGROUND SERVICES READY");
   } catch (error) {
-    logger.error("❌ Background initialization failed:", error);
+    logger.error("Background initialization failed:", error);
   }
 };
 
-/* ---------------- START SERVER (CORRECT WAY) ---------------- */
+/* ---------------- START SERVER ---------------- */
 const startServer = async () => {
   try {
-    // 🔴 THIS IS THE KEY FIX
     await connectDB();
     isDbConnected = true;
 
     server.listen(PORT, "0.0.0.0", () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`🌐 Health: http://localhost:${PORT}/health`);
+      logger.info(`Server running on port ${PORT}`);
+      logger.info(`Health endpoint: http://localhost:${PORT}/health`);
     });
 
     // Start background services AFTER DB is ready
     initializeBackgroundServices();
   } catch (error) {
-    console.error("❌ Server startup failed:", error);
+    logger.error("Server startup failed:", error);
     process.exit(1);
   }
 };
 
 startServer();
 
-/* ---------------- GRACEFUL SHUTDOWN ---------------- */
+/* ---------------- GRACEFUL SERVER SHUTDOWN ---------------- */
 process.on("SIGTERM", async () => {
-  console.log("SIGTERM received, shutting down...");
+  logger.info("SIGTERM received, shutting down...");
   await mongoose.connection.close();
   server.close(() => process.exit(0));
 });
 
 process.on("SIGINT", async () => {
-  console.log("SIGINT received, shutting down...");
+  logger.info("SIGINT received, shutting down...");
   await mongoose.connection.close();
   server.close(() => process.exit(0));
 });

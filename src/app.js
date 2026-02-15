@@ -71,15 +71,14 @@ app.use("/api/v1", routes);
 
 // Health check
 app.get("/", (req, res) => {
-  res.json({ message: "Beanrow System API is running ✅" });
+  res.json({ message: "Beanrow System API is running." });
 });
 
 // Email queue health check
 app.get("/health/email-queue", async (req, res) => {
   try {
-    const { emailQueueService } = await import(
-      "./services/emailQueueService.js"
-    );
+    const { emailQueueService } =
+      await import("./services/emailQueue.service.js");
     const stats = await emailQueueService.getStats();
     res.json({
       status: "ok",

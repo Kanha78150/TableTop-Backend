@@ -16,7 +16,7 @@ import {
   deactivateConfig,
   getPendingApprovals,
   requestDeactivation,
-} from "../../controllers/payment/paymentConfigController.js";
+} from "../../controllers/payment/paymentConfig.controller.js";
 import { authenticate, rbac } from "../../middleware/roleAuth.middleware.js";
 
 const router = express.Router();

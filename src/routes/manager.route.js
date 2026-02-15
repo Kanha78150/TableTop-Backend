@@ -19,7 +19,7 @@ import {
   getManagerProfile,
   updateManagerProfile,
   changePassword,
-} from "../controllers/manager/dashboardController.js";
+} from "../controllers/manager/dashboard.controller.js";
 
 import {
   createStaff,
@@ -33,7 +33,7 @@ import {
   addStaffTraining,
   getStaffSchedule,
   updateStaffSchedule,
-} from "../controllers/manager/staffController.js";
+} from "../controllers/manager/staff.controller.js";
 
 import {
   getMenuItems,
@@ -43,7 +43,7 @@ import {
   getFoodCategories,
   getFoodCategory,
   bulkUpdateGstRate,
-} from "../controllers/manager/menuController.js";
+} from "../controllers/manager/menu.controller.js";
 
 import {
   getAllOrders,
@@ -53,7 +53,7 @@ import {
   getOrderAnalytics,
   getKitchenOrders,
   assignOrderToStaff,
-} from "../controllers/manager/orderController.js";
+} from "../controllers/manager/order.controller.js";
 
 import {
   getAllTables,
@@ -66,7 +66,7 @@ import {
   createReservation,
   updateReservation,
   cancelReservation,
-} from "../controllers/manager/tableController.js";
+} from "../controllers/manager/table.controller.js";
 
 import {
   getAllComplaints,
@@ -77,7 +77,7 @@ import {
   addComplaintResponse,
   resolveComplaint,
   getComplaintAnalytics,
-} from "../controllers/manager/complaintController.js";
+} from "../controllers/manager/complaint.controller.js";
 
 const router = express.Router();
 

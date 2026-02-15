@@ -13,7 +13,7 @@ import {
   getWebhookLogs,
   testWebhook,
   retryWebhook,
-} from "../../controllers/payment/webhookController.js";
+} from "../../controllers/payment/webhook.controller.js";
 import { authenticate, rbac } from "../../middleware/roleAuth.middleware.js";
 
 const router = express.Router();

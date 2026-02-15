@@ -13,7 +13,7 @@ import {
   handlePostLoginUpdates,
   fetchAdminHotels,
   formatUserResponse,
-} from "../../services/authService.js";
+} from "../../services/auth.service.js";
 import { User } from "../../models/User.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { Manager } from "../../models/Manager.model.js";

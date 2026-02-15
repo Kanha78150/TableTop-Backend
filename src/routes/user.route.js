@@ -1,13 +1,15 @@
 import express from "express";
+
+// Import controllers
 import {
   getHotels,
   getHotelDetails,
   getHotelBranchesByLocation,
   searchNearbyHotels,
   getBranchDetails,
-} from "../controllers/user/hotelController.js";
+} from "../controllers/user/hotel.controller.js";
 
-import userMenuController from "../controllers/user/menuController.js";
+import userMenuController from "../controllers/user/menu.controller.js";
 import {
   submitComplaint,
   getMyComplaints,
@@ -16,7 +18,7 @@ import {
   rateResolution,
   reopenComplaint,
   getMyComplaintsDashboard,
-} from "../controllers/user/complaintController.js";
+} from "../controllers/user/complaint.controller.js";
 import {
   addToCart,
   getCart,
@@ -31,7 +33,7 @@ import {
   quickAddToCart,
   getCartItemCount,
   bulkUpdateCart,
-} from "../controllers/user/cartController.js";
+} from "../controllers/user/cart.controller.js";
 import {
   placeOrder,
   getMyOrders,
@@ -45,11 +47,11 @@ import {
   getTableOrderHistory,
   downloadInvoice,
   downloadCreditNote,
-} from "../controllers/user/orderController.js";
+} from "../controllers/user/order.controller.js";
 import {
   getOrderRefundStatus,
   getUserRefunds,
-} from "../controllers/user/refundStatusController.js";
+} from "../controllers/user/refundStatus.controller.js";
 import {
   getCoinBalance,
   getCoinDetails,
@@ -59,7 +61,7 @@ import {
   getMaxCoinsUsable,
   calculateCoinsEarning,
   getCoinSystemInfo,
-} from "../controllers/user/coinController.js";
+} from "../controllers/user/coin.controller.js";
 import {
   submitReview,
   getMyReviews,
@@ -70,8 +72,10 @@ import {
   getBranchReviews,
   getReviewDetails,
   getReviewByOrderId,
-} from "../controllers/user/reviewController.js";
-import userOfferController from "../controllers/user/offerController.js";
+} from "../controllers/user/review.controller.js";
+import userOfferController from "../controllers/user/offer.controller.js";
+
+// Import middleware
 import { authenticateUser } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/multer.middleware.js";
 

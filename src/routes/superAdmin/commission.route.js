@@ -14,7 +14,7 @@ import {
   bulkSetCommission,
   bulkUpdateCommission,
   bulkDeleteCommission,
-} from "../../controllers/superAdmin/commissionController.js";
+} from "../../controllers/superAdmin/commission.controller.js";
 import {
   authenticate,
   requireSuperAdmin,

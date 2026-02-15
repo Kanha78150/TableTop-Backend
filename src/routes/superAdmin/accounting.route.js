@@ -4,14 +4,14 @@ import { requireRole } from "../../middleware/roleAuth.middleware.js";
 import {
   getAccountingDashboard,
   getFinancialSummary,
-} from "../../controllers/admin/accountingDashboardController.js";
+} from "../../controllers/admin/accountingDashboard.controller.js";
 import {
   getAllTransactions,
   getHotelWiseAccounting,
   getBranchWiseAccounting,
   getSettlements,
   exportReport,
-} from "../../controllers/admin/accountingController.js";
+} from "../../controllers/admin/accounting.controller.js";
 import {
   validateDashboardQueryMiddleware,
   validateSummaryQueryMiddleware,

@@ -1,4 +1,6 @@
 import { Router } from "express";
+
+// Import Controllers
 import {
   Signup,
   Login,
@@ -11,7 +13,7 @@ import {
   getProfile,
   logout,
   logoutAll,
-} from "../../controllers/auth/userAuth.js";
+} from "../../controllers/auth/userAuth.controller.js";
 import {
   googleAuth,
   googleLogin,
@@ -19,13 +21,17 @@ import {
   completeOAuthProfile,
   sendOAuthEmailVerification,
   verifyOAuthEmail,
-} from "../../controllers/auth/googleAuth.js";
+} from "../../controllers/auth/googleAuth.controller.js";
+
+// Import Middlewares
 import { upload } from "../../middleware/multer.middleware.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 import {
   authenticateUser,
   authenticateOAuthUser,
 } from "../../middleware/auth.middleware.js";
+
+// Import oauth
 import passport from "../../config/oauth.js";
 
 const router = Router();

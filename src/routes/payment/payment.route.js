@@ -15,7 +15,7 @@ import {
   getCommissionSummary,
   getPaymentPublicKey,
   cancelPayment,
-} from "../../controllers/payment/paymentController.js";
+} from "../../controllers/payment/payment.controller.js";
 import {
   authenticateUser,
   authenticateAny,

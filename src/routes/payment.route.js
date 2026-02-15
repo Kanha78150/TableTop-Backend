@@ -1,4 +1,6 @@
 import express from "express";
+
+// Import controllers
 import {
   initiatePayment,
   handlePaymentCallback,
@@ -10,7 +12,7 @@ import {
   getPaymentAnalytics,
   debugOrdersData,
   debugPaymentCallback,
-} from "../controllers/payment/genericPaymentController.js";
+} from "../controllers/payment/genericPayment.controller.js";
 import {
   createRefundRequest,
   getUserRefundRequests,
@@ -18,7 +20,9 @@ import {
   cancelRefundRequest,
   getAllRefundRequests,
   updateRefundRequestStatus,
-} from "../controllers/payment/refundController.js";
+} from "../controllers/payment/refund.controller.js";
+
+// Import middleware
 import {
   authenticateAdmin,
   rateLimitSensitiveOps,

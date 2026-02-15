@@ -1,7 +1,7 @@
 import express from "express";
 import { validateBulkGstUpdate } from "../validators/foodItem.validators.js";
 
-// Hotel and Branch Controllers
+// Import Hotel and Branch Controllers
 import {
   createHotel,
   getAllHotels,
@@ -13,7 +13,7 @@ import {
   reactivateHotel,
   searchHotels,
   searchHotelsByLocation,
-} from "../controllers/admin/hotelController.js";
+} from "../controllers/admin/hotel.controller.js";
 
 import {
   createBranch,
@@ -25,7 +25,7 @@ import {
   reactivateBranch,
   searchBranchesByLocation,
   getBranchesByHotel,
-} from "../controllers/admin/branchController.js";
+} from "../controllers/admin/branch.controller.js";
 
 // User Management Controllers
 import {
@@ -53,7 +53,7 @@ import {
   reactivateStaff,
   assignStaffToManager,
   getStaffByManager,
-} from "../controllers/admin/userController.js";
+} from "../controllers/admin/user.controller.js";
 
 // Menu Management Controllers
 import {
@@ -70,7 +70,7 @@ import {
   updateFoodItemAvailability,
   updateSingleFoodItemAvailability,
   bulkUpdateGstRate,
-} from "../controllers/admin/menuController.js";
+} from "../controllers/admin/menu.controller.js";
 
 // Table Management Controllers
 import {
@@ -83,10 +83,10 @@ import {
   getAvailableTables,
   bulkUpdateTableStatus,
   getTableStats,
-} from "../controllers/admin/tableController.js";
+} from "../controllers/admin/table.controller.js";
 
 // Offer Management Controllers
-import offerController from "../controllers/admin/offerController.js";
+import offerController from "../controllers/admin/offer.controller.js";
 
 // Analytics Controllers
 import {
@@ -95,7 +95,7 @@ import {
   getProfitLossReport,
   getCustomerAnalytics,
   getBestSellingItems,
-} from "../controllers/admin/analyticsController.js";
+} from "../controllers/admin/analytics.controller.js";
 
 // Coin Management Controllers
 import {
@@ -109,7 +109,7 @@ import {
   getCoinSettingsHistory,
   reverseCoinTransaction,
   debugCoinSettings,
-} from "../controllers/admin/coinController.js";
+} from "../controllers/admin/coin.controller.js";
 
 // Complaint Management Controllers
 import {
@@ -122,9 +122,18 @@ import {
   resolveComplaint,
   getEscalatedComplaints,
   getComplaintAnalytics,
-} from "../controllers/admin/complaintController.js";
+} from "../controllers/admin/complaint.controller.js";
 
-// Middleware
+// ===== SCHEDULED JOBS MANAGEMENT =====
+import {
+  getJobsStatus,
+  scheduleOneTimeReset,
+  stopJob,
+  startJob,
+  stopAllJobs,
+} from "../controllers/scheduledJobs.Controller.js";
+
+// Import Middleware
 import {
   authenticateAdmin,
   requireSuperAdmin,
@@ -851,15 +860,6 @@ router.post(
   requireFeature("coinSystem"),
   reverseCoinTransaction
 );
-
-// ===== SCHEDULED JOBS MANAGEMENT =====
-import {
-  getJobsStatus,
-  scheduleOneTimeReset,
-  stopJob,
-  startJob,
-  stopAllJobs,
-} from "../controllers/scheduledJobsController.js";
 
 // Get status of all scheduled jobs
 router.get(

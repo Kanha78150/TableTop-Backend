@@ -70,7 +70,6 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Indexes for better performance (email, phone, username already have unique indexes from field definition)
 // Only add additional indexes that aren't already defined
 userSchema.index({ coins: 1 });
 userSchema.index({ lastCoinActivity: 1 });

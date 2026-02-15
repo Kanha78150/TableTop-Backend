@@ -1,11 +1,12 @@
 import express from "express";
+// Import controllers
 import {
   handleQRScan,
   validateQRScan,
   getTableInfo,
   recordScanEvent,
   getMenuForTable,
-} from "../controllers/user/qrScanController.js";
+} from "../controllers/user/qrScan.controller.js";
 
 const router = express.Router();
 

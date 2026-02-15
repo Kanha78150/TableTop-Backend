@@ -10,7 +10,7 @@ import {
   triggerPaymentRetry,
   triggerCleanup,
   triggerExpiringSoonAlert,
-} from "../../services/subscriptionJobs.js";
+} from "../../services/subscriptionJobs.service.js";
 
 /**
  * Get status of all subscription-related scheduled jobs

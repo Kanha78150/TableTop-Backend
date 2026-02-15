@@ -14,7 +14,7 @@ import {
   updateAdmin,
   deleteAdmin,
   bootstrapSuperAdmin,
-} from "../../controllers/auth/adminAuth.js";
+} from "../../controllers/auth/adminAuth.controller.js";
 import {
   authenticateAdmin,
   requireSuperAdmin,
