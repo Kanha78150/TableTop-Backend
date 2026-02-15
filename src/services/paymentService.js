@@ -178,6 +178,10 @@ class PaymentService {
       console.log(`🔔 Needs Notification: ${needsNotification}`);
       console.log(`📋 ============================================\n`);
 
+      // Check if failed status needs to be updated
+      const needsFailedUpdate =
+        paymentStatus === "failed" && order.payment.paymentStatus !== "failed";
+
       if (payment && needsStatusUpdate) {
         console.log(`\n💳 ========== PAYMENT STATUS CHANGED ==========`);
         console.log(`📦 Order: ${order._id}`);
@@ -190,17 +194,8 @@ class PaymentService {
           "payment.paidAt": new Date(),
         };
 
-        // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
-        if (order.status === "pending") {
-          updateData.status = "confirmed";
-          updateData.$push = {
-            statusHistory: {
-              status: "confirmed",
-              timestamp: new Date(),
-              updatedBy: null,
-            },
-          };
-        }
+        // Order stays "pending" — staff will confirm it manually
+        // Payment status is tracked separately in order.payment.paymentStatus
 
         // Use {new: true} to get updated order in one query (eliminates redundant fetch)
         const updatedOrder = await Order.findByIdAndUpdate(
@@ -211,77 +206,144 @@ class PaymentService {
           }
         );
 
+        // Create transaction record for successful payment
+        try {
+          await this.createTransactionRecord(updatedOrder);
+        } catch (txError) {
+          logger.error("Failed to create transaction record", {
+            orderId: order._id,
+            error: txError.message,
+          });
+        }
+
         // Update order reference for assignment check below
+        order = updatedOrder;
+      } else if (payment && needsFailedUpdate) {
+        console.log(`\n💳 ========== PAYMENT FAILED ==========`);
+        console.log(`📦 Order: ${order._id}`);
+        console.log(`💰 Status: ${order.payment.paymentStatus} → failed`);
+        console.log(`💳 ======================================\n`);
+
+        const updateData = {
+          "payment.paymentStatus": "failed",
+          "payment.failureReason":
+            payment.error_description || "Payment failed at gateway",
+        };
+
+        const updatedOrder = await Order.findByIdAndUpdate(
+          order._id,
+          updateData,
+          { new: true }
+        );
+
+        // Create transaction record for failed payment
+        try {
+          await this.createTransactionRecord(updatedOrder);
+        } catch (txError) {
+          logger.error(
+            "Failed to create transaction record for failed payment",
+            {
+              orderId: order._id,
+              error: txError.message,
+            }
+          );
+        }
+
+        // Restore cart so user can try again
+        try {
+          await this.restoreCartAfterPaymentFailure(order._id);
+        } catch (cartError) {
+          logger.error("Cart restore error after failed payment", {
+            orderId: order._id,
+            error: cartError.message,
+          });
+        }
+
         order = updatedOrder;
       }
 
       // 🎯 TRIGGER STAFF ASSIGNMENT IF PAYMENT IS PAID AND NO STAFF ASSIGNED
-      // This handles both: 1) Status just changed to paid, 2) Payment was already paid but no staff assigned yet
+      // Re-fetch from DB to get the latest staff value (prevents race with verifyPayment)
       if (needsStaffAssignment) {
-        try {
-          console.log(`\n🎯 ========== TRIGGERING STAFF ASSIGNMENT ==========`);
-          console.log(`📦 Order: ${order._id}`);
-          console.log(`💰 Payment Status: ${paymentStatus}`);
-          console.log(`👤 Current Staff: ${order.staff || "None"}`);
-          console.log(
-            `🎯 ===================================================\n`
-          );
-
-          logger.info(
-            "Triggering staff assignment after payment status check",
-            {
-              orderId: order._id,
-              paymentStatus: paymentStatus,
-              statusChanged: needsStatusUpdate,
-            }
-          );
-
-          // Pass order object to avoid re-fetching from DB
-          const assignmentResult = await assignmentService.assignOrder(order);
-
-          if (assignmentResult.success && assignmentResult.waiter) {
-            console.log(`\n✅ ========== ASSIGNMENT SUCCESS ==========`);
+        const freshOrder = await Order.findById(order._id).lean();
+        if (freshOrder && freshOrder.staff) {
+          logger.info("Staff already assigned by another path, skipping", {
+            orderId: order._id,
+            staffId: freshOrder.staff,
+          });
+        } else if (freshOrder) {
+          try {
             console.log(
-              `👤 Staff: ${assignmentResult.waiter.name} (${assignmentResult.waiter.id})`
+              `\n🎯 ========== TRIGGERING STAFF ASSIGNMENT ==========`
             );
-            console.log(`📊 Method: ${assignmentResult.assignmentMethod}`);
-            console.log(`✅ ==========================================\n`);
+            console.log(`📦 Order: ${order._id}`);
+            console.log(`💰 Payment Status: ${paymentStatus}`);
+            console.log(`👤 Current Staff: ${order.staff || "None"}`);
+            console.log(
+              `🎯 ===================================================\n`
+            );
 
             logger.info(
-              "Staff assignment successful after payment status check",
+              "Triggering staff assignment after payment status check",
               {
                 orderId: order._id,
-                waiterId: assignmentResult.waiter.id,
-                waiterName: assignmentResult.waiter.name,
-                method: assignmentResult.assignmentMethod,
+                paymentStatus: paymentStatus,
+                statusChanged: needsStatusUpdate,
               }
             );
-          } else {
-            console.log(`\n⚠️ ========== ASSIGNMENT QUEUED/FAILED ==========`);
-            console.log(
-              `📋 Reason: ${assignmentResult.message || "No available staff"}`
-            );
-            console.log(
-              `⚠️ ================================================\n`
-            );
 
-            logger.warn("Staff assignment failed after payment status check", {
+            // Pass order object to avoid re-fetching from DB
+            const assignmentResult = await assignmentService.assignOrder(order);
+
+            if (assignmentResult.success && assignmentResult.waiter) {
+              console.log(`\n✅ ========== ASSIGNMENT SUCCESS ==========`);
+              console.log(
+                `👤 Staff: ${assignmentResult.waiter.name} (${assignmentResult.waiter.id})`
+              );
+              console.log(`📊 Method: ${assignmentResult.assignmentMethod}`);
+              console.log(`✅ ==========================================\n`);
+
+              logger.info(
+                "Staff assignment successful after payment status check",
+                {
+                  orderId: order._id,
+                  waiterId: assignmentResult.waiter.id,
+                  waiterName: assignmentResult.waiter.name,
+                  method: assignmentResult.assignmentMethod,
+                }
+              );
+            } else {
+              console.log(
+                `\n⚠️ ========== ASSIGNMENT QUEUED/FAILED ==========`
+              );
+              console.log(
+                `📋 Reason: ${assignmentResult.message || "No available staff"}`
+              );
+              console.log(
+                `⚠️ ================================================\n`
+              );
+
+              logger.warn(
+                "Staff assignment failed after payment status check",
+                {
+                  orderId: order._id,
+                  reason: assignmentResult.message || "No available staff",
+                }
+              );
+            }
+          } catch (assignmentError) {
+            console.error(`\n❌ ========== ASSIGNMENT ERROR ==========`);
+            console.error(`💥 Error: ${assignmentError.message}`);
+            console.error(`📦 Order: ${order._id}`);
+            console.error(`❌ =========================================\n`);
+
+            // Log assignment error but don't fail the payment status check
+            logger.error("Staff assignment error after payment status check", {
               orderId: order._id,
-              reason: assignmentResult.message || "No available staff",
+              error: assignmentError.message,
+              stack: assignmentError.stack,
             });
           }
-        } catch (assignmentError) {
-          console.error(`\n❌ ========== ASSIGNMENT ERROR ==========`);
-          console.error(`💥 Error: ${assignmentError.message}`);
-          console.error(`📦 Order: ${order._id}`);
-          console.error(`❌ =========================================\n`);
-
-          // Log assignment error but don't fail the payment status check
-          logger.error("Staff assignment error after payment status check", {
-            orderId: order._id,
-            error: assignmentError.message,
-            stack: assignmentError.stack,
-          });
         }
       }
 
@@ -504,17 +566,8 @@ class PaymentService {
       "payment.paymentMethod": "razorpay",
     };
 
-    // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
-    if (order.status === "pending") {
-      updateData.status = "confirmed";
-      updateData.$push = {
-        statusHistory: {
-          status: "confirmed",
-          timestamp: new Date(),
-          updatedBy: null,
-        },
-      };
-    }
+    // Order stays "pending" — staff will confirm it manually
+    // Payment status is tracked separately in order.payment.paymentStatus
 
     // Use {new: true} to get updated order in one query (eliminates redundant fetch)
     const updatedOrder = await Order.findByIdAndUpdate(order._id, updateData, {
@@ -537,8 +590,9 @@ class PaymentService {
     }
 
     // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
-    // Use updatedOrder (not stale 'order') to prevent race condition
-    if (!updatedOrder.staff) {
+    // Re-fetch from DB to get the latest staff value (prevents race with verifyPayment)
+    const freshStdOrder = await Order.findById(updatedOrder._id).lean();
+    if (freshStdOrder && !freshStdOrder.staff) {
       try {
         console.log(`\n🎯 ========== TRIGGERING STAFF ASSIGNMENT ==========`);
         console.log(`📦 Order: ${updatedOrder._id}`);
@@ -762,24 +816,15 @@ class PaymentService {
       };
     }
 
-    // Update order status to confirmed and payment status to paid
+    // Update order status to paid
     const updateData = {
       "payment.paymentStatus": "paid",
       "payment.paidAt": new Date(),
       "payment.paymentMethod": "razorpay",
     };
 
-    // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
-    if (order.status === "pending") {
-      updateData.status = "confirmed";
-      updateData.$push = {
-        statusHistory: {
-          status: "confirmed",
-          timestamp: new Date(),
-          updatedBy: null,
-        },
-      };
-    }
+    // Order stays "pending" — staff will confirm it manually
+    // Payment status is tracked separately in order.payment.paymentStatus
 
     // Use {new: true} to get updated order in one query (eliminates redundant fetch)
     const updatedOrder = await Order.findByIdAndUpdate(order._id, updateData, {
@@ -802,8 +847,9 @@ class PaymentService {
     }
 
     // 🎯 TRIGGER STAFF ASSIGNMENT ONLY IF NO STAFF ASSIGNED YET
-    // Use updatedOrder (not stale 'order') to prevent race condition
-    if (!updatedOrder.staff) {
+    // Re-fetch from DB to get the latest staff value (prevents race with verifyPayment)
+    const freshSuccessOrder = await Order.findById(updatedOrder._id).lean();
+    if (freshSuccessOrder && !freshSuccessOrder.staff) {
       try {
         logger.info("Triggering staff assignment after success callback", {
           orderId: updatedOrder._id,
@@ -813,16 +859,12 @@ class PaymentService {
         const assignmentResult =
           await assignmentService.assignOrder(updatedOrder);
 
-        if (
-          assignmentResult.success &&
-          assignmentResult.assignment &&
-          assignmentResult.assignment.waiter
-        ) {
+        if (assignmentResult.success && assignmentResult.waiter) {
           logger.info("Staff assignment successful after success callback", {
             orderId: updatedOrder._id,
-            waiterId: assignmentResult.assignment.waiter._id,
-            waiterName: assignmentResult.assignment.waiter.name,
-            method: assignmentResult.assignment.method,
+            waiterId: assignmentResult.waiter.id,
+            waiterName: assignmentResult.waiter.name,
+            method: assignmentResult.assignmentMethod,
           });
         } else {
           logger.warn("Staff assignment failed after success callback", {
@@ -896,17 +938,8 @@ class PaymentService {
         "payment.paymentMethod": "razorpay",
       };
 
-      // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
-      if (order.status === "pending") {
-        updateData.status = "confirmed";
-        updateData.$push = {
-          statusHistory: {
-            status: "confirmed",
-            timestamp: new Date(),
-            updatedBy: null,
-          },
-        };
-      }
+      // Order stays "pending" — staff will confirm it manually
+      // Payment status is tracked separately in order.payment.paymentStatus
 
       // Use {new: true} to get updated order in one query (eliminates redundant fetch)
       const updatedOrder = await Order.findByIdAndUpdate(
@@ -1326,7 +1359,7 @@ class PaymentService {
   }
 
   /**
-   * Create Transaction record for successful payment
+   * Create Transaction record for any payment outcome (success, failed, cancelled)
    * @param {Object} order - The order object
    * @returns {Object} Created transaction
    */
@@ -1338,12 +1371,37 @@ class PaymentService {
       });
 
       if (existingTransaction) {
-        logger.info("Transaction record already exists", {
-          orderId: order._id,
-          transactionId: existingTransaction._id,
-        });
+        // If existing record is "pending" but order is now resolved, update it
+        const orderPaymentStatus = order.payment?.paymentStatus;
+        if (
+          existingTransaction.status === "pending" &&
+          (orderPaymentStatus === "paid" ||
+            orderPaymentStatus === "failed" ||
+            orderPaymentStatus === "refunded")
+        ) {
+          const newStatus =
+            orderPaymentStatus === "paid" ? "success" : orderPaymentStatus;
+          existingTransaction.status = newStatus;
+          await existingTransaction.save();
+          logger.info("Transaction record updated", {
+            orderId: order._id,
+            oldStatus: "pending",
+            newStatus,
+          });
+        }
         return existingTransaction;
       }
+
+      // Map Order paymentStatus to Transaction status
+      const statusMap = {
+        paid: "success",
+        failed: "failed",
+        refunded: "refunded",
+        cancelled: "failed",
+        pending: "pending",
+      };
+      const transactionStatus =
+        statusMap[order.payment?.paymentStatus] || "pending";
 
       // Create new transaction record
       const transaction = await Transaction.create({
@@ -1353,8 +1411,11 @@ class PaymentService {
         branch: order.branch,
         amount: order.totalPrice,
         paymentMethod: order.payment?.paymentMethod || "cash",
-        status: order.payment?.paymentStatus === "paid" ? "success" : "pending",
-        transactionId: order.payment?.transactionId,
+        provider:
+          order.payment?.provider ||
+          (order.payment?.paymentMethod === "cash" ? "cash" : "razorpay"),
+        status: transactionStatus,
+        transactionId: order.payment?.transactionId || order.payment?.paymentId,
       });
 
       logger.info("Transaction record created successfully", {
@@ -1972,17 +2033,8 @@ class PaymentService {
           updateData["payment.razorpayPaymentId"] = razorpayPayment.id;
           updateData["payment.paidAt"] = new Date();
 
-          // Only update status to "confirmed" if currently "pending" (don't overwrite later stages)
-          if (order.status === "pending") {
-            updateData.status = "confirmed";
-            updateData.$push = {
-              statusHistory: {
-                status: "confirmed",
-                timestamp: new Date(),
-                updatedBy: null,
-              },
-            };
-          }
+          // Order stays "pending" — staff will confirm it manually
+          // Payment status is tracked separately in order.payment.paymentStatus
 
           // Use {new: true} to get updated order in one query (eliminates redundant fetch)
           const updatedOrder = await Order.findByIdAndUpdate(
@@ -2004,16 +2056,16 @@ class PaymentService {
           }
 
           // Trigger staff assignment only if no staff assigned yet
-          // Use updatedOrder (not stale 'order') to prevent race condition
-          if (!updatedOrder.staff) {
+          // Re-fetch from DB to get the latest staff value (prevents race with verifyPayment)
+          const freshSyncOrder = await Order.findById(orderId).lean();
+          if (freshSyncOrder && !freshSyncOrder.staff) {
             try {
-              // Pass order object to avoid re-fetching from DB
               const assignmentResult =
                 await assignmentService.assignOrder(updatedOrder);
               if (assignmentResult.success) {
                 logger.info("Staff assigned after payment sync", {
                   orderId,
-                  waiterId: assignmentResult.assignment?.waiter?._id,
+                  waiterId: assignmentResult.waiter?.id,
                 });
               }
             } catch (assignmentError) {

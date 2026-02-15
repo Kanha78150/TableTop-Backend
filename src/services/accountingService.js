@@ -146,6 +146,11 @@ export const getRevenueComparison = async (filters = {}) => {
 
     // Set current period
     switch (currentPeriod) {
+      case "1d":
+        currentStartDate.setDate(currentEndDate.getDate() - 1);
+        prevEndDate.setDate(currentEndDate.getDate() - 1);
+        prevStartDate.setDate(currentEndDate.getDate() - 2);
+        break;
       case "7d":
         currentStartDate.setDate(currentEndDate.getDate() - 7);
         prevEndDate.setDate(currentEndDate.getDate() - 7);

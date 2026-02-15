@@ -100,11 +100,19 @@ class AssignmentSystemInit {
         );
 
         if (autoRepair) {
-          // Try to reassign these orders
+          // Try to reassign these orders (only if payment is completed or cash)
           for (const order of ordersWithInvalidStaff) {
             try {
-              await assignmentService.assignOrder(order);
-              logger.info(`Reassigned orphaned order ${order._id}`);
+              const isCashOrder = order.payment?.paymentMethod === "cash";
+              const isPaid = order.payment?.paymentStatus === "paid";
+              if (isCashOrder || isPaid) {
+                await assignmentService.assignOrder(order);
+                logger.info(`Reassigned orphaned order ${order._id}`);
+              } else {
+                logger.info(
+                  `Skipping reassignment for order ${order._id} - payment not completed (status: ${order.payment?.paymentStatus}, method: ${order.payment?.paymentMethod})`
+                );
+              }
             } catch (assignError) {
               logger.error(
                 `Failed to reassign order ${order._id}:`,
@@ -291,9 +299,17 @@ class AssignmentSystemInit {
             });
             repairedCount++;
           } else if (!order.staff && order.status === "pending") {
-            // Try to reassign old pending orders
-            await assignmentService.assignOrder(order);
-            repairedCount++;
+            // Try to reassign old pending orders (only if payment is completed or cash)
+            const isCashOrder = order.payment?.paymentMethod === "cash";
+            const isPaid = order.payment?.paymentStatus === "paid";
+            if (isCashOrder || isPaid) {
+              await assignmentService.assignOrder(order);
+              repairedCount++;
+            } else {
+              logger.info(
+                `Skipping orphaned order ${order._id} - payment not completed (status: ${order.payment?.paymentStatus})`
+              );
+            }
           }
         } catch (repairError) {
           logger.error(
@@ -325,6 +341,9 @@ class AssignmentSystemInit {
       // Schedule daily cleanup
       this.scheduleDailyCleanup();
 
+      // Schedule payment timeout checker (runs every 5 minutes)
+      this.schedulePaymentTimeoutChecker();
+
       logger.info("✅ Background services started");
     } catch (error) {
       logger.error("Error starting background services:", error);
@@ -333,39 +352,110 @@ class AssignmentSystemInit {
   }
 
   /**
+   * Check for abandoned payments and mark them as failed.
+   * Orders with paymentMethod != "cash" and paymentStatus = "pending"
+   * that are older than PAYMENT_TIMEOUT_MINUTES are marked as "failed".
+   */
+  schedulePaymentTimeoutChecker() {
+    const PAYMENT_TIMEOUT_MINUTES = 15; // Mark as failed after 15 min
+    const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+
+    setInterval(async () => {
+      try {
+        const cutoffTime = new Date(
+          Date.now() - PAYMENT_TIMEOUT_MINUTES * 60 * 1000
+        );
+
+        // Find orders where payment was initiated but never completed
+        const expiredOrders = await Order.find({
+          "payment.paymentStatus": "pending",
+          "payment.paymentMethod": { $ne: "cash" },
+          createdAt: { $lt: cutoffTime },
+          status: { $in: ["pending", "queued"] },
+        });
+
+        if (expiredOrders.length > 0) {
+          logger.info(
+            `⏰ Found ${expiredOrders.length} orders with expired/abandoned payments`
+          );
+
+          for (const order of expiredOrders) {
+            try {
+              order.payment.paymentStatus = "failed";
+              order.payment.failureReason =
+                "Payment timeout - not completed within 15 minutes";
+              order.status = "cancelled";
+              await order.save();
+
+              // Create Transaction record for accounting (failed/timeout)
+              try {
+                const paymentService = (await import("./paymentService.js"))
+                  .default;
+                await paymentService.createTransactionRecord(order);
+                logger.info(
+                  `📊 Transaction record (timeout-failed) created for order ${order._id}`
+                );
+              } catch (txError) {
+                logger.error(
+                  `❌ Transaction record error for ${order._id}: ${txError.message}`
+                );
+              }
+
+              logger.info(
+                `⏰ Order ${order._id} marked as payment failed (abandoned after ${PAYMENT_TIMEOUT_MINUTES} min)`
+              );
+            } catch (updateError) {
+              logger.error(`Failed to expire order ${order._id}:`, updateError);
+            }
+          }
+        }
+      } catch (error) {
+        logger.error("Error in payment timeout checker:", error);
+      }
+    }, CHECK_INTERVAL_MS);
+
+    logger.info(
+      `⏰ Payment timeout checker scheduled (every ${CHECK_INTERVAL_MS / 60000} min, timeout: ${PAYMENT_TIMEOUT_MINUTES} min)`
+    );
+  }
+
+  /**
    * Schedule daily cleanup tasks
    */
   scheduleDailyCleanup() {
     // Run cleanup every 24 hours
-    setInterval(async () => {
-      try {
-        logger.info("🧹 Running daily cleanup...");
+    setInterval(
+      async () => {
+        try {
+          logger.info("🧹 Running daily cleanup...");
 
-        // Clear old assignment history
-        await Order.updateMany(
-          {},
-          {
-            $pull: {
-              assignmentHistory: {
-                assignedAt: {
-                  $lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          // Clear old assignment history
+          await Order.updateMany(
+            {},
+            {
+              $pull: {
+                assignmentHistory: {
+                  assignedAt: {
+                    $lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                  },
                 },
               },
-            },
-          }
-        );
+            }
+          );
 
-        // Clear expired queue entries
-        await queueService.clearExpiredQueueEntries(24);
+          // Clear expired queue entries
+          await queueService.clearExpiredQueueEntries(24);
 
-        // Reset daily metrics in time tracker
-        timeTracker.resetDailyMetrics();
+          // Reset daily metrics in time tracker
+          timeTracker.resetDailyMetrics();
 
-        logger.info("✅ Daily cleanup completed");
-      } catch (error) {
-        logger.error("Error in daily cleanup:", error);
-      }
-    }, 24 * 60 * 60 * 1000); // 24 hours
+          logger.info("✅ Daily cleanup completed");
+        } catch (error) {
+          logger.error("Error in daily cleanup:", error);
+        }
+      },
+      24 * 60 * 60 * 1000
+    ); // 24 hours
   }
 
   /**

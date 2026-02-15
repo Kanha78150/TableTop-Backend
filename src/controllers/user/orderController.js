@@ -61,14 +61,23 @@ export const placeOrder = async (req, res, next) => {
       }
     );
 
-    // Automatically assign waiter to the new order
+    // Automatically assign waiter to the new order (only for cash orders)
+    // For digital payments (razorpay, phonepe, etc.), assignment happens AFTER payment verification
     let assignmentResult = null;
-    try {
-      assignmentResult = await assignmentService.assignOrder(order);
-      logger.info(`Order ${order._id} assigned successfully`);
-    } catch (assignmentError) {
-      logger.error(`Failed to assign order ${order._id}:`, assignmentError);
-      // Order is placed but assignment failed - it will be handled by timeTracker
+    const isCashOrder =
+      paymentMethod === "cash" || order.payment?.paymentMethod === "cash";
+    if (isCashOrder) {
+      try {
+        assignmentResult = await assignmentService.assignOrder(order);
+        logger.info(`Order ${order._id} assigned successfully`);
+      } catch (assignmentError) {
+        logger.error(`Failed to assign order ${order._id}:`, assignmentError);
+        // Order is placed but assignment failed - it will be handled by timeTracker
+      }
+    } else {
+      logger.info(
+        `Order ${order._id} - skipping staff assignment, waiting for payment verification (method: ${paymentMethod})`
+      );
     }
 
     // Prepare response data
@@ -88,8 +97,8 @@ export const placeOrder = async (req, res, next) => {
     const message = assignmentResult?.queued
       ? "Order placed and added to queue - will be assigned when a waiter becomes available"
       : assignmentResult
-      ? "Order placed and assigned to waiter successfully"
-      : "Order placed successfully - assignment pending";
+        ? "Order placed and assigned to waiter successfully"
+        : "Order placed successfully - assignment pending";
 
     res.status(201).json(new APIResponse(201, responseData, message));
   } catch (error) {

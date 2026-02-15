@@ -124,14 +124,14 @@ export const getHotelCommission = async (req, res) => {
       {
         $match: {
           hotel: hotel._id,
-          commissionAmount: { $gt: 0 },
+          "payment.commissionAmount": { $gt: 0 },
         },
       },
       {
         $group: {
-          _id: "$commissionStatus",
+          _id: "$payment.commissionStatus",
           count: { $sum: 1 },
-          totalCommission: { $sum: "$commissionAmount" },
+          totalCommission: { $sum: "$payment.commissionAmount" },
         },
       },
     ]);
@@ -173,18 +173,18 @@ export const getAllCommissionStatistics = async (req, res) => {
     const commissionData = await Order.aggregate([
       {
         $match: {
-          commissionAmount: { $gt: 0 },
+          "payment.commissionAmount": { $gt: 0 },
         },
       },
       {
         $group: {
           _id: {
             hotel: "$hotel",
-            status: "$commissionStatus",
+            status: "$payment.commissionStatus",
           },
           count: { $sum: 1 },
-          totalOrders: { $sum: "$totalAmount" },
-          totalCommission: { $sum: "$commissionAmount" },
+          totalOrders: { $sum: "$totalPrice" },
+          totalCommission: { $sum: "$payment.commissionAmount" },
         },
       },
       {
@@ -278,21 +278,21 @@ export const markCommissionPaid = async (req, res) => {
     const result = await Order.updateMany(
       {
         _id: { $in: orderIds },
-        commissionStatus: "due",
+        "payment.commissionStatus": "due",
       },
       {
         $set: {
-          commissionStatus: "paid",
-          commissionPaidAt: new Date(),
-          commissionPaidBy: req.user._id,
-          commissionNotes: notes || "Marked as paid by super admin",
+          "payment.commissionStatus": "collected",
+          "payment.commissionPaidAt": new Date(),
+          "payment.commissionPaidBy": req.user._id,
+          "payment.commissionNotes": notes || "Marked as paid by super admin",
         },
       }
     );
 
     return res.status(200).json({
       success: true,
-      message: `Successfully marked ${result.modifiedCount} orders as paid`,
+      message: `Successfully marked ${result.modifiedCount} orders as collected`,
       data: {
         updatedCount: result.modifiedCount,
         totalRequested: orderIds.length,
@@ -335,15 +335,15 @@ export const waiveCommission = async (req, res) => {
     const result = await Order.updateMany(
       {
         _id: { $in: orderIds },
-        commissionStatus: { $in: ["pending", "due"] },
+        "payment.commissionStatus": { $in: ["pending", "due"] },
       },
       {
         $set: {
-          commissionStatus: "waived",
-          commissionAmount: 0,
-          commissionWaivedAt: new Date(),
-          commissionWaivedBy: req.user._id,
-          commissionNotes: reason,
+          "payment.commissionStatus": "waived",
+          "payment.commissionAmount": 0,
+          "payment.commissionWaivedAt": new Date(),
+          "payment.commissionWaivedBy": req.user._id,
+          "payment.commissionNotes": reason,
         },
       }
     );

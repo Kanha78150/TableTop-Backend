@@ -115,7 +115,10 @@ class InvoiceService {
           paymentMethod: order.payment?.paymentMethod || "Online",
           paidAt: order.payment?.paidAt || order.createdAt,
           transactionId:
-            order.payment?.razorpayPaymentId || order.payment?.razorpayOrderId,
+            order.payment?.paymentId ||
+            order.payment?.razorpayPaymentId ||
+            order.payment?.gatewayOrderId ||
+            order.payment?.razorpayOrderId,
           orderId: order._id.toString().slice(-12).toUpperCase(),
         },
         currentY

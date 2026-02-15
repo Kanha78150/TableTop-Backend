@@ -104,7 +104,8 @@ class PaymentReconciliationService {
 
       // Build query
       const query = {
-        "payment.paymentMethod": "razorpay",
+        "payment.provider": { $in: ["razorpay"] },
+        "payment.paymentStatus": { $in: ["paid", "pending", "failed"] },
       };
 
       if (startDate || endDate) {
@@ -169,9 +170,11 @@ class PaymentReconciliationService {
       type: "order",
       id: order._id,
       orderId: order._id,
-      transactionId: order.payment?.transactionId,
-      razorpayOrderId: order.payment?.razorpayOrderId,
-      razorpayPaymentId: order.payment?.razorpayPaymentId,
+      transactionId: order.payment?.paymentId || order.payment?.transactionId,
+      razorpayOrderId:
+        order.payment?.gatewayOrderId || order.payment?.razorpayOrderId,
+      razorpayPaymentId:
+        order.payment?.paymentId || order.payment?.razorpayPaymentId,
       dbStatus: order.payment?.paymentStatus,
       dbAmount: order.totalPrice,
       matched: false,
@@ -179,7 +182,9 @@ class PaymentReconciliationService {
     };
 
     // Check if payment ID exists
-    if (!order.payment?.razorpayPaymentId) {
+    const paymentId =
+      order.payment?.paymentId || order.payment?.razorpayPaymentId;
+    if (!paymentId) {
       reconciliation.issues.push("missing_payment_id");
 
       // If order is marked as paid but no payment ID, it's suspicious
@@ -192,9 +197,8 @@ class PaymentReconciliationService {
 
     try {
       // Fetch payment details from Razorpay
-      const razorpayPayment = await paymentService.razorpay.payments.fetch(
-        order.payment.razorpayPaymentId
-      );
+      const razorpayPayment =
+        await paymentService.razorpay.payments.fetch(paymentId);
 
       reconciliation.razorpayStatus = razorpayPayment.status;
       reconciliation.razorpayAmount = razorpayPayment.amount / 100;
@@ -223,10 +227,9 @@ class PaymentReconciliationService {
       }
 
       // Check order ID match
-      if (
-        order.payment.razorpayOrderId &&
-        razorpayPayment.order_id !== order.payment.razorpayOrderId
-      ) {
+      const gatewayOrderId =
+        order.payment.gatewayOrderId || order.payment.razorpayOrderId;
+      if (gatewayOrderId && razorpayPayment.order_id !== gatewayOrderId) {
         reconciliation.issues.push("order_id_mismatch");
       }
 

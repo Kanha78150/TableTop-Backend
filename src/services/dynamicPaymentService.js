@@ -291,6 +291,23 @@ class DynamicPaymentService {
         };
         await order.save();
 
+        // Create transaction record for failed verification
+        try {
+          await paymentService.createTransactionRecord(order);
+          console.log(
+            `📊 Transaction record (verification-failed) created for order: ${order._id}`
+          );
+        } catch (txError) {
+          console.error(`❌ Transaction record error: ${txError.message}`);
+        }
+
+        // Restore cart so user can try again
+        try {
+          await paymentService.restoreCartAfterPaymentFailure(order._id);
+        } catch (cartError) {
+          console.error(`❌ Cart restore error: ${cartError.message}`);
+        }
+
         return {
           success: false,
           verified: false,
@@ -386,6 +403,23 @@ class DynamicPaymentService {
           );
         } catch (txError) {
           console.error(`❌ Transaction record error: ${txError.message}`);
+        }
+      } else {
+        // Payment was not successful — create failed transaction record
+        try {
+          await paymentService.createTransactionRecord(order);
+          console.log(
+            `📊 Transaction record (payment-failed) created for order: ${order._id}`
+          );
+        } catch (txError) {
+          console.error(`❌ Transaction record error: ${txError.message}`);
+        }
+
+        // Restore cart so user can try again
+        try {
+          await paymentService.restoreCartAfterPaymentFailure(order._id);
+        } catch (cartError) {
+          console.error(`❌ Cart restore error: ${cartError.message}`);
         }
       }
 
@@ -645,11 +679,21 @@ class DynamicPaymentService {
       let paymentInfo;
 
       if (provider === "razorpay") {
+        const razorpayStatus = payload.payload?.payment?.entity?.status;
+        // Map Razorpay status to our internal status: "captured" → "completed", "failed"/"refunded" → same
+        const mappedStatus =
+          razorpayStatus === "captured"
+            ? "completed"
+            : razorpayStatus === "failed"
+              ? "failed"
+              : razorpayStatus === "refunded"
+                ? "refunded"
+                : razorpayStatus;
         paymentInfo = {
           event: payload.event,
           paymentId: payload.payload?.payment?.entity?.id,
           orderId: payload.payload?.payment?.entity?.order_id,
-          status: payload.payload?.payment?.entity?.status,
+          status: mappedStatus,
           amount: payload.payload?.payment?.entity?.amount / 100, // Convert from paise
         };
       } else if (provider === "phonepe") {
@@ -697,23 +741,32 @@ class DynamicPaymentService {
 
       // Update overall order status
       if (paymentInfo.status === "completed") {
-        order.status = "confirmed";
+        // Order stays "pending" — staff will confirm it manually
         order.payment.paymentStatus = "paid";
         order.payment.paidAt = new Date();
-
-        // Only add to statusHistory if status is NOT already "confirmed"
-        if (!order.statusHistory.some((h) => h.status === "confirmed")) {
-          order.statusHistory.push({
-            status: "confirmed",
-            timestamp: new Date(),
-            updatedBy: null,
-          });
-        }
       } else if (paymentInfo.status === "failed") {
         order.payment.paymentStatus = "failed";
       }
 
       await order.save();
+
+      // Create transaction record for accounting (for all payment outcomes)
+      if (
+        paymentInfo.status === "completed" ||
+        paymentInfo.status === "failed"
+      ) {
+        try {
+          const paymentService = (await import("./paymentService.js")).default;
+          await paymentService.createTransactionRecord(order);
+          console.log(
+            `📊 [Webhook] Transaction record (${paymentInfo.status}) created for order: ${order._id}`
+          );
+        } catch (txError) {
+          console.error(
+            `❌ [Webhook] Transaction record error: ${txError.message}`
+          );
+        }
+      }
 
       return {
         success: true,

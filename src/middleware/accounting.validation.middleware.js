@@ -12,9 +12,21 @@ const validateTransactionQuery = Joi.object({
   branchId: Joi.string()
     .pattern(/^[0-9a-fA-F]{24}$/)
     .optional(),
-  status: Joi.string().valid("pending", "success", "failed").optional(),
+  status: Joi.string()
+    .valid("pending", "success", "failed", "refunded")
+    .optional(),
   paymentMethod: Joi.string()
-    .valid("cash", "card", "upi", "wallet", "razorpay")
+    .valid(
+      "cash",
+      "card",
+      "upi",
+      "wallet",
+      "razorpay",
+      "phonepe",
+      "paytm",
+      "netbanking",
+      "paylater"
+    )
     .optional(),
   startDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
@@ -37,7 +49,9 @@ const validateHotelAccountingQuery = Joi.object({
   endDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  status: Joi.string().valid("pending", "success", "failed").default("success"),
+  status: Joi.string()
+    .valid("pending", "success", "failed", "refunded")
+    .default("success"),
 });
 
 const validateBranchAccountingQuery = Joi.object({
@@ -50,7 +64,9 @@ const validateBranchAccountingQuery = Joi.object({
   endDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  status: Joi.string().valid("pending", "success", "failed").default("success"),
+  status: Joi.string()
+    .valid("pending", "success", "failed", "refunded")
+    .default("success"),
 });
 
 const validateSettlementQuery = Joi.object({
@@ -62,7 +78,9 @@ const validateSettlementQuery = Joi.object({
   branchId: Joi.string()
     .pattern(/^[0-9a-fA-F]{24}$/)
     .optional(),
-  status: Joi.string().valid("pending", "success", "failed").optional(),
+  status: Joi.string()
+    .valid("pending", "success", "failed", "refunded")
+    .optional(),
   startDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
@@ -91,7 +109,9 @@ const validateExportRequest = Joi.object({
   endDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  status: Joi.string().valid("pending", "success", "failed").optional(),
+  status: Joi.string()
+    .valid("pending", "success", "failed", "refunded")
+    .optional(),
 });
 
 const validateDashboardQuery = Joi.object({

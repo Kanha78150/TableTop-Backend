@@ -374,7 +374,7 @@ export const getHotelPaymentHistory = async (req, res) => {
       0
     );
     const totalCommission = orders.reduce(
-      (sum, order) => sum + (order.commissionAmount || 0),
+      (sum, order) => sum + (order.payment?.commissionAmount || 0),
       0
     );
 
@@ -493,7 +493,7 @@ export const getCommissionSummary = async (req, res) => {
     // Build query
     const query = {
       hotel: hotelId,
-      commissionAmount: { $gt: 0 },
+      "payment.commissionAmount": { $gt: 0 },
     };
 
     if (startDate || endDate) {
@@ -507,10 +507,10 @@ export const getCommissionSummary = async (req, res) => {
       { $match: query },
       {
         $group: {
-          _id: "$commissionStatus",
+          _id: "$payment.commissionStatus",
           count: { $sum: 1 },
-          totalAmount: { $sum: "$totalAmount" },
-          totalCommission: { $sum: "$commissionAmount" },
+          totalAmount: { $sum: "$totalPrice" },
+          totalCommission: { $sum: "$payment.commissionAmount" },
         },
       },
     ]);
@@ -519,7 +519,7 @@ export const getCommissionSummary = async (req, res) => {
     const summary = {
       pending: { count: 0, totalAmount: 0, totalCommission: 0 },
       due: { count: 0, totalAmount: 0, totalCommission: 0 },
-      paid: { count: 0, totalAmount: 0, totalCommission: 0 },
+      collected: { count: 0, totalAmount: 0, totalCommission: 0 },
       waived: { count: 0, totalAmount: 0, totalCommission: 0 },
     };
 
@@ -534,7 +534,7 @@ export const getCommissionSummary = async (req, res) => {
     });
 
     const totalCommissionDue = summary.due.totalCommission;
-    const totalCommissionPaid = summary.paid.totalCommission;
+    const totalCommissionCollected = summary.collected.totalCommission;
     const totalCommissionPending = summary.pending.totalCommission;
 
     return res.status(200).json({
@@ -544,7 +544,7 @@ export const getCommissionSummary = async (req, res) => {
         totals: {
           pending: totalCommissionPending,
           due: totalCommissionDue,
-          paid: totalCommissionPaid,
+          collected: totalCommissionCollected,
           outstanding: totalCommissionDue + totalCommissionPending,
         },
         commissionConfig: hotel.commissionConfig,
@@ -644,6 +644,96 @@ export const getPaymentPublicKey = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch payment public key",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Cancel a pending payment (user dismissed Razorpay checkout without paying)
+ * @route POST /api/v1/payments/:orderId/cancel
+ * @access Private (authenticated user)
+ */
+export const cancelPayment = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user?._id;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Order ID is required",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // Ensure the user owns this order
+    if (userId && order.user.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only cancel your own orders",
+      });
+    }
+
+    // Only cancel if payment is still pending
+    if (order.payment.paymentStatus !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Payment is already ${order.payment.paymentStatus}, cannot cancel`,
+      });
+    }
+
+    // Only cancel non-cash orders (cash orders don't need payment cancellation)
+    if (order.payment.paymentMethod === "cash") {
+      return res.status(400).json({
+        success: false,
+        message: "Cash orders cannot be cancelled through payment cancellation",
+      });
+    }
+
+    // Mark payment as failed and order as cancelled
+    order.payment.paymentStatus = "failed";
+    order.payment.failureReason = "Payment cancelled by user";
+    order.status = "cancelled";
+    order.cancelledAt = new Date();
+    await order.save();
+
+    // Create Transaction record for accounting (failed payment)
+    try {
+      const paymentService = (await import("../../services/paymentService.js"))
+        .default;
+      await paymentService.createTransactionRecord(order);
+      console.log(
+        `📊 Transaction record (failed) created for order ${orderId}`
+      );
+    } catch (txError) {
+      console.error(`❌ Transaction record error: ${txError.message}`);
+    }
+
+    console.log(`Payment cancelled by user for order ${orderId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment cancelled successfully",
+      data: {
+        orderId: order._id,
+        status: order.status,
+        paymentStatus: order.payment.paymentStatus,
+      },
+    });
+  } catch (error) {
+    console.error("Error cancelling payment:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to cancel payment",
       error: error.message,
     });
   }

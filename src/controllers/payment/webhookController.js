@@ -51,6 +51,89 @@ export const handleRazorpayWebhook = async (req, res) => {
 };
 
 /**
+ * Handle Razorpay webhook (Universal - no hotelId required)
+ * Auto-detects hotel from the order in the webhook payload.
+ * Use this when you have a single webhook URL in Razorpay dashboard.
+ * @route POST /api/v1/webhooks/razorpay (no hotelId param)
+ * @access Public (webhook endpoint)
+ */
+export const handleRazorpayWebhookUniversal = async (req, res) => {
+  try {
+    const signature = req.headers["x-razorpay-signature"];
+    const payload = req.body;
+
+    if (!signature) {
+      console.error("Razorpay webhook (universal): Missing signature");
+      return res.status(400).json({
+        success: false,
+        message: "Missing webhook signature",
+      });
+    }
+
+    // Extract Razorpay order_id from webhook payload to find the hotel
+    const razorpayOrderId =
+      payload.payload?.payment?.entity?.order_id ||
+      payload.payload?.order?.entity?.id;
+
+    if (!razorpayOrderId) {
+      console.error("Razorpay webhook (universal): No order_id in payload");
+      return res.status(400).json({
+        success: false,
+        message: "No order_id found in webhook payload",
+      });
+    }
+
+    // Look up the order to find the hotel
+    const order = await Order.findOne({
+      "payment.gatewayOrderId": razorpayOrderId,
+    });
+
+    if (!order) {
+      console.error(
+        `Razorpay webhook (universal): Order not found for gatewayOrderId: ${razorpayOrderId}`
+      );
+      // Return 200 so Razorpay doesn't keep retrying for unknown orders
+      return res.status(200).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const hotelId = order.hotel.toString();
+
+    console.log(
+      `Razorpay webhook (universal): Found hotel ${hotelId} for order ${order._id}`
+    );
+
+    // Process webhook with detected hotelId
+    const result = await dynamicPaymentService.handleWebhook(
+      "razorpay",
+      payload,
+      signature,
+      hotelId
+    );
+
+    if (result.success) {
+      console.log(
+        "Razorpay webhook (universal) processed:",
+        result.orderId,
+        result.status
+      );
+      return res.status(200).json({ success: true });
+    } else {
+      console.error("Razorpay webhook (universal) failed:", result.message);
+      return res.status(400).json({ success: false, message: result.message });
+    }
+  } catch (error) {
+    console.error("Error processing Razorpay webhook (universal):", error);
+    return res.status(500).json({
+      success: false,
+      message: "Webhook processing failed",
+    });
+  }
+};
+
+/**
  * Handle PhonePe webhook
  * @route POST /api/v1/webhooks/phonepe/:hotelId
  * @access Public (webhook endpoint)

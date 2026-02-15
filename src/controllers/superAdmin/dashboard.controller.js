@@ -83,9 +83,8 @@ export const getDashboardOverview = async (req, res, next) => {
     });
 
     // Calculate total revenue (all time)
-    const allSubscriptions = await AdminSubscription.find().select(
-      "paymentHistory"
-    );
+    const allSubscriptions =
+      await AdminSubscription.find().select("paymentHistory");
     let totalRevenue = 0;
     allSubscriptions.forEach((subscription) => {
       subscription.paymentHistory.forEach((payment) => {
@@ -351,12 +350,12 @@ export const getAdminCompleteDetails = async (req, res, next) => {
     const hotelIds = hotels.map((h) => h._id);
     const orders = await Order.find({
       hotel: { $in: hotelIds },
-      paymentStatus: "paid",
-    }).select("finalAmount createdAt");
+      "payment.paymentStatus": "paid",
+    }).select("totalPrice createdAt");
 
     let totalIncome = 0;
     orders.forEach((order) => {
-      totalIncome += order.finalAmount;
+      totalIncome += order.totalPrice;
     });
 
     // Calculate monthly income
@@ -369,7 +368,7 @@ export const getAdminCompleteDetails = async (req, res, next) => {
       (order) => new Date(order.createdAt) >= startOfMonth
     );
     const monthlyIncome = monthlyOrders.reduce(
-      (sum, order) => sum + order.finalAmount,
+      (sum, order) => sum + order.totalPrice,
       0
     );
 
@@ -514,13 +513,13 @@ export const getAllHotelsWithAdmins = async (req, res, next) => {
           {
             $match: {
               hotel: hotel._id,
-              paymentStatus: "paid",
+              "payment.paymentStatus": "paid",
             },
           },
           {
             $group: {
               _id: null,
-              totalRevenue: { $sum: "$finalAmount" },
+              totalRevenue: { $sum: "$totalPrice" },
               totalOrders: { $sum: 1 },
             },
           },
@@ -885,16 +884,16 @@ export const getHotelIncomeReport = async (req, res, next) => {
       {
         $match: {
           hotel: hotel._id,
-          paymentStatus: "paid",
+          "payment.paymentStatus": "paid",
           createdAt: dateFilter,
         },
       },
       {
         $group: {
           _id: groupBy,
-          totalRevenue: { $sum: "$finalAmount" },
+          totalRevenue: { $sum: "$totalPrice" },
           totalOrders: { $sum: 1 },
-          averageOrderValue: { $avg: "$finalAmount" },
+          averageOrderValue: { $avg: "$totalPrice" },
         },
       },
       {
@@ -907,18 +906,18 @@ export const getHotelIncomeReport = async (req, res, next) => {
       {
         $match: {
           hotel: hotel._id,
-          paymentStatus: "paid",
+          "payment.paymentStatus": "paid",
           createdAt: dateFilter,
         },
       },
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: "$finalAmount" },
+          totalRevenue: { $sum: "$totalPrice" },
           totalOrders: { $sum: 1 },
-          averageOrderValue: { $avg: "$finalAmount" },
-          maxOrderValue: { $max: "$finalAmount" },
-          minOrderValue: { $min: "$finalAmount" },
+          averageOrderValue: { $avg: "$totalPrice" },
+          maxOrderValue: { $max: "$totalPrice" },
+          minOrderValue: { $min: "$totalPrice" },
         },
       },
     ]);
@@ -994,16 +993,16 @@ export const getBranchwiseIncome = async (req, res, next) => {
             $match: {
               hotel: hotel._id,
               branch: branch._id,
-              paymentStatus: "paid",
+              "payment.paymentStatus": "paid",
               createdAt: { $gte: startDate, $lte: endDate },
             },
           },
           {
             $group: {
               _id: null,
-              totalRevenue: { $sum: "$finalAmount" },
+              totalRevenue: { $sum: "$totalPrice" },
               totalOrders: { $sum: 1 },
-              averageOrderValue: { $avg: "$finalAmount" },
+              averageOrderValue: { $avg: "$totalPrice" },
             },
           },
         ]);
@@ -1079,13 +1078,13 @@ export const getRevenueAnalytics = async (req, res, next) => {
     const orderRevenue = await Order.aggregate([
       {
         $match: {
-          paymentStatus: "paid",
+          "payment.paymentStatus": "paid",
         },
       },
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: "$finalAmount" },
+          totalRevenue: { $sum: "$totalPrice" },
           totalOrders: { $sum: 1 },
         },
       },
@@ -1094,9 +1093,8 @@ export const getRevenueAnalytics = async (req, res, next) => {
     const orderStats = orderRevenue[0] || { totalRevenue: 0, totalOrders: 0 };
 
     // Calculate subscription revenue
-    const subscriptions = await AdminSubscription.find().select(
-      "paymentHistory"
-    );
+    const subscriptions =
+      await AdminSubscription.find().select("paymentHistory");
     let subscriptionRevenue = 0;
     subscriptions.forEach((sub) => {
       sub.paymentHistory.forEach((payment) => {
@@ -1124,14 +1122,14 @@ export const getRevenueAnalytics = async (req, res, next) => {
       const monthlyRevenue = await Order.aggregate([
         {
           $match: {
-            paymentStatus: "paid",
+            "payment.paymentStatus": "paid",
             createdAt: { $gte: startOfMonth, $lte: endOfMonth },
           },
         },
         {
           $group: {
             _id: null,
-            revenue: { $sum: "$finalAmount" },
+            revenue: { $sum: "$totalPrice" },
             orders: { $sum: 1 },
           },
         },
@@ -1151,13 +1149,13 @@ export const getRevenueAnalytics = async (req, res, next) => {
     const topHotels = await Order.aggregate([
       {
         $match: {
-          paymentStatus: "paid",
+          "payment.paymentStatus": "paid",
         },
       },
       {
         $group: {
           _id: "$hotel",
-          totalRevenue: { $sum: "$finalAmount" },
+          totalRevenue: { $sum: "$totalPrice" },
           totalOrders: { $sum: 1 },
         },
       },
@@ -1216,14 +1214,14 @@ export const getRevenueAnalytics = async (req, res, next) => {
     const lastMonthRevenue = await Order.aggregate([
       {
         $match: {
-          paymentStatus: "paid",
+          "payment.paymentStatus": "paid",
           createdAt: { $gte: lastMonthStart, $lte: lastMonthEnd },
         },
       },
       {
         $group: {
           _id: null,
-          revenue: { $sum: "$finalAmount" },
+          revenue: { $sum: "$totalPrice" },
         },
       },
     ]);
@@ -1231,14 +1229,14 @@ export const getRevenueAnalytics = async (req, res, next) => {
     const prevMonthRevenue = await Order.aggregate([
       {
         $match: {
-          paymentStatus: "paid",
+          "payment.paymentStatus": "paid",
           createdAt: { $gte: prevMonthStart, $lte: prevMonthEnd },
         },
       },
       {
         $group: {
           _id: null,
-          revenue: { $sum: "$finalAmount" },
+          revenue: { $sum: "$totalPrice" },
         },
       },
     ]);
@@ -1292,7 +1290,9 @@ export const getSystemStatistics = async (req, res, next) => {
     const totalManagers = await Manager.countDocuments();
     const totalStaff = await Staff.countDocuments();
     const totalOrders = await Order.countDocuments();
-    const paidOrders = await Order.countDocuments({ paymentStatus: "paid" });
+    const paidOrders = await Order.countDocuments({
+      "payment.paymentStatus": "paid",
+    });
 
     // Subscription statistics
     const activeSubscriptions = await AdminSubscription.countDocuments({

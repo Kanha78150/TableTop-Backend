@@ -14,10 +14,20 @@ export const validateTransactionQuery = Joi.object({
     .pattern(/^[0-9a-fA-F]{24}$/)
     .optional(),
   status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
+    .valid("pending", "success", "failed", "refunded")
     .optional(),
   paymentMethod: Joi.string()
-    .valid("card", "upi", "wallet", "cash", "netbanking")
+    .valid(
+      "cash",
+      "card",
+      "upi",
+      "wallet",
+      "razorpay",
+      "phonepe",
+      "paytm",
+      "netbanking",
+      "paylater"
+    )
     .optional(),
   startDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
@@ -44,8 +54,8 @@ export const validateHotelAccountingQuery = Joi.object({
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
-    .default("completed"),
+    .valid("pending", "success", "failed", "refunded")
+    .default("success"),
 });
 
 /**
@@ -62,8 +72,8 @@ export const validateBranchAccountingQuery = Joi.object({
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
-    .default("completed"),
+    .valid("pending", "success", "failed", "refunded")
+    .default("success"),
 });
 
 /**
@@ -79,7 +89,7 @@ export const validateSettlementQuery = Joi.object({
     .pattern(/^[0-9a-fA-F]{24}$/)
     .optional(),
   status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
+    .valid("pending", "success", "failed", "refunded")
     .optional(),
   startDate: Joi.string()
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
@@ -113,7 +123,7 @@ export const validateExportRequest = Joi.object({
     .pattern(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   status: Joi.string()
-    .valid("pending", "completed", "failed", "cancelled")
+    .valid("pending", "success", "failed", "refunded")
     .optional(),
 });
 

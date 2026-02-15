@@ -14,6 +14,7 @@ import {
   getMyPayments,
   getCommissionSummary,
   getPaymentPublicKey,
+  cancelPayment,
 } from "../../controllers/payment/paymentController.js";
 import {
   authenticateUser,
@@ -29,6 +30,7 @@ router.get("/public-key/:hotelId", getPaymentPublicKey);
 // Customer routes - require user authentication
 router.post("/initiate", authenticateUser, initiatePayment);
 router.post("/verify", authenticateUser, verifyPayment);
+router.post("/:orderId/cancel", authenticateUser, cancelPayment);
 router.get("/my-payments", authenticateUser, getMyPayments);
 
 // Payment status - accessible by customer, manager, admin

@@ -481,10 +481,11 @@ export const getSettlements = async (req, res, next) => {
     } = queryParams;
 
     // Build match filter for Transaction model
-    const matchFilter = { status: "success" };
+    // Default to "success" for settlements, but allow override if specified
+    const matchFilter = {};
+    matchFilter.status = status || "success";
     if (hotelId) matchFilter.hotel = new mongoose.Types.ObjectId(hotelId);
     if (branchId) matchFilter.branch = new mongoose.Types.ObjectId(branchId);
-    if (status) matchFilter.status = status;
 
     if (startDate || endDate) {
       matchFilter.createdAt = {};

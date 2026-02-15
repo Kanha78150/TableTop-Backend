@@ -217,26 +217,36 @@ export const placeOrderFromCart = async (
         select: "name price image foodType preparationTime",
       });
 
-    // 12.5. Automatically assign order to a waiter
-    try {
-      const assignmentResult = await assignmentService.assignOrder(
-        order._id.toString()
-      );
+    // 12.5. Automatically assign order to a waiter (only for cash orders)
+    // For digital payments (razorpay, phonepe, etc.), assignment happens AFTER payment verification
+    const isCashOrder =
+      options.paymentMethod === "cash" ||
+      order.payment?.paymentMethod === "cash";
+    if (isCashOrder) {
+      try {
+        const assignmentResult = await assignmentService.assignOrder(
+          order._id.toString()
+        );
 
-      // If assignment was successful, populate the assigned staff
-      if (assignmentResult.success && assignmentResult.assignment.waiter) {
-        await populatedOrder.populate({
-          path: "staff",
-          select: "name staffId role",
-        });
+        // If assignment was successful, populate the assigned staff
+        if (assignmentResult.success && assignmentResult.assignment.waiter) {
+          await populatedOrder.populate({
+            path: "staff",
+            select: "name staffId role",
+          });
+        }
+      } catch (assignmentError) {
+        // Log assignment error but don't fail the order creation
+        console.error(
+          `[PLACE-ORDER] Assignment failed for order ${order._id}:`,
+          assignmentError.message
+        );
+        // The order is still valid even if assignment fails - it can be manually assigned later
       }
-    } catch (assignmentError) {
-      // Log assignment error but don't fail the order creation
-      console.error(
-        `[PLACE-ORDER] Assignment failed for order ${order._id}:`,
-        assignmentError.message
+    } else {
+      console.log(
+        `[PLACE-ORDER] Skipping staff assignment for order ${order._id} - waiting for payment verification (method: ${options.paymentMethod})`
       );
-      // The order is still valid even if assignment fails - it can be manually assigned later
     }
 
     // Add coin transaction details to response

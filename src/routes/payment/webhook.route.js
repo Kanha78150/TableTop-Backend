@@ -7,6 +7,7 @@
 import express from "express";
 import {
   handleRazorpayWebhook,
+  handleRazorpayWebhookUniversal,
   handlePhonePeWebhook,
   handlePaytmWebhook,
   getWebhookLogs,
@@ -19,6 +20,12 @@ const router = express.Router();
 
 // Public webhook endpoints (no authentication required)
 // Payment gateways will call these URLs directly
+
+// Universal Razorpay webhook - auto-detects hotel from order
+// Use this URL in Razorpay dashboard: /api/v1/webhooks/razorpay
+router.post("/razorpay", handleRazorpayWebhookUniversal);
+
+// Hotel-specific Razorpay webhook (if you prefer per-hotel webhook URLs)
 router.post("/razorpay/:hotelId", handleRazorpayWebhook);
 router.post("/phonepe/:hotelId", handlePhonePeWebhook);
 router.post("/paytm/:hotelId", handlePaytmWebhook);

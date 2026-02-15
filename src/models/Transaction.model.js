@@ -10,12 +10,26 @@ const transactionSchema = new mongoose.Schema(
     amount: { type: Number, required: true },
     paymentMethod: {
       type: String,
-      enum: ["cash", "card", "upi", "wallet", "razorpay"],
+      enum: [
+        "cash",
+        "card",
+        "upi",
+        "wallet",
+        "razorpay",
+        "phonepe",
+        "paytm",
+        "netbanking",
+        "paylater",
+      ],
       default: "cash",
+    },
+    provider: {
+      type: String,
+      enum: ["razorpay", "phonepe", "paytm", "cash"],
     },
     status: {
       type: String,
-      enum: ["pending", "success", "failed"],
+      enum: ["pending", "success", "failed", "refunded"],
       default: "pending",
     },
     transactionId: { type: String, unique: true },
@@ -31,7 +45,17 @@ export const validateTransaction = (data) => {
     order: Joi.string().required(),
     amount: Joi.number().positive().required(),
     paymentMethod: Joi.string()
-      .valid("cash", "card", "upi", "wallet", "razorpay")
+      .valid(
+        "cash",
+        "card",
+        "upi",
+        "wallet",
+        "razorpay",
+        "phonepe",
+        "paytm",
+        "netbanking",
+        "paylater"
+      )
       .required(),
   });
   return schema.validate(data);
