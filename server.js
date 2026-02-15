@@ -112,8 +112,7 @@ const initializeBackgroundServices = async () => {
 const startServer = async () => {
   try {
     server.listen(PORT, "0.0.0.0", () => {
-      logger.info(`Server running on port ${PORT}`);
-      logger.info(`Health endpoint: http://localhost:${PORT}/health`);
+      logger.info(`Server running on port http://localhost:${PORT}`);
     });
 
     // Connect to DB AFTER server is listening

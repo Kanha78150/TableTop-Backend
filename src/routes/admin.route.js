@@ -131,7 +131,7 @@ import {
   stopJob,
   startJob,
   stopAllJobs,
-} from "../controllers/scheduledJobs.Controller.js";
+} from "../controllers/scheduledJobs.controller.js";
 
 // Import Middleware
 import {
