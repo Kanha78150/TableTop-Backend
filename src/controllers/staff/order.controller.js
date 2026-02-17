@@ -403,6 +403,7 @@ export const getAllTablesStatus = async (req, res, next) => {
         .populate("currentOrder", "orderNumber status totalPrice")
         .populate("currentCustomer", "name phone")
         .sort(sortOptions)
+        .collation({ locale: "en", numericOrdering: true })
         .skip(skip)
         .limit(limitNumber)
         .lean(),

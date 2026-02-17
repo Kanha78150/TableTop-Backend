@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Joi from "joi";
+import { getNextSequence } from "./Counter.model.js";
 
 const subscriptionPlanSchema = new mongoose.Schema(
   {
@@ -144,13 +145,13 @@ const subscriptionPlanSchema = new mongoose.Schema(
   }
 );
 
-// Pre-save hook to auto-generate planId
+// Pre-save hook to auto-generate planId using atomic counter (race-condition safe)
 subscriptionPlanSchema.pre("save", async function (next) {
   if (!this.isNew) return next();
 
   try {
-    const count = await this.constructor.countDocuments();
-    this.planId = `PLAN-${String(count + 1).padStart(4, "0")}`;
+    const seq = await getNextSequence("subscriptionPlan");
+    this.planId = `PLAN-${String(seq).padStart(4, "0")}`;
     next();
   } catch (error) {
     next(error);

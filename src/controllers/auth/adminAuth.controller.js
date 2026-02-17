@@ -223,6 +223,8 @@ export const loginAdmin = async (req, res, next) => {
               lastLogin: admin.lastLogin,
             },
             createdHotels: createdHotels || [],
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
           },
           "Admin logged in successfully"
         )
@@ -782,6 +784,8 @@ export const bootstrapSuperAdmin = async (req, res, next) => {
         201,
         {
           admin: adminResponse,
+          accessToken,
+          refreshToken,
           systemStatus: "initialized",
           message:
             "🎉 Super Admin created successfully! System is now ready for production use.",

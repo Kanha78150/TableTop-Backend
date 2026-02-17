@@ -43,6 +43,7 @@ export const getAllTables = async (req, res, next) => {
       .populate("currentOrder", "orderNumber status totalPrice createdAt")
       .populate("currentCustomer", "name email phone")
       .sort(sort)
+      .collation({ locale: "en", numericOrdering: true })
       .limit(parseInt(limit) || 50)
       .skip(parseInt(skip) || 0);
 
@@ -353,7 +354,8 @@ export const getTableStatus = async (req, res, next) => {
     })
       .populate("currentOrder", "orderNumber status totalPrice createdAt")
       .populate("currentReservation", "customerName reservationTime partySize")
-      .sort({ tableNumber: 1 });
+      .sort({ tableNumber: 1 })
+      .collation({ locale: "en", numericOrdering: true });
 
     // Calculate status statistics
     const statusCounts = tables.reduce((acc, table) => {

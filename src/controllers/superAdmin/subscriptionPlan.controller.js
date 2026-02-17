@@ -503,13 +503,12 @@ export const getAdminsByPlan = async (req, res, next) => {
     // Get total count
     const total = await AdminSubscription.countDocuments(subscriptionFilter);
 
-    // Get subscriptions with admin details
+    // Get subscriptions with admin details (no .lean() so Mongoose virtuals work)
     const subscriptions = await AdminSubscription.find(subscriptionFilter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("admin", "name email phone status createdAt")
-      .lean();
+      .populate("admin", "name email phone status createdAt");
 
     // Format response
     const admins = subscriptions.map((subscription) => ({

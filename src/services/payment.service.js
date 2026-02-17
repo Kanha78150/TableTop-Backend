@@ -1926,6 +1926,35 @@ class PaymentService {
   }
 
   /**
+   * Fetch Payment Details from Razorpay
+   * Retrieves payment details by Razorpay payment ID
+   * @param {String} paymentId - Razorpay payment ID (e.g., pay_xxx)
+   * @returns {Object} Payment details from Razorpay (amount in paise, method, status, etc.)
+   */
+  async fetchPaymentDetails(paymentId) {
+    try {
+      logger.info("Fetching payment details from Razorpay", { paymentId });
+
+      const payment = await this.razorpay.payments.fetch(paymentId);
+
+      logger.info("Payment details fetched successfully", {
+        paymentId,
+        status: payment.status,
+        amount: payment.amount,
+        method: payment.method,
+      });
+
+      return payment;
+    } catch (error) {
+      logger.error("Failed to fetch payment details from Razorpay", {
+        paymentId,
+        error: error.message,
+      });
+      throw new APIError(500, "Failed to fetch payment details from Razorpay");
+    }
+  }
+
+  /**
    * Sync Payment Status with Razorpay
    * Fetches actual payment status from Razorpay and syncs with database
    * Useful for handling abandoned/back button scenarios

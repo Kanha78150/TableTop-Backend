@@ -18,85 +18,90 @@ const logJob = (jobName, status, message, data = {}) => {
   );
 };
 
+// Store job callbacks so we can trigger them manually
+const jobCallbacks = {};
+
 // ============================================
 // JOB 1: Subscription Expiry Checker
 // Runs daily at midnight (00:00)
 // ============================================
-export const subscriptionExpiryChecker = cron.schedule(
-  "0 0 * * *",
-  async () => {
-    const jobName = "Subscription Expiry Checker";
-    logJob(jobName, "start", "Starting subscription expiry check...");
+jobCallbacks.expiryCheck = async () => {
+  const jobName = "Subscription Expiry Checker";
+  logJob(jobName, "start", "Starting subscription expiry check...");
 
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Find all active subscriptions that expire today
-      const expiringSubscriptions = await AdminSubscription.find({
-        status: "active",
-        endDate: {
-          $gte: today,
-          $lt: tomorrow,
-        },
-      }).populate("admin plan");
+    // Find all active subscriptions that expire today
+    const expiringSubscriptions = await AdminSubscription.find({
+      status: "active",
+      endDate: {
+        $gte: today,
+        $lt: tomorrow,
+      },
+    }).populate("admin plan");
 
-      logJob(
-        jobName,
-        "info",
-        `Found ${expiringSubscriptions.length} subscriptions expiring today`
-      );
+    logJob(
+      jobName,
+      "info",
+      `Found ${expiringSubscriptions.length} subscriptions expiring today`
+    );
 
-      let successCount = 0;
-      let errorCount = 0;
+    let successCount = 0;
+    let errorCount = 0;
 
-      for (const subscription of expiringSubscriptions) {
-        try {
-          // Update subscription status to expired
-          subscription.status = "expired";
-          await subscription.save();
+    for (const subscription of expiringSubscriptions) {
+      try {
+        // Update subscription status to expired
+        subscription.status = "expired";
+        await subscription.save();
 
-          // Send expiry notification email
-          if (subscription.admin && subscription.admin.email) {
-            await sendSubscriptionExpiredEmail(
-              subscription.admin.email,
-              subscription.admin.name,
-              subscription.plan.name,
-              subscription.endDate
-            );
-          }
-
-          successCount++;
-          logJob(
-            jobName,
-            "info",
-            `Expired subscription for admin: ${subscription.admin?.email}`
-          );
-        } catch (error) {
-          errorCount++;
-          logJob(
-            jobName,
-            "error",
-            `Failed to expire subscription for admin: ${subscription.admin?.email}`,
-            { error: error.message }
+        // Send expiry notification email
+        if (subscription.admin && subscription.admin.email) {
+          await sendSubscriptionExpiredEmail(
+            subscription.admin.email,
+            subscription.admin.name,
+            subscription.plan.name,
+            subscription.endDate
           );
         }
-      }
 
-      logJob(
-        jobName,
-        "complete",
-        `Job completed. Success: ${successCount}, Errors: ${errorCount}`
-      );
-    } catch (error) {
-      logJob(jobName, "error", "Job failed with error", {
-        error: error.message,
-      });
+        successCount++;
+        logJob(
+          jobName,
+          "info",
+          `Expired subscription for admin: ${subscription.admin?.email}`
+        );
+      } catch (error) {
+        errorCount++;
+        logJob(
+          jobName,
+          "error",
+          `Failed to expire subscription for admin: ${subscription.admin?.email}`,
+          { error: error.message }
+        );
+      }
     }
-  },
+
+    logJob(
+      jobName,
+      "complete",
+      `Job completed. Success: ${successCount}, Errors: ${errorCount}`
+    );
+  } catch (error) {
+    logJob(jobName, "error", "Job failed with error", {
+      error: error.message,
+    });
+  }
+};
+
+export const subscriptionExpiryChecker = cron.schedule(
+  "0 0 * * *",
+  jobCallbacks.expiryCheck,
   {
     scheduled: false, // Don't start automatically
     timezone: "Asia/Kolkata", // Adjust to your timezone
@@ -107,82 +112,84 @@ export const subscriptionExpiryChecker = cron.schedule(
 // JOB 2: Subscription Renewal Reminder
 // Runs daily at 9 AM
 // ============================================
-export const subscriptionRenewalReminder = cron.schedule(
-  "0 9 * * *",
-  async () => {
-    const jobName = "Subscription Renewal Reminder";
-    logJob(jobName, "start", "Starting renewal reminder check...");
+jobCallbacks.renewalReminder = async () => {
+  const jobName = "Subscription Renewal Reminder";
+  logJob(jobName, "start", "Starting renewal reminder check...");
 
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-      // Reminder intervals: 7 days, 3 days, 1 day
-      const reminderDays = [7, 3, 1];
-      let totalSent = 0;
+    // Reminder intervals: 7 days, 3 days, 1 day
+    const reminderDays = [7, 3, 1];
+    let totalSent = 0;
 
-      for (const days of reminderDays) {
-        const reminderDate = new Date(today);
-        reminderDate.setDate(reminderDate.getDate() + days);
+    for (const days of reminderDays) {
+      const reminderDate = new Date(today);
+      reminderDate.setDate(reminderDate.getDate() + days);
 
-        const nextDay = new Date(reminderDate);
-        nextDay.setDate(nextDay.getDate() + 1);
+      const nextDay = new Date(reminderDate);
+      nextDay.setDate(nextDay.getDate() + 1);
 
-        // Find subscriptions expiring in X days
-        const expiringSubscriptions = await AdminSubscription.find({
-          status: "active",
-          endDate: {
-            $gte: reminderDate,
-            $lt: nextDay,
-          },
-        }).populate("admin plan");
-
-        logJob(
-          jobName,
-          "info",
-          `Found ${expiringSubscriptions.length} subscriptions expiring in ${days} days`
-        );
-
-        for (const subscription of expiringSubscriptions) {
-          try {
-            if (subscription.admin && subscription.admin.email) {
-              await sendSubscriptionRenewalReminderEmail(
-                subscription.admin.email,
-                subscription.admin.name,
-                subscription.plan.name,
-                subscription.endDate,
-                days
-              );
-
-              totalSent++;
-              logJob(
-                jobName,
-                "info",
-                `Sent ${days}-day reminder to: ${subscription.admin.email}`
-              );
-            }
-          } catch (error) {
-            logJob(
-              jobName,
-              "error",
-              `Failed to send reminder to: ${subscription.admin?.email}`,
-              { error: error.message }
-            );
-          }
-        }
-      }
+      // Find subscriptions expiring in X days
+      const expiringSubscriptions = await AdminSubscription.find({
+        status: "active",
+        endDate: {
+          $gte: reminderDate,
+          $lt: nextDay,
+        },
+      }).populate("admin plan");
 
       logJob(
         jobName,
-        "complete",
-        `Job completed. Total reminders sent: ${totalSent}`
+        "info",
+        `Found ${expiringSubscriptions.length} subscriptions expiring in ${days} days`
       );
-    } catch (error) {
-      logJob(jobName, "error", "Job failed with error", {
-        error: error.message,
-      });
+
+      for (const subscription of expiringSubscriptions) {
+        try {
+          if (subscription.admin && subscription.admin.email) {
+            await sendSubscriptionRenewalReminderEmail(
+              subscription.admin.email,
+              subscription.admin.name,
+              subscription.plan.name,
+              subscription.endDate,
+              days
+            );
+
+            totalSent++;
+            logJob(
+              jobName,
+              "info",
+              `Sent ${days}-day reminder to: ${subscription.admin.email}`
+            );
+          }
+        } catch (error) {
+          logJob(
+            jobName,
+            "error",
+            `Failed to send reminder to: ${subscription.admin?.email}`,
+            { error: error.message }
+          );
+        }
+      }
     }
-  },
+
+    logJob(
+      jobName,
+      "complete",
+      `Job completed. Total reminders sent: ${totalSent}`
+    );
+  } catch (error) {
+    logJob(jobName, "error", "Job failed with error", {
+      error: error.message,
+    });
+  }
+};
+
+export const subscriptionRenewalReminder = cron.schedule(
+  "0 9 * * *",
+  jobCallbacks.renewalReminder,
   {
     scheduled: false,
     timezone: "Asia/Kolkata",
@@ -193,30 +200,32 @@ export const subscriptionRenewalReminder = cron.schedule(
 // JOB 3: Usage Counter Reset
 // Runs on 1st of every month at midnight
 // ============================================
+jobCallbacks.usageReset = async () => {
+  const jobName = "Usage Counter Reset";
+  logJob(jobName, "start", "Starting monthly usage counter reset...");
+
+  try {
+    // Reset ordersThisMonth for all active subscriptions
+    const result = await AdminSubscription.updateMany(
+      { status: "active" },
+      { $set: { "usage.ordersThisMonth": 0 } }
+    );
+
+    logJob(
+      jobName,
+      "complete",
+      `Reset ordersThisMonth counter for ${result.modifiedCount} subscriptions`
+    );
+  } catch (error) {
+    logJob(jobName, "error", "Job failed with error", {
+      error: error.message,
+    });
+  }
+};
+
 export const usageCounterReset = cron.schedule(
   "0 0 1 * *",
-  async () => {
-    const jobName = "Usage Counter Reset";
-    logJob(jobName, "start", "Starting monthly usage counter reset...");
-
-    try {
-      // Reset ordersThisMonth for all active subscriptions
-      const result = await AdminSubscription.updateMany(
-        { status: "active" },
-        { $set: { "usage.ordersThisMonth": 0 } }
-      );
-
-      logJob(
-        jobName,
-        "complete",
-        `Reset ordersThisMonth counter for ${result.modifiedCount} subscriptions`
-      );
-    } catch (error) {
-      logJob(jobName, "error", "Job failed with error", {
-        error: error.message,
-      });
-    }
-  },
+  jobCallbacks.usageReset,
   {
     scheduled: false,
     timezone: "Asia/Kolkata",
@@ -227,121 +236,122 @@ export const usageCounterReset = cron.schedule(
 // JOB 4: Auto-Renewal Handler
 // Runs daily at midnight
 // ============================================
-export const autoRenewalHandler = cron.schedule(
-  "0 0 * * *",
-  async () => {
-    const jobName = "Auto-Renewal Handler";
-    logJob(jobName, "start", "Starting auto-renewal processing...");
+jobCallbacks.autoRenewal = async () => {
+  const jobName = "Auto-Renewal Handler";
+  logJob(jobName, "start", "Starting auto-renewal processing...");
 
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Find subscriptions expiring tomorrow with auto-renewal enabled
-      const subscriptionsToRenew = await AdminSubscription.find({
-        status: "active",
-        autoRenew: true,
-        endDate: {
-          $gte: today,
-          $lt: tomorrow,
-        },
-      }).populate("admin plan");
+    // Find subscriptions expiring tomorrow with auto-renewal enabled
+    const subscriptionsToRenew = await AdminSubscription.find({
+      status: "active",
+      autoRenew: true,
+      endDate: {
+        $gte: today,
+        $lt: tomorrow,
+      },
+    }).populate("admin plan");
 
-      logJob(
-        jobName,
-        "info",
-        `Found ${subscriptionsToRenew.length} subscriptions for auto-renewal`
-      );
+    logJob(
+      jobName,
+      "info",
+      `Found ${subscriptionsToRenew.length} subscriptions for auto-renewal`
+    );
 
-      let successCount = 0;
-      let errorCount = 0;
+    let successCount = 0;
+    let errorCount = 0;
 
-      for (const subscription of subscriptionsToRenew) {
+    for (const subscription of subscriptionsToRenew) {
+      try {
+        // Calculate new dates
+        const newStartDate = new Date(subscription.endDate);
+        const newEndDate = new Date(newStartDate);
+
+        if (subscription.billingCycle === "monthly") {
+          newEndDate.setMonth(newEndDate.getMonth() + 1);
+        } else if (subscription.billingCycle === "yearly") {
+          newEndDate.setFullYear(newEndDate.getFullYear() + 1);
+        }
+
+        // Update subscription
+        subscription.startDate = newStartDate;
+        subscription.endDate = newEndDate;
+
+        // Add renewal to payment history (use plan.price, not plan.pricing)
+        const amount =
+          subscription.billingCycle === "monthly"
+            ? subscription.plan.price.monthly
+            : subscription.plan.price.yearly;
+
+        subscription.paymentHistory.push({
+          amount,
+          status: "auto_renewed",
+          paymentMethod: "auto_renewal",
+          transactionId: `AUTO_RENEWAL_${Date.now()}`,
+          paymentDate: new Date(),
+          notes: `Auto-renewal for ${subscription.billingCycle} subscription`,
+        });
+
+        await subscription.save();
+
+        // Send renewal confirmation email
+        if (subscription.admin && subscription.admin.email) {
+          await sendSubscriptionExpiringEmail(
+            subscription.admin.email,
+            subscription.admin.name,
+            subscription.plan.name,
+            newEndDate,
+            0 // Days remaining
+          );
+        }
+
+        successCount++;
+        logJob(
+          jobName,
+          "info",
+          `Auto-renewed subscription for: ${subscription.admin?.email}`
+        );
+      } catch (error) {
+        errorCount++;
+        logJob(
+          jobName,
+          "error",
+          `Failed to auto-renew for: ${subscription.admin?.email}`,
+          { error: error.message }
+        );
+
+        // Disable auto-renewal on failure
         try {
-          // Calculate new dates
-          const newStartDate = new Date(subscription.endDate);
-          const newEndDate = new Date(newStartDate);
-
-          if (subscription.billingCycle === "monthly") {
-            newEndDate.setMonth(newEndDate.getMonth() + 1);
-          } else if (subscription.billingCycle === "yearly") {
-            newEndDate.setFullYear(newEndDate.getFullYear() + 1);
-          }
-
-          // Update subscription
-          subscription.startDate = newStartDate;
-          subscription.endDate = newEndDate;
-
-          // Add renewal to payment history
-          const amount =
-            subscription.billingCycle === "monthly"
-              ? subscription.plan.pricing.monthly
-              : subscription.plan.pricing.yearly;
-
-          subscription.paymentHistory.push({
-            amount,
-            status: "auto_renewed",
-            paymentMethod: "auto_renewal",
-            transactionId: `AUTO_RENEWAL_${Date.now()}`,
-            paymentDate: new Date(),
-            billingCycle: subscription.billingCycle,
-            description: `Auto-renewal for ${subscription.billingCycle} subscription`,
-          });
-
+          subscription.autoRenew = false;
           await subscription.save();
-
-          // Send renewal confirmation email
-          if (subscription.admin && subscription.admin.email) {
-            await sendSubscriptionExpiringEmail(
-              subscription.admin.email,
-              subscription.admin.name,
-              subscription.plan.name,
-              newEndDate,
-              0 // Days remaining
-            );
-          }
-
-          successCount++;
-          logJob(
-            jobName,
-            "info",
-            `Auto-renewed subscription for: ${subscription.admin?.email}`
-          );
-        } catch (error) {
-          errorCount++;
-          logJob(
-            jobName,
-            "error",
-            `Failed to auto-renew for: ${subscription.admin?.email}`,
-            { error: error.message }
-          );
-
-          // Disable auto-renewal on failure
-          try {
-            subscription.autoRenew = false;
-            await subscription.save();
-          } catch (saveError) {
-            logJob(jobName, "error", "Failed to disable auto-renewal", {
-              error: saveError.message,
-            });
-          }
+        } catch (saveError) {
+          logJob(jobName, "error", "Failed to disable auto-renewal", {
+            error: saveError.message,
+          });
         }
       }
-
-      logJob(
-        jobName,
-        "complete",
-        `Job completed. Success: ${successCount}, Errors: ${errorCount}`
-      );
-    } catch (error) {
-      logJob(jobName, "error", "Job failed with error", {
-        error: error.message,
-      });
     }
-  },
+
+    logJob(
+      jobName,
+      "complete",
+      `Job completed. Success: ${successCount}, Errors: ${errorCount}`
+    );
+  } catch (error) {
+    logJob(jobName, "error", "Job failed with error", {
+      error: error.message,
+    });
+  }
+};
+
+export const autoRenewalHandler = cron.schedule(
+  "0 0 * * *",
+  jobCallbacks.autoRenewal,
   {
     scheduled: false,
     timezone: "Asia/Kolkata",
@@ -352,82 +362,125 @@ export const autoRenewalHandler = cron.schedule(
 // JOB 5: Failed Payment Retry
 // Runs daily at 10 AM
 // ============================================
-export const failedPaymentRetry = cron.schedule(
-  "0 10 * * *",
-  async () => {
-    const jobName = "Failed Payment Retry";
-    logJob(jobName, "start", "Starting failed payment retry...");
+jobCallbacks.paymentRetry = async () => {
+  const jobName = "Failed Payment Retry";
+  logJob(jobName, "start", "Starting failed payment retry...");
 
-    try {
-      const threeDaysAgo = new Date();
-      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+  try {
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-      // Find subscriptions with failed payments in last 3 days
-      const subscriptionsWithFailedPayments = await AdminSubscription.find({
-        status: "pending_payment",
-        "paymentHistory.status": "failed",
-        "paymentHistory.paymentDate": { $gte: threeDaysAgo },
-      }).populate("admin plan");
+    // Find subscriptions with failed payments in last 3 days
+    const subscriptionsWithFailedPayments = await AdminSubscription.find({
+      status: "pending_payment",
+      "paymentHistory.status": "failed",
+      "paymentHistory.paymentDate": { $gte: threeDaysAgo },
+    }).populate("admin plan");
 
-      logJob(
-        jobName,
-        "info",
-        `Found ${subscriptionsWithFailedPayments.length} subscriptions with failed payments`
-      );
+    logJob(
+      jobName,
+      "info",
+      `Found ${subscriptionsWithFailedPayments.length} subscriptions with failed payments`
+    );
 
-      let notificationsSent = 0;
+    let notificationsSent = 0;
 
-      for (const subscription of subscriptionsWithFailedPayments) {
-        try {
-          // Get the latest failed payment
-          const failedPayments = subscription.paymentHistory.filter(
-            (payment) =>
-              payment.status === "failed" && payment.paymentDate >= threeDaysAgo
-          );
+    for (const subscription of subscriptionsWithFailedPayments) {
+      try {
+        // Get the latest failed payment
+        const failedPayments = subscription.paymentHistory.filter(
+          (payment) =>
+            payment.status === "failed" && payment.paymentDate >= threeDaysAgo
+        );
 
-          if (failedPayments.length > 0 && subscription.admin) {
-            // Send retry notification email
-            const latestFailedPayment =
-              failedPayments[failedPayments.length - 1];
+        if (failedPayments.length > 0 && subscription.admin) {
+          const latestFailedPayment = failedPayments[failedPayments.length - 1];
 
-            // In a real implementation, you would:
-            // 1. Create a new payment order
-            // 2. Send payment link to user
-            // 3. Log the retry attempt
+          // Calculate the amount to retry
+          const retryAmount =
+            subscription.billingCycle === "monthly"
+              ? subscription.plan.price.monthly
+              : subscription.plan.price.yearly;
+
+          const retryLink = `${process.env.FRONTEND_URL || "http://localhost:3000"}/subscription/retry/${subscription._id}`;
+
+          // Send payment retry notification email
+          try {
+            const { sendEmail } = await import("../utils/emailService.js");
+            await sendEmail({
+              to: subscription.admin.email,
+              subject: `Action Required: Retry Payment for ${subscription.plan.name}`,
+              html: `
+                  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+                    <h1 style="color: #f44336; text-align: center;">⚠️ Payment Failed</h1>
+                    <h2 style="color: #333;">Hi ${subscription.admin.name},</h2>
+                    <p style="font-size: 16px; color: #555; line-height: 1.6;">
+                      Your payment of <strong>₹${retryAmount}</strong> for the
+                      <strong>${subscription.plan.name}</strong> (${subscription.billingCycle}) subscription failed on
+                      ${new Date(latestFailedPayment.paymentDate).toLocaleDateString()}.
+                    </p>
+                    <p style="font-size: 16px; color: #555; line-height: 1.6;">
+                      Please retry your payment to activate your subscription.
+                    </p>
+                    <div style="text-align: center; margin: 30px 0;">
+                      <a href="${retryLink}"
+                         style="background-color: #4caf50; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                        Retry Payment
+                      </a>
+                    </div>
+                    <p style="font-size: 14px; color: #777; margin-top: 30px;">
+                      If you continue to face issues, please contact our support team.
+                    </p>
+                  </div>
+                `,
+            });
 
             logJob(
               jobName,
               "info",
-              `Payment retry notification sent to: ${subscription.admin.email}`,
+              `Payment retry email sent to: ${subscription.admin.email}`,
               {
                 failedAmount: latestFailedPayment.amount,
                 failedDate: latestFailedPayment.paymentDate,
+                retryAmount,
               }
             );
 
             notificationsSent++;
+          } catch (emailError) {
+            logJob(
+              jobName,
+              "error",
+              `Failed to send retry email to: ${subscription.admin.email}`,
+              { error: emailError.message }
+            );
           }
-        } catch (error) {
-          logJob(
-            jobName,
-            "error",
-            `Failed to process retry for: ${subscription.admin?.email}`,
-            { error: error.message }
-          );
         }
+      } catch (error) {
+        logJob(
+          jobName,
+          "error",
+          `Failed to process retry for: ${subscription.admin?.email}`,
+          { error: error.message }
+        );
       }
-
-      logJob(
-        jobName,
-        "complete",
-        `Job completed. Notifications sent: ${notificationsSent}`
-      );
-    } catch (error) {
-      logJob(jobName, "error", "Job failed with error", {
-        error: error.message,
-      });
     }
-  },
+
+    logJob(
+      jobName,
+      "complete",
+      `Job completed. Notifications sent: ${notificationsSent}`
+    );
+  } catch (error) {
+    logJob(jobName, "error", "Job failed with error", {
+      error: error.message,
+    });
+  }
+};
+
+export const failedPaymentRetry = cron.schedule(
+  "0 10 * * *",
+  jobCallbacks.paymentRetry,
   {
     scheduled: false,
     timezone: "Asia/Kolkata",
@@ -438,148 +491,75 @@ export const failedPaymentRetry = cron.schedule(
 // JOB 6: Inactive Subscription Cleanup
 // Runs every Sunday at 2 AM
 // ============================================
+jobCallbacks.cleanup = async () => {
+  const jobName = "Inactive Subscription Cleanup";
+  logJob(jobName, "start", "Starting inactive subscription cleanup...");
+
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // Find subscriptions expired for more than 30 days
+    const inactiveSubscriptions = await AdminSubscription.find({
+      status: "expired",
+      endDate: { $lt: thirtyDaysAgo },
+    });
+
+    logJob(
+      jobName,
+      "info",
+      `Found ${inactiveSubscriptions.length} subscriptions expired for 30+ days`
+    );
+
+    let archivedCount = 0;
+
+    for (const subscription of inactiveSubscriptions) {
+      try {
+        // Archive subscription (you can move to a separate collection or just mark as archived)
+        subscription.status = "archived";
+        await subscription.save();
+
+        archivedCount++;
+        logJob(
+          jobName,
+          "info",
+          `Archived subscription ID: ${subscription._id}`
+        );
+      } catch (error) {
+        logJob(
+          jobName,
+          "error",
+          `Failed to archive subscription ID: ${subscription._id}`,
+          { error: error.message }
+        );
+      }
+    }
+
+    logJob(
+      jobName,
+      "complete",
+      `Job completed. Archived ${archivedCount} subscriptions`
+    );
+  } catch (error) {
+    logJob(jobName, "error", "Job failed with error", {
+      error: error.message,
+    });
+  }
+};
+
 export const inactiveSubscriptionCleanup = cron.schedule(
   "0 2 * * 0",
-  async () => {
-    const jobName = "Inactive Subscription Cleanup";
-    logJob(jobName, "start", "Starting inactive subscription cleanup...");
-
-    try {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      // Find subscriptions expired for more than 30 days
-      const inactiveSubscriptions = await AdminSubscription.find({
-        status: "expired",
-        endDate: { $lt: thirtyDaysAgo },
-      });
-
-      logJob(
-        jobName,
-        "info",
-        `Found ${inactiveSubscriptions.length} subscriptions expired for 30+ days`
-      );
-
-      let archivedCount = 0;
-
-      for (const subscription of inactiveSubscriptions) {
-        try {
-          // Archive subscription (you can move to a separate collection or just mark as archived)
-          subscription.status = "archived";
-          await subscription.save();
-
-          archivedCount++;
-          logJob(
-            jobName,
-            "info",
-            `Archived subscription ID: ${subscription._id}`
-          );
-        } catch (error) {
-          logJob(
-            jobName,
-            "error",
-            `Failed to archive subscription ID: ${subscription._id}`,
-            { error: error.message }
-          );
-        }
-      }
-
-      logJob(
-        jobName,
-        "complete",
-        `Job completed. Archived ${archivedCount} subscriptions`
-      );
-    } catch (error) {
-      logJob(jobName, "error", "Job failed with error", {
-        error: error.message,
-      });
-    }
-  },
+  jobCallbacks.cleanup,
   {
     scheduled: false,
     timezone: "Asia/Kolkata",
   }
 );
 
-// ============================================
-// JOB 7: Subscription Expiring Soon Alert
-// Runs daily at 8 AM
-// Sends alerts for subscriptions expiring within 7 days
-// ============================================
-export const subscriptionExpiringSoonAlert = cron.schedule(
-  "0 8 * * *",
-  async () => {
-    const jobName = "Subscription Expiring Soon Alert";
-    logJob(jobName, "start", "Starting expiring soon alert check...");
-
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const sevenDaysLater = new Date(today);
-      sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
-
-      // Find active subscriptions expiring within 7 days
-      const expiringSubscriptions = await AdminSubscription.find({
-        status: "active",
-        endDate: {
-          $gte: today,
-          $lte: sevenDaysLater,
-        },
-      }).populate("admin plan");
-
-      logJob(
-        jobName,
-        "info",
-        `Found ${expiringSubscriptions.length} subscriptions expiring within 7 days`
-      );
-
-      let alertsSent = 0;
-
-      for (const subscription of expiringSubscriptions) {
-        try {
-          const daysRemaining = Math.ceil(
-            (subscription.endDate - today) / (1000 * 60 * 60 * 24)
-          );
-
-          if (subscription.admin && subscription.admin.email) {
-            await sendSubscriptionExpiringEmail(
-              subscription.admin.email,
-              subscription.admin.name,
-              subscription.plan.name,
-              subscription.endDate,
-              daysRemaining
-            );
-
-            alertsSent++;
-            logJob(
-              jobName,
-              "info",
-              `Sent expiring alert to: ${subscription.admin.email} (${daysRemaining} days remaining)`
-            );
-          }
-        } catch (error) {
-          logJob(
-            jobName,
-            "error",
-            `Failed to send alert to: ${subscription.admin?.email}`,
-            { error: error.message }
-          );
-        }
-      }
-
-      logJob(jobName, "complete", `Job completed. Alerts sent: ${alertsSent}`);
-    } catch (error) {
-      logJob(jobName, "error", "Job failed with error", {
-        error: error.message,
-      });
-    }
-  },
-  {
-    scheduled: false,
-    timezone: "Asia/Kolkata",
-  }
-);
+// NOTE: Job 7 (Subscription Expiring Soon Alert) was removed.
+// Its functionality (alerting for subscriptions expiring within 7 days) is fully covered
+// by Job 2 (Subscription Renewal Reminder) which sends reminders at 7, 3, and 1 days.
+// Having both caused duplicate emails to admins.
 
 // ============================================
 // Job Manager - Start/Stop all jobs
@@ -607,9 +587,6 @@ export const startAllJobs = () => {
     "✅ Inactive Subscription Cleanup - Started (Weekly on Sunday at 02:00)"
   );
 
-  subscriptionExpiringSoonAlert.start();
-  console.log("✅ Subscription Expiring Soon Alert - Started (Daily at 08:00)");
-
   console.log("\n✨ All subscription jobs are running!\n");
 };
 
@@ -622,85 +599,98 @@ export const stopAllJobs = () => {
   autoRenewalHandler.stop();
   failedPaymentRetry.stop();
   inactiveSubscriptionCleanup.stop();
-  subscriptionExpiringSoonAlert.stop();
 
   console.log("✅ All subscription jobs stopped!\n");
 };
 
 // Manual trigger functions for testing
+// Callbacks are stored in jobCallbacks object so they can be invoked directly
 export const triggerExpiryCheck = () => {
   console.log("🔧 Manually triggering subscription expiry check...");
-  subscriptionExpiryChecker.now();
+  jobCallbacks.expiryCheck();
 };
 
 export const triggerRenewalReminder = () => {
   console.log("🔧 Manually triggering renewal reminder...");
-  subscriptionRenewalReminder.now();
+  jobCallbacks.renewalReminder();
 };
 
 export const triggerUsageReset = () => {
   console.log("🔧 Manually triggering usage counter reset...");
-  usageCounterReset.now();
+  jobCallbacks.usageReset();
 };
 
 export const triggerAutoRenewal = () => {
   console.log("🔧 Manually triggering auto-renewal handler...");
-  autoRenewalHandler.now();
+  jobCallbacks.autoRenewal();
 };
 
 export const triggerPaymentRetry = () => {
   console.log("🔧 Manually triggering failed payment retry...");
-  failedPaymentRetry.now();
+  jobCallbacks.paymentRetry();
 };
 
 export const triggerCleanup = () => {
   console.log("🔧 Manually triggering inactive subscription cleanup...");
-  inactiveSubscriptionCleanup.now();
+  jobCallbacks.cleanup();
 };
 
+// triggerExpiringSoonAlert removed — Job 7 was merged into Job 2 (renewalReminder)
 export const triggerExpiringSoonAlert = () => {
-  console.log("🔧 Manually triggering expiring soon alert...");
-  subscriptionExpiringSoonAlert.now();
+  console.log(
+    "🔧 Expiring soon alert merged into renewal reminder. Triggering that instead..."
+  );
+  jobCallbacks.renewalReminder();
 };
 
 // Get job status
+// Helper to safely check if a cron task is running (compatible with node-cron v4)
+const isJobRunning = (task) => {
+  // node-cron v4 uses getStatus(), older versions may use .running
+  if (typeof task.getStatus === "function") {
+    return task.getStatus() === "scheduled";
+  }
+  return !!task.running;
+};
+
 export const getJobsStatus = () => {
   return {
     subscriptionExpiryChecker: {
-      running: subscriptionExpiryChecker.running,
+      running: isJobRunning(subscriptionExpiryChecker),
       schedule: "Daily at 00:00 (Midnight)",
       description: "Expires subscriptions that reached their end date",
     },
     subscriptionRenewalReminder: {
-      running: subscriptionRenewalReminder.running,
+      running: isJobRunning(subscriptionRenewalReminder),
       schedule: "Daily at 09:00 AM",
       description: "Sends renewal reminders at 7, 3, and 1 day before expiry",
     },
     usageCounterReset: {
-      running: usageCounterReset.running,
+      running: isJobRunning(usageCounterReset),
       schedule: "Monthly on 1st at 00:00",
       description: "Resets monthly order counters for all subscriptions",
     },
     autoRenewalHandler: {
-      running: autoRenewalHandler.running,
+      running: isJobRunning(autoRenewalHandler),
       schedule: "Daily at 00:00 (Midnight)",
       description:
         "Automatically renews subscriptions with auto-renewal enabled",
     },
     failedPaymentRetry: {
-      running: failedPaymentRetry.running,
+      running: isJobRunning(failedPaymentRetry),
       schedule: "Daily at 10:00 AM",
       description: "Retries failed payments from last 3 days",
     },
     inactiveSubscriptionCleanup: {
-      running: inactiveSubscriptionCleanup.running,
+      running: isJobRunning(inactiveSubscriptionCleanup),
       schedule: "Weekly on Sunday at 02:00 AM",
       description: "Archives subscriptions expired for 30+ days",
     },
     subscriptionExpiringSoonAlert: {
-      running: subscriptionExpiringSoonAlert.running,
-      schedule: "Daily at 08:00 AM",
-      description: "Sends alerts for subscriptions expiring within 7 days",
+      running: false, // Merged into renewalReminder job
+      schedule: "Removed — merged into renewalReminder",
+      description:
+        "Removed: functionality merged into Subscription Renewal Reminder to avoid duplicate emails",
     },
   };
 };

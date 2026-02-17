@@ -243,6 +243,7 @@ export const getTables = async (req, res, next) => {
       .populate("currentOrder", "status totalPrice")
       .populate("currentCustomer", "name phone")
       .sort({ tableNumber: 1 })
+      .collation({ locale: "en", numericOrdering: true })
       .limit(parseInt(limit))
       .skip(skip);
 

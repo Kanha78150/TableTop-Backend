@@ -53,7 +53,6 @@ const adminSubscriptionSchema = new mongoose.Schema(
         amount: {
           type: Number,
           required: true,
-          min: [0, "Amount cannot be negative"],
         },
         paymentDate: {
           type: Date,
@@ -65,12 +64,31 @@ const adminSubscriptionSchema = new mongoose.Schema(
         },
         paymentMethod: {
           type: String,
-          enum: ["razorpay", "stripe", "paypal", "bank_transfer", "other"],
+          enum: [
+            "razorpay",
+            "stripe",
+            "paypal",
+            "bank_transfer",
+            "online",
+            "auto_renewal",
+            "upgrade",
+            "downgrade",
+            "cancellation",
+            "refund",
+            "other",
+          ],
           default: "razorpay",
         },
         status: {
           type: String,
-          enum: ["success", "failed", "pending", "refunded"],
+          enum: [
+            "success",
+            "failed",
+            "pending",
+            "refunded",
+            "cancelled",
+            "auto_renewed",
+          ],
           default: "success",
         },
         currency: {

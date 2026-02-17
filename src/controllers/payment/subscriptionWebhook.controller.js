@@ -18,21 +18,18 @@ export const handleSubscriptionWebhook = async (req, res, next) => {
     // Skip signature verification in development mode for Postman testing
     const isDevelopment = process.env.NODE_ENV === "development";
 
-    // TODO: PRODUCTION - Uncomment below for production signature verification
-    // if (!isDevelopment) {
-    //   // Only verify signature in production
-    //   const isValid = paymentService.verifyWebhookSignature(
-    //     JSON.stringify(webhookBody),
-    //     webhookSignature
-    //   );
+    if (!isDevelopment) {
+      // Verify webhook signature in non-development environments
+      const isValid = paymentService.verifyWebhookSignature(
+        webhookBody,
+        webhookSignature
+      );
 
-    //   if (!isValid) {
-    //     console.error("Invalid webhook signature");
-    //     return res.status(400).json({ error: "Invalid signature" });
-    //   }
-    // }
-
-    if (isDevelopment) {
+      if (!isValid) {
+        console.error("Invalid webhook signature");
+        return res.status(400).json({ error: "Invalid signature" });
+      }
+    } else {
       console.log("⚠️  Development mode: Skipping signature verification");
     }
 
@@ -339,10 +336,11 @@ export const verifySubscriptionPayment = async (req, res, next) => {
     }
 
     // Activate subscription (reuse webhook handler logic)
+    // paymentDetails.amount from Razorpay API is already in paise
     await handleSuccessfulPayment({
       id: razorpay_payment_id,
       order_id: razorpay_order_id,
-      amount: paymentDetails.amount * 100, // Convert to paise
+      amount: paymentDetails.amount, // Already in paise from Razorpay
       method: paymentDetails.method,
       notes: {
         type: "subscription",

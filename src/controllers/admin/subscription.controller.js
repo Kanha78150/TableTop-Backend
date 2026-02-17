@@ -225,7 +225,7 @@ export const activateSubscription = async (req, res, next) => {
     subscription.paymentHistory.push({
       amount: paymentDetails.amount,
       currency: paymentDetails.currency || "INR",
-      paymentMethod: paymentDetails.paymentMethod || "online",
+      paymentMethod: paymentDetails.paymentMethod || "razorpay",
       transactionId: paymentDetails.transactionId,
       paymentDate: new Date(),
       status: "success",
@@ -466,7 +466,7 @@ export const cancelSubscription = async (req, res, next) => {
     const subscription = await AdminSubscription.findOne({
       admin: adminId,
       status: "active",
-    }).populate("admin");
+    }).populate("admin plan");
 
     if (!subscription) {
       return next(new APIError(404, "No active subscription found"));
@@ -757,7 +757,7 @@ export const upgradePlan = async (req, res, next) => {
  */
 export const syncUsage = async (req, res, next) => {
   try {
-    const adminId = req.admin._id;
+    const adminId = req.user._id;
 
     const { syncResourceUsage } =
       await import("../../middleware/subscriptionAuth.middleware.js");

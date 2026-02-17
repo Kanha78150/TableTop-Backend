@@ -189,9 +189,8 @@ export const updateResourceUsage = async (
   increment = 1
 ) => {
   try {
-    const subscription = await AdminSubscription.findActiveSubscription(
-      adminId
-    );
+    const subscription =
+      await AdminSubscription.findActiveSubscription(adminId);
 
     if (!subscription) {
       throw new APIError(404, "No active subscription found");
@@ -218,9 +217,8 @@ export const updateResourceUsage = async (
  */
 export const syncResourceUsage = async (adminId, resourceType) => {
   try {
-    const subscription = await AdminSubscription.findActiveSubscription(
-      adminId
-    );
+    const subscription =
+      await AdminSubscription.findActiveSubscription(adminId);
 
     if (!subscription) {
       throw new APIError(404, "No active subscription found");
@@ -264,14 +262,15 @@ export const syncResourceUsage = async (adminId, resourceType) => {
         throw new Error(`Unknown resource type: ${resourceType}`);
     }
 
+    // Store old value before overwriting for accurate logging
+    const oldCount = subscription.usage[resourceType] || 0;
+
     // Update usage with actual count
     subscription.usage[resourceType] = actualCount;
     await subscription.save();
 
     console.log(
-      `✅ Synced ${resourceType} usage: ${actualCount} (was: ${
-        subscription.usage[resourceType] || 0
-      })`
+      `✅ Synced ${resourceType} usage: ${actualCount} (was: ${oldCount})`
     );
 
     return subscription;
@@ -295,9 +294,8 @@ export const decreaseResourceUsage = async (
   decrement = 1
 ) => {
   try {
-    const subscription = await AdminSubscription.findActiveSubscription(
-      adminId
-    );
+    const subscription =
+      await AdminSubscription.findActiveSubscription(adminId);
 
     if (!subscription) {
       // If no subscription, skip silently (might be super admin or subscription deleted)
@@ -331,9 +329,8 @@ export const decreaseResourceUsage = async (
  */
 export const incrementOrderCount = async (adminId, increment = 1) => {
   try {
-    const subscription = await AdminSubscription.findActiveSubscription(
-      adminId
-    );
+    const subscription =
+      await AdminSubscription.findActiveSubscription(adminId);
 
     if (!subscription) {
       // Skip silently if no subscription
@@ -361,9 +358,8 @@ export const incrementOrderCount = async (adminId, increment = 1) => {
  */
 export const updateStorageUsage = async (adminId, storageGB) => {
   try {
-    const subscription = await AdminSubscription.findActiveSubscription(
-      adminId
-    );
+    const subscription =
+      await AdminSubscription.findActiveSubscription(adminId);
 
     if (!subscription) {
       return null;

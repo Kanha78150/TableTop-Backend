@@ -170,7 +170,8 @@ tableSchema.statics.findAvailable = function (
   return this.find(query)
     .populate("hotel", "name location")
     .populate("branch", "name location")
-    .sort({ tableNumber: 1 });
+    .sort({ tableNumber: 1 })
+    .collation({ locale: "en", numericOrdering: true });
 };
 
 // Static method to get table by scan data

@@ -4,12 +4,15 @@ import {
   triggerSubscriptionJob,
   getAvailableJobs,
 } from "../../controllers/superAdmin/subscriptionJobs.controller.js";
-import { requireSuperAdmin } from "../../middleware/roleAuth.middleware.js";
+import {
+  authenticateAdmin,
+  requireSuperAdmin,
+} from "../../middleware/roleAuth.middleware.js";
 
 const router = express.Router();
 
 // All routes require super admin authentication
-router.use(requireSuperAdmin);
+router.use(authenticateAdmin, requireSuperAdmin);
 
 /**
  * @route   GET /api/v1/super-admin/subscription-jobs/status
