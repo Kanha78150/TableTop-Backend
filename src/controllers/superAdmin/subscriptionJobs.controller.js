@@ -9,7 +9,6 @@ import {
   triggerAutoRenewal,
   triggerPaymentRetry,
   triggerCleanup,
-  triggerExpiringSoonAlert,
 } from "../../services/subscriptionJobs.service.js";
 
 /**
@@ -83,12 +82,6 @@ export const triggerSubscriptionJob = asyncHandler(async (req, res) => {
       triggered = true;
       break;
 
-    case "expiringSoonAlert":
-      triggerExpiringSoonAlert();
-      message = "Expiring soon alert triggered successfully";
-      triggered = true;
-      break;
-
     default:
       throw new APIError(400, `Unknown job name: ${jobName}`);
   }
@@ -145,11 +138,6 @@ export const getAvailableJobs = asyncHandler(async (req, res) => {
       name: "cleanup",
       description: "Archive subscriptions expired for 30+ days",
       schedule: "Weekly on Sunday at 02:00 AM",
-    },
-    {
-      name: "expiringSoonAlert",
-      description: "Send alerts for subscriptions expiring within 7 days",
-      schedule: "Daily at 08:00 AM",
     },
   ];
 

@@ -635,20 +635,12 @@ export const triggerCleanup = () => {
   jobCallbacks.cleanup();
 };
 
-// triggerExpiringSoonAlert removed — Job 7 was merged into Job 2 (renewalReminder)
-export const triggerExpiringSoonAlert = () => {
-  console.log(
-    "🔧 Expiring soon alert merged into renewal reminder. Triggering that instead..."
-  );
-  jobCallbacks.renewalReminder();
-};
-
 // Get job status
-// Helper to safely check if a cron task is running (compatible with node-cron v4)
+// Helper to safely check if a cron task is scheduled/active (compatible with node-cron v4)
+// node-cron v4 statuses: "idle" (scheduled, waiting), "running" (executing), "stopped"
 const isJobRunning = (task) => {
-  // node-cron v4 uses getStatus(), older versions may use .running
   if (typeof task.getStatus === "function") {
-    return task.getStatus() === "scheduled";
+    return task.getStatus() !== "stopped";
   }
   return !!task.running;
 };
@@ -686,12 +678,6 @@ export const getJobsStatus = () => {
       schedule: "Weekly on Sunday at 02:00 AM",
       description: "Archives subscriptions expired for 30+ days",
     },
-    subscriptionExpiringSoonAlert: {
-      running: false, // Merged into renewalReminder job
-      schedule: "Removed — merged into renewalReminder",
-      description:
-        "Removed: functionality merged into Subscription Renewal Reminder to avoid duplicate emails",
-    },
   };
 };
 
@@ -705,5 +691,4 @@ export default {
   triggerAutoRenewal,
   triggerPaymentRetry,
   triggerCleanup,
-  triggerExpiringSoonAlert,
 };
