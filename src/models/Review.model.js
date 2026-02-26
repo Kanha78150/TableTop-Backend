@@ -71,8 +71,8 @@ const reviewSchema = new mongoose.Schema(
     comment: {
       type: String,
       trim: true,
-      minlength: [10, "Comment must be at least 10 characters"],
       maxlength: [1000, "Comment cannot exceed 1000 characters"],
+      default: "",
     },
 
     // Status and Moderation
@@ -238,16 +238,9 @@ export const validateCreateReview = (data) => {
       "number.max": "Staff rating cannot exceed 5",
       "any.required": "Staff rating is required",
     }),
-    comment: Joi.string()
-      .min(10)
-      .max(1000)
-      .trim()
-      .optional()
-      .allow("")
-      .messages({
-        "string.min": "Comment must be at least 10 characters",
-        "string.max": "Comment cannot exceed 1000 characters",
-      }),
+    comment: Joi.string().max(1000).trim().optional().allow("").messages({
+      "string.max": "Comment cannot exceed 1000 characters",
+    }),
   });
   return schema.validate(data);
 };
@@ -273,16 +266,9 @@ export const validateUpdateReview = (data) => {
       "number.min": "Staff rating must be at least 1",
       "number.max": "Staff rating cannot exceed 5",
     }),
-    comment: Joi.string()
-      .min(10)
-      .max(1000)
-      .trim()
-      .optional()
-      .allow("")
-      .messages({
-        "string.min": "Comment must be at least 10 characters",
-        "string.max": "Comment cannot exceed 1000 characters",
-      }),
+    comment: Joi.string().max(1000).trim().optional().allow("").messages({
+      "string.max": "Comment cannot exceed 1000 characters",
+    }),
   }).min(1); // At least one field must be provided
   return schema.validate(data);
 };

@@ -417,7 +417,7 @@ export const getOrderStatus = async (req, res, next) => {
 };
 
 /**
- * Get active orders (pending, confirmed, preparing, ready)
+ * Get active orders (queued, pending, confirmed, preparing, ready)
  * GET /api/v1/user/orders/active
  */
 export const getActiveOrders = async (req, res, next) => {
@@ -426,7 +426,7 @@ export const getActiveOrders = async (req, res, next) => {
 
     // Pass $in query to get orders with multiple statuses
     const result = await orderService.getUserOrders(userId, {
-      status: { $in: ["pending", "confirmed", "preparing", "ready"] },
+      status: { $in: ["queued", "pending", "confirmed", "preparing", "ready"] },
       limit: 50,
       sortBy: "createdAt",
       sortOrder: "desc",

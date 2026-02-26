@@ -195,6 +195,18 @@ const orderSchema = new mongoose.Schema(
         ],
         default: "pending",
       },
+
+      // Cash payment confirmation tracking
+      cashConfirmedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+      },
+      cashConfirmedByRole: {
+        type: String,
+        enum: ["staff", "manager", "admin"],
+      },
+      cashConfirmedAt: {
+        type: Date,
+      },
     },
 
     // Order timing

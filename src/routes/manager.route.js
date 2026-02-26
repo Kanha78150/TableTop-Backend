@@ -53,6 +53,7 @@ import {
   getOrderAnalytics,
   getKitchenOrders,
   assignOrderToStaff,
+  confirmCashPayment,
 } from "../controllers/manager/order.controller.js";
 
 import {
@@ -291,6 +292,13 @@ router.put(
   requireRole(["branch_manager"]),
   requirePermission("processOrders"),
   assignOrderToStaff
+);
+
+router.put(
+  "/orders/:orderId/confirm-payment",
+  requireRole(["branch_manager"]),
+  requirePermission("updateOrderStatus"),
+  confirmCashPayment
 );
 
 // Table and Reservation Management Routes

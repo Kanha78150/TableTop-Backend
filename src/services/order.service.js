@@ -884,10 +884,80 @@ export const placeDirectOrder = async (
   }
 };
 
+/**
+ * Confirm cash payment for an order (mark as paid)
+ * @param {string} orderId - Order ID
+ * @param {string} confirmedBy - User ID of the person confirming
+ * @param {string} confirmedByRole - Role of the confirmer (staff, manager, admin)
+ * @returns {Object} - Updated order
+ */
+export const confirmCashPayment = async (
+  orderId,
+  confirmedBy,
+  confirmedByRole
+) => {
+  try {
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      throw new APIError(404, "Order not found");
+    }
+
+    // Only cash payments can be manually confirmed
+    if (order.payment?.paymentMethod !== "cash") {
+      throw new APIError(
+        400,
+        "Only cash payments can be manually confirmed. Online payments are confirmed automatically."
+      );
+    }
+
+    // Check if already paid
+    if (order.payment?.paymentStatus === "paid") {
+      throw new APIError(400, "This order's payment is already marked as paid");
+    }
+
+    // Only pending payments can be confirmed
+    if (order.payment?.paymentStatus !== "pending") {
+      throw new APIError(
+        400,
+        `Cannot confirm payment with status "${order.payment?.paymentStatus}". Only pending payments can be confirmed.`
+      );
+    }
+
+    // Update payment status
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      {
+        "payment.paymentStatus": "paid",
+        "payment.paidAt": new Date(),
+        "payment.provider": "cash",
+        "payment.cashConfirmedBy": confirmedBy,
+        "payment.cashConfirmedByRole": confirmedByRole,
+        "payment.cashConfirmedAt": new Date(),
+        updatedAt: new Date(),
+      },
+      { new: true }
+    )
+      .populate("user", "name phone email")
+      .populate("hotel", "name hotelId")
+      .populate("branch", "name branchId")
+      .populate("table", "tableNumber")
+      .populate("staff", "name staffId");
+
+    return updatedOrder;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(500, "Failed to confirm cash payment", error.message);
+  }
+};
+
 export default {
   placeOrderFromCart,
   getUserOrders,
   getOrderById,
   cancelOrder,
   reorderFromPrevious,
+  confirmCashPayment,
 };

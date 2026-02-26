@@ -985,4 +985,14 @@ import reviewRoutes from "./admin/review.route.js";
 // Mount review routes
 router.use("/reviews", reviewRoutes);
 
+// ===== ORDER MANAGEMENT =====
+import { confirmCashPayment } from "../controllers/admin/order.controller.js";
+
+// Confirm cash payment for an order
+router.put(
+  "/orders/:orderId/confirm-payment",
+  rbac({ permissions: ["manageUsers"] }),
+  confirmCashPayment
+);
+
 export default router;

@@ -42,6 +42,12 @@ router.get("/orders/:orderId", staffOrderController.getOrderDetails);
 // Update order status
 router.put("/orders/:orderId/status", staffOrderController.updateOrderStatus);
 
+// Confirm cash payment for an order
+router.put(
+  "/orders/:orderId/confirm-payment",
+  staffOrderController.confirmCashPayment
+);
+
 /**
  * Staff Complaint Management Routes (READ-ONLY ACCESS)
  * Staff can VIEW complaints assigned to them but CANNOT update, respond, or modify
