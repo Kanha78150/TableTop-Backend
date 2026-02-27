@@ -988,11 +988,19 @@ router.use("/reviews", reviewRoutes);
 // ===== ORDER MANAGEMENT =====
 import {
   getAllOrders,
+  getOrderDetails,
   confirmCashPayment,
 } from "../controllers/admin/order.controller.js";
 
 // Get all orders (supports branchId, staffId, status, date filters)
 router.get("/orders", rbac({ permissions: ["manageUsers"] }), getAllOrders);
+
+// Get order details by ID
+router.get(
+  "/orders/:orderId",
+  rbac({ permissions: ["manageUsers"] }),
+  getOrderDetails
+);
 
 // Confirm cash payment for an order
 router.put(

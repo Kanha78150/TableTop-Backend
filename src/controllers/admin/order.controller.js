@@ -57,6 +57,7 @@ const validateGetOrdersQuery = (data) => {
       .optional(),
     staff: Joi.string().length(24).hex().optional(),
     staffId: Joi.string().length(24).hex().optional(),
+    hotelId: Joi.string().length(24).hex().optional(),
     branchId: Joi.string().length(24).hex().optional(),
     table: Joi.string().length(24).hex().optional(),
     limit: Joi.number().integer().min(1).max(100).optional(),
@@ -96,6 +97,7 @@ export const getAllOrders = async (req, res, next) => {
       status,
       staff,
       staffId,
+      hotelId,
       branchId,
       table,
       limit,
@@ -152,9 +154,14 @@ export const getAllOrders = async (req, res, next) => {
       } else {
         filter.branch = { $in: assignedBranches.map((b) => b._id || b) };
       }
-    } else if (branchId) {
-      // Admin / super_admin can filter by specific branch
-      filter.branch = branchId;
+    } else {
+      // Admin / super_admin can filter by specific hotel and/or branch
+      if (hotelId) {
+        filter.hotel = hotelId;
+      }
+      if (branchId) {
+        filter.branch = branchId;
+      }
     }
 
     if (status && status !== "all") {
@@ -237,6 +244,57 @@ export const getAllOrders = async (req, res, next) => {
     );
   } catch (error) {
     logger.error("Error getting admin orders:", error);
+    next(error);
+  }
+};
+
+/**
+ * Get order details by ID
+ * GET /api/v1/admin/orders/:orderId
+ * @access Admin
+ */
+export const getOrderDetails = async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+    const adminRole = req.admin.role;
+
+    // Validate order ID
+    if (!orderId.match(/^[0-9a-fA-F]{24}$/)) {
+      return next(new APIError(400, "Invalid order ID"));
+    }
+
+    const order = await Order.findById(orderId)
+      .populate("user", "name phone email")
+      .populate("staff", "name staffId role isLocked")
+      .populate("table", "tableNumber seatingCapacity")
+      .populate("items.foodItem", "name price category description")
+      .populate("assignmentHistory.waiter", "name staffId isLocked")
+      .populate("statusHistory.updatedBy", "name staffId isLocked");
+
+    if (!order) {
+      return next(new APIError(404, "Order not found"));
+    }
+
+    // Branch admin can only view orders from their assigned branches
+    if (adminRole === "branch_admin") {
+      const assignedBranches = req.admin.assignedBranches || [];
+      const hasAccess = assignedBranches.some(
+        (b) => (b._id || b).toString() === order.branch?.toString()
+      );
+      if (!hasAccess) {
+        return next(
+          new APIError(403, "You do not have access to this order's branch")
+        );
+      }
+    }
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(200, { order }, "Order details retrieved successfully")
+      );
+  } catch (error) {
+    logger.error("Error getting admin order details:", error);
     next(error);
   }
 };
@@ -341,5 +399,6 @@ export const confirmCashPayment = async (req, res, next) => {
 
 export default {
   getAllOrders,
+  getOrderDetails,
   confirmCashPayment,
 };
