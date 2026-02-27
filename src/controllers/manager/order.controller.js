@@ -444,16 +444,58 @@ export const getOrdersByStatus = async (req, res, next) => {
 export const getOrderAnalytics = async (req, res, next) => {
   try {
     const managerBranch = getManagerBranchId(req.user.branch);
-    const { period = "7" } = req.query; // days
+    const {
+      period = "7",
+      startDate: startDateParam,
+      endDate: endDateParam,
+      groupBy = "day",
+    } = req.query;
 
-    // Calculate date range
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - parseInt(period));
+    // Calculate date range - prefer startDate/endDate params, fallback to period
+    let startDate, endDate;
+    if (startDateParam) {
+      startDate = parseDate(startDateParam);
+    } else {
+      startDate = new Date();
+      startDate.setDate(startDate.getDate() - parseInt(period));
+    }
+
+    if (endDateParam) {
+      endDate = parseDate(endDateParam);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      endDate = new Date();
+    }
 
     const filter = {
       branch: managerBranch,
-      createdAt: { $gte: startDate },
+      createdAt: { $gte: startDate, $lte: endDate },
     };
+
+    // Build groupBy date expression for aggregation
+    let dateGroupExpression;
+    switch (groupBy) {
+      case "week":
+        dateGroupExpression = {
+          year: { $isoWeekYear: "$createdAt" },
+          week: { $isoWeek: "$createdAt" },
+        };
+        break;
+      case "month":
+        dateGroupExpression = {
+          year: { $year: "$createdAt" },
+          month: { $month: "$createdAt" },
+        };
+        break;
+      case "day":
+      default:
+        dateGroupExpression = {
+          year: { $year: "$createdAt" },
+          month: { $month: "$createdAt" },
+          day: { $dayOfMonth: "$createdAt" },
+        };
+        break;
+    }
 
     // Get analytics data
     const [
@@ -463,6 +505,7 @@ export const getOrderAnalytics = async (req, res, next) => {
       averageOrderValue,
       popularItems,
       staffPerformance,
+      timeSeriesData,
     ] = await Promise.all([
       // Total orders
       Order.countDocuments(filter),
@@ -527,10 +570,68 @@ export const getOrderAnalytics = async (req, res, next) => {
           },
         },
       ]),
+
+      // Time series grouped by day/week/month
+      Order.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: dateGroupExpression,
+            orders: { $sum: 1 },
+            revenue: {
+              $sum: {
+                $cond: [
+                  { $in: ["$status", ["completed", "served"]] },
+                  "$totalPrice",
+                  0,
+                ],
+              },
+            },
+            completedOrders: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "completed"] }, 1, 0],
+              },
+            },
+            cancelledOrders: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0],
+              },
+            },
+          },
+        },
+        {
+          $sort: { "_id.year": 1, "_id.month": 1, "_id.week": 1, "_id.day": 1 },
+        },
+      ]),
     ]);
 
+    // Format time series labels
+    const formattedTimeSeries = timeSeriesData.map((item) => {
+      let label;
+      if (groupBy === "week") {
+        label = `${item._id.year}-W${String(item._id.week).padStart(2, "0")}`;
+      } else if (groupBy === "month") {
+        label = `${item._id.year}-${String(item._id.month).padStart(2, "0")}`;
+      } else {
+        label = `${item._id.year}-${String(item._id.month).padStart(2, "0")}-${String(item._id.day).padStart(2, "0")}`;
+      }
+      return {
+        label,
+        orders: item.orders,
+        revenue: item.revenue,
+        completedOrders: item.completedOrders,
+        cancelledOrders: item.cancelledOrders,
+      };
+    });
+
+    // Build period label
+    const periodLabel = startDateParam
+      ? `${startDateParam} to ${endDateParam || "now"}`
+      : `${period} days`;
+
     const analytics = {
-      period: `${period} days`,
+      period: periodLabel,
+      groupBy,
       summary: {
         totalOrders,
         totalRevenue:
@@ -542,6 +643,7 @@ export const getOrderAnalytics = async (req, res, next) => {
         acc[item._id] = item.count;
         return acc;
       }, {}),
+      timeSeries: formattedTimeSeries,
       popularItems: popularItems.map((item) => ({
         name: item._id,
         quantity: item.totalQuantity,

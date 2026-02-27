@@ -13,6 +13,29 @@ import { logger } from "../utils/logger.js";
 import Joi from "joi";
 
 /**
+ * Helper function to parse date strings in multiple formats
+ * Accepts: YYYY-MM-DD, DD-MM-YYYY, or ISO string
+ */
+const parseDateString = (dateString) => {
+  if (!dateString) return null;
+
+  // Try parsing as ISO date first
+  let date = new Date(dateString);
+  if (!isNaN(date.getTime())) return date;
+
+  // Try parsing DD-MM-YYYY format
+  const ddmmyyyyPattern = /^(\d{2})-(\d{2})-(\d{4})$/;
+  const match = dateString.match(ddmmyyyyPattern);
+  if (match) {
+    const [, day, month, year] = match;
+    date = new Date(year, month - 1, day);
+    if (!isNaN(date.getTime())) return date;
+  }
+
+  return new Date(dateString);
+};
+
+/**
  * Assignment Controller for Waiter Management System
  *
  * Endpoints:
@@ -67,7 +90,12 @@ export const manualAssignOrder = async (req, res, next) => {
  */
 export const getAssignmentStats = async (req, res, next) => {
   try {
-    const { hotelId, branchId } = req.query;
+    const {
+      hotelId,
+      branchId,
+      startDate: startDateParam,
+      endDate: endDateParam,
+    } = req.query;
 
     // Validate query parameters
     const { error } = validateStatsQuery(req.query);
@@ -75,8 +103,23 @@ export const getAssignmentStats = async (req, res, next) => {
       return next(new APIError(400, "Invalid query parameters", error.details));
     }
 
+    // Parse date range if provided
+    let startDate, endDate;
+    if (startDateParam) {
+      startDate = parseDateString(startDateParam);
+    }
+    if (endDateParam) {
+      endDate = parseDateString(endDateParam);
+      endDate.setHours(23, 59, 59, 999);
+    }
+
     // Get assignment statistics
-    const stats = await assignmentService.getAssignmentStats(hotelId, branchId);
+    const stats = await assignmentService.getAssignmentStats(
+      hotelId,
+      branchId,
+      startDate,
+      endDate
+    );
 
     res
       .status(200)
@@ -419,7 +462,11 @@ export const resetRoundRobin = async (req, res, next) => {
 export const getWaiterPerformance = async (req, res, next) => {
   try {
     const { waiterId } = req.params;
-    const { days = 7 } = req.query;
+    const {
+      days = 7,
+      startDate: startDateParam,
+      endDate: endDateParam,
+    } = req.query;
 
     // Validate waiter exists
     const waiter = await Staff.findById(waiterId);
@@ -427,13 +474,26 @@ export const getWaiterPerformance = async (req, res, next) => {
       return next(new APIError(404, "Waiter not found"));
     }
 
-    // Calculate date range
-    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    // Calculate date range - prefer startDate/endDate params, fallback to days
+    let startDate, endDate;
+
+    if (startDateParam) {
+      startDate = parseDateString(startDateParam);
+    } else {
+      startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    }
+
+    if (endDateParam) {
+      endDate = parseDateString(endDateParam);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      endDate = new Date();
+    }
 
     // Get orders handled by this waiter
     const orders = await Order.find({
       staff: waiterId,
-      createdAt: { $gte: startDate },
+      createdAt: { $gte: startDate, $lte: endDate },
     }).select(
       "status totalPrice actualServiceTime customerRating createdAt updatedAt"
     );
@@ -475,6 +535,11 @@ export const getWaiterPerformance = async (req, res, next) => {
       }
     });
 
+    // Build period label
+    const periodLabel = startDateParam
+      ? `${startDateParam} to ${endDateParam || "now"}`
+      : `${days} days`;
+
     const performanceReport = {
       waiter: {
         id: waiter._id,
@@ -482,9 +547,9 @@ export const getWaiterPerformance = async (req, res, next) => {
         staffId: waiter.staffId,
       },
       period: {
-        days: days,
+        label: periodLabel,
         startDate: startDate,
-        endDate: new Date(),
+        endDate: endDate,
       },
       summary: {
         totalOrders,

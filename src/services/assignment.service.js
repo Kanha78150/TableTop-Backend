@@ -693,10 +693,22 @@ class AssignmentService {
    * @param {String} branchId - Branch ID (optional)
    * @returns {Object} Assignment statistics
    */
-  async getAssignmentStats(hotelId, branchId = null) {
+  async getAssignmentStats(
+    hotelId,
+    branchId = null,
+    startDate = null,
+    endDate = null
+  ) {
     try {
       const filter = { hotel: hotelId };
       if (branchId) filter.branch = branchId;
+
+      // Apply date range filter if provided
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) filter.createdAt.$gte = startDate;
+        if (endDate) filter.createdAt.$lte = endDate;
+      }
 
       // Get waiter stats
       const waiters = await this.getAvailableWaiters(hotelId, branchId);
@@ -712,7 +724,7 @@ class AssignmentService {
         branch: branchId,
       });
 
-      // Get recent assignment history
+      // Get recent assignment history (filtered by date range)
       const recentAssignments = await Order.find(filter)
         .populate("staff", "name staffId")
         .sort({ assignedAt: -1 })

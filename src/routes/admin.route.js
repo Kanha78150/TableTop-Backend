@@ -989,11 +989,19 @@ router.use("/reviews", reviewRoutes);
 import {
   getAllOrders,
   getOrderDetails,
+  getOrderAnalytics,
   confirmCashPayment,
 } from "../controllers/admin/order.controller.js";
 
 // Get all orders (supports branchId, staffId, status, date filters)
 router.get("/orders", rbac({ permissions: ["manageUsers"] }), getAllOrders);
+
+// Get order analytics summary (must be before :orderId)
+router.get(
+  "/orders/analytics/summary",
+  rbac({ permissions: ["viewAnalytics"] }),
+  getOrderAnalytics
+);
 
 // Get order details by ID
 router.get(
