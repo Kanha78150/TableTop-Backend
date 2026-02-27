@@ -986,7 +986,13 @@ import reviewRoutes from "./admin/review.route.js";
 router.use("/reviews", reviewRoutes);
 
 // ===== ORDER MANAGEMENT =====
-import { confirmCashPayment } from "../controllers/admin/order.controller.js";
+import {
+  getAllOrders,
+  confirmCashPayment,
+} from "../controllers/admin/order.controller.js";
+
+// Get all orders (supports branchId, staffId, status, date filters)
+router.get("/orders", rbac({ permissions: ["manageUsers"] }), getAllOrders);
 
 // Confirm cash payment for an order
 router.put(
