@@ -7,6 +7,8 @@ import {
 import { Hotel } from "../../models/Hotel.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import { uploadToCloudinary } from "../../utils/cloudinary.js";
+import fs from "fs";
 import {
   addServiceStatusToBranches,
   addBranchServiceStatus,
@@ -19,14 +21,19 @@ import {
 // Create a new branch (admin-specific)
 export const createBranch = async (req, res, next) => {
   try {
-    const { error } = validateBranch(req.body);
+    const branchData =
+      typeof req.body.branchData === "string"
+        ? JSON.parse(req.body.branchData)
+        : req.body;
+
+    const { error } = validateBranch(branchData);
     if (error) {
       return next(new APIError(400, error.details[0].message));
     }
 
     // Check if hotel exists and belongs to current admin
     let hotel;
-    const hotelIdentifier = req.body.hotel;
+    const hotelIdentifier = branchData.hotel;
 
     // Try to find by MongoDB ObjectId first
     if (hotelIdentifier.match(/^[0-9a-fA-F]{24}$/)) {
@@ -51,7 +58,7 @@ export const createBranch = async (req, res, next) => {
     }
 
     // Check if branch with same email already exists (within admin's scope)
-    const emailQuery = { "contactInfo.email": req.body.contactInfo.email };
+    const emailQuery = { "contactInfo.email": branchData.contactInfo.email };
     if (req.admin.role !== "super_admin") {
       emailQuery.createdBy = req.admin._id;
     }
@@ -61,11 +68,34 @@ export const createBranch = async (req, res, next) => {
       return next(new APIError(400, "Branch with this email already exists"));
     }
 
+    // Handle image uploads
+    let uploadedImages = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          const result = await uploadToCloudinary(file.path);
+          uploadedImages.push({
+            url: result.secure_url,
+            alt: branchData.name || "Branch image",
+          });
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        } catch (uploadError) {
+          console.error("Error uploading branch image:", uploadError);
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        }
+      }
+    }
+
     // Create branch with admin association
     const branch = new Branch({
-      ...req.body,
-      hotel: hotel._id, // Always use the MongoDB ObjectId for the reference
-      createdBy: req.admin._id, // Associate with current admin
+      ...branchData,
+      images: uploadedImages.length > 0 ? uploadedImages : [],
+      hotel: hotel._id,
+      createdBy: req.admin._id,
     });
     await branch.save();
 
@@ -226,9 +256,47 @@ export const updateBranch = async (req, res, next) => {
   try {
     const { branchId } = req.params;
 
-    const { error } = validateUpdateBranch(req.body);
+    const branchData =
+      typeof req.body.branchData === "string"
+        ? JSON.parse(req.body.branchData)
+        : req.body;
+
+    const { error } = validateUpdateBranch(branchData);
     if (error) {
       return next(new APIError(400, error.details[0].message));
+    }
+
+    // Handle image uploads if present
+    let uploadedImages = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          const result = await uploadToCloudinary(file.path);
+          uploadedImages.push({
+            url: result.secure_url,
+            alt: branchData.name || "Branch image",
+          });
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        } catch (uploadError) {
+          console.error("Error uploading branch image:", uploadError);
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        }
+      }
+
+      if (uploadedImages.length > 0) {
+        const currentBranch = await Branch.findOne({ branchId }).select(
+          "images"
+        );
+        const dbImages = currentBranch?.images || [];
+        const baseImages =
+          branchData.images ||
+          dbImages.map((img) => ({ url: img.url, alt: img.alt }));
+        branchData.images = [...baseImages, ...uploadedImages];
+      }
     }
 
     // Base query with admin restriction
@@ -238,7 +306,7 @@ export const updateBranch = async (req, res, next) => {
       query.createdBy = req.admin._id;
     }
 
-    const branch = await Branch.findOneAndUpdate(query, req.body, {
+    const branch = await Branch.findOneAndUpdate(query, branchData, {
       new: true,
       runValidators: true,
     })

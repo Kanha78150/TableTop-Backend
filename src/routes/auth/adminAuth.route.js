@@ -22,6 +22,8 @@ import {
   rateLimitSensitiveOps,
 } from "../../middleware/roleAuth.middleware.js";
 
+import { upload } from "../../middleware/multer.middleware.js";
+
 const router = express.Router();
 
 // Public routes (no authentication required)
@@ -46,7 +48,7 @@ router.use(authenticateAdmin); // All routes below require authentication
 
 // Self-service routes
 router.get("/profile", getAdminProfile);
-router.put("/profile", updateAdminProfile);
+router.put("/profile", upload.single("profileImage"), updateAdminProfile);
 router.post("/change-password", changePassword);
 router.post("/logout", logoutAdmin);
 

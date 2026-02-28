@@ -14,26 +14,66 @@ import {
   updateResourceUsage,
   decreaseResourceUsage,
 } from "../../middleware/subscriptionAuth.middleware.js";
+import { uploadToCloudinary } from "../../utils/cloudinary.js";
+import fs from "fs";
+import { logger } from "../../utils/logger.js";
 
 // Create a new hotel
 export const createHotel = async (req, res, next) => {
   try {
-    const { error } = validateHotel(req.body);
+    // Parse hotel data if it comes as FormData
+    const hotelData =
+      typeof req.body.hotelData === "string"
+        ? JSON.parse(req.body.hotelData)
+        : req.body;
+
+    const { error } = validateHotel(hotelData);
     if (error) {
       return next(new APIError(400, error.details[0].message));
     }
 
     // Check if hotel with same email already exists
     const existingEmail = await Hotel.findOne({
-      "contactInfo.email": req.body.contactInfo.email,
+      "contactInfo.email": hotelData.contactInfo.email,
     });
     if (existingEmail) {
       return next(new APIError(400, "Hotel with this email already exists"));
     }
 
+    // Handle image uploads
+    let uploadedImages = [];
+    if (req.files && req.files.length > 0) {
+      logger.info(`Uploading ${req.files.length} images to Cloudinary...`);
+
+      // Upload each image to Cloudinary
+      for (const file of req.files) {
+        try {
+          const result = await uploadToCloudinary(file.path);
+          uploadedImages.push({
+            url: result.secure_url,
+            alt: hotelData.name || "Hotel image",
+          });
+
+          // Delete temporary file
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        } catch (uploadError) {
+          logger.error("Error uploading image:", uploadError);
+          // Clean up any uploaded images if there's an error
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        }
+      }
+
+      logger.info(`Successfully uploaded ${uploadedImages.length} images`);
+    }
+
     // Create hotel with admin association
     const hotel = new Hotel({
-      ...req.body,
+      ...hotelData,
+      images: uploadedImages.length > 0 ? uploadedImages : [],
       createdBy: req.admin._id, // Associate with current admin
     });
     await hotel.save();
@@ -254,9 +294,53 @@ export const updateHotel = async (req, res, next) => {
   try {
     const { hotelId } = req.params;
 
-    const { error } = validateUpdateHotel(req.body);
+    // Parse hotelData if sent as FormData
+    const hotelData =
+      typeof req.body.hotelData === "string"
+        ? JSON.parse(req.body.hotelData)
+        : req.body;
+
+    const { error } = validateUpdateHotel(hotelData);
     if (error) {
       return next(new APIError(400, error.details[0].message));
+    }
+
+    // Handle image uploads if present
+    let uploadedImages = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          const result = await uploadToCloudinary(file.path);
+          uploadedImages.push({
+            url: result.secure_url,
+            alt: hotelData.name || "Hotel image",
+          });
+
+          // Clean up temporary file
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        } catch (uploadError) {
+          logger.error("Error uploading image:", uploadError);
+          // Clean up temporary file even if upload fails
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        }
+      }
+
+      // If new images were uploaded, merge with existing DB images
+      if (uploadedImages.length > 0) {
+        // Fetch current images from database (not from request body)
+        const currentHotel = await Hotel.findOne({ hotelId }).select("images");
+        const dbImages = currentHotel?.images || [];
+        // hotelData.images from body = images the client explicitly wants to keep
+        // If client sends images array, use that as base; otherwise keep all DB images
+        const baseImages =
+          hotelData.images ||
+          dbImages.map((img) => ({ url: img.url, alt: img.alt }));
+        hotelData.images = [...baseImages, ...uploadedImages];
+      }
     }
 
     // Base query with admin restriction
@@ -266,7 +350,7 @@ export const updateHotel = async (req, res, next) => {
       query.createdBy = req.admin._id;
     }
 
-    const hotel = await Hotel.findOneAndUpdate(query, req.body, {
+    const hotel = await Hotel.findOneAndUpdate(query, hotelData, {
       new: true,
       runValidators: true,
     }).populate("createdBy", "name email");
@@ -309,7 +393,7 @@ export const deleteHotel = async (req, res, next) => {
       try {
         await decreaseResourceUsage(req.admin._id, "hotels");
       } catch (usageError) {
-        console.error("Failed to decrease hotel usage counter:", usageError);
+        logger.error("Failed to decrease hotel usage counter:", usageError);
         // Log error but don't fail the deletion
       }
     }
@@ -485,7 +569,7 @@ export const searchHotels = async (req, res, next) => {
       query["mainLocation.state"] = new RegExp(state, "i");
     }
 
-    console.log("🔍 Hotel search query:", JSON.stringify(query, null, 2));
+    logger.info("🔍 Hotel search query:", JSON.stringify(query, null, 2));
 
     const skip = (page - 1) * limit;
 
@@ -512,7 +596,7 @@ export const searchHotels = async (req, res, next) => {
     // Categorize hotels by status for better insights
     const statusBreakdown = categorizeHotelsByStatus(hotels);
 
-    console.log(`✅ Found ${hotels.length} hotels matching criteria`);
+    logger.info(`✅ Found ${hotels.length} hotels matching criteria`);
 
     res.status(200).json(
       new APIResponse(
@@ -532,7 +616,7 @@ export const searchHotels = async (req, res, next) => {
       )
     );
   } catch (error) {
-    console.error("❌ Hotel search error:", error);
+    logger.error("❌ Hotel search error:", error);
     next(error);
   }
 };

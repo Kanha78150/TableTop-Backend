@@ -161,6 +161,32 @@ export const updateOrderStatus = async (req, res, next) => {
       .populate("table", "tableNumber")
       .populate("staff", "name staffId");
 
+    // Release table when order is completed or cancelled
+    if (status === "completed" || status === "cancelled") {
+      if (updatedOrder.table) {
+        try {
+          const tableId = updatedOrder.table._id || updatedOrder.table;
+          if (status === "completed") {
+            const tableDoc = await Table.findById(tableId);
+            if (tableDoc) {
+              await tableDoc.recordOrderCompletion(updatedOrder.totalPrice);
+            }
+          } else {
+            await Table.findByIdAndUpdate(tableId, {
+              status: "available",
+              currentOrder: null,
+              currentCustomer: null,
+            });
+          }
+        } catch (tableError) {
+          logger.error(
+            `Failed to update table status for order ${orderId}:`,
+            tableError
+          );
+        }
+      }
+    }
+
     // Handle order completion - trigger waiter reassignment
     let reassignmentResult = null;
     if (status === "completed") {

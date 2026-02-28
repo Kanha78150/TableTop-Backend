@@ -2,6 +2,7 @@
 import { Order } from "../../models/Order.model.js";
 import { Staff } from "../../models/Staff.model.js";
 import { FoodItem } from "../../models/FoodItem.model.js";
+import { Table } from "../../models/Table.model.js";
 import { User } from "../../models/User.model.js";
 import assignmentService from "../../services/assignment.service.js";
 import orderService from "../../services/order.service.js";
@@ -301,6 +302,32 @@ export const updateOrderStatus = async (req, res, next) => {
       .populate("user", "name phone")
       .populate("staff", "name staffId")
       .populate("table", "tableNumber");
+
+    // Release table when order is completed or cancelled
+    if (status === "completed" || status === "cancelled") {
+      if (updatedOrder.table) {
+        try {
+          const tableId = updatedOrder.table._id || updatedOrder.table;
+          if (status === "completed") {
+            const table = await Table.findById(tableId);
+            if (table) {
+              await table.recordOrderCompletion(updatedOrder.totalPrice);
+            }
+          } else {
+            await Table.findByIdAndUpdate(tableId, {
+              status: "available",
+              currentOrder: null,
+              currentCustomer: null,
+            });
+          }
+        } catch (tableError) {
+          logger.error(
+            `Failed to update table status for order ${orderId}:`,
+            tableError
+          );
+        }
+      }
+    }
 
     // Handle completion for assignment system
     if (status === "completed") {

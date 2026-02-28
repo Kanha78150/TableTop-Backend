@@ -8,6 +8,8 @@ import { Hotel } from "../../models/Hotel.model.js";
 import { Branch } from "../../models/Branch.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import { uploadToCloudinary } from "../../utils/cloudinary.js";
+import fs from "fs";
 import {
   sendManagerWelcomeEmail,
   sendStaffWelcomeEmail,
@@ -474,6 +476,22 @@ export const createManager = async (req, res, next) => {
       emergencyContact: emergencyContact || undefined,
     });
 
+    // Handle profile image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        manager.profileImage = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading manager profile image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
+
     await manager.save();
 
     // Update subscription usage counter for managers (skip for super_admin)
@@ -536,6 +554,22 @@ export const updateManager = async (req, res, next) => {
     delete updates.password;
     delete updates.refreshToken;
     delete updates.createdBy; // Prevent changing the creator
+
+    // Handle profile image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        updates.profileImage = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading manager profile image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
 
     // Base query with admin restriction
     const query = {};
@@ -1220,6 +1254,22 @@ export const createStaff = async (req, res, next) => {
       emergencyContact: emergencyContact || undefined,
     });
 
+    // Handle profile image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        staff.profileImage = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading staff profile image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
+
     console.log("Staff object before save:", {
       name: staff.name,
       email: staff.email,
@@ -1349,6 +1399,22 @@ export const updateStaff = async (req, res, next) => {
     // Remove sensitive fields from updates
     delete updates.password;
     delete updates.refreshToken;
+
+    // Handle profile image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        updates.profileImage = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading staff profile image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
 
     // Get the current staff to check permissions - support both MongoDB _id and staffId
     let currentStaff;

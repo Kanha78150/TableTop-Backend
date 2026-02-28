@@ -1013,6 +1013,22 @@ class CartService {
       const order = new Order(orderData);
       await order.save();
 
+      // 11.5. Update table status to occupied
+      if (table) {
+        try {
+          const fullTable = await Table.findById(tableId);
+          if (fullTable) {
+            await fullTable.updateStatus("occupied", userId, order._id);
+          }
+        } catch (tableError) {
+          console.error(
+            `Failed to update table status for order ${order._id}:`,
+            tableError
+          );
+          // Don't fail the checkout if table update fails
+        }
+      }
+
       // 12. Populate order details for response
       await order.populate([
         {

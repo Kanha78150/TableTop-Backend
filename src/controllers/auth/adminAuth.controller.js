@@ -18,6 +18,7 @@ import { Branch } from "../../models/Branch.model.js";
 /*-------------- Import utils ----------------*/
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import { uploadToCloudinary } from "../../utils/cloudinary.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import { generateResetToken, hashToken } from "../../utils/tokenGenerator.js";
 import {
@@ -26,6 +27,7 @@ import {
 } from "../../utils/emailService.js";
 import { generateOtp, hashOtp, verifyOtp } from "../../utils/otpGenerator.js";
 import { logger } from "../../utils/logger.js";
+import fs from "fs";
 
 /*-------------- Import config ----------------*/
 import {
@@ -44,6 +46,23 @@ export const updateAdminProfile = async (req, res, next) => {
         updates[field] = req.body[field];
       }
     });
+
+    // Handle profile image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        updates.profileImage = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading admin profile image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
+
     const admin = await Admin.findByIdAndUpdate(req.admin._id, updates, {
       new: true,
       runValidators: true,

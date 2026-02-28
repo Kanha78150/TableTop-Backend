@@ -148,6 +148,7 @@ import {
   checkResourceLimit,
   requireFeature,
 } from "../middleware/subscriptionAuth.middleware.js";
+import { upload } from "../middleware/multer.middleware.js";
 
 const router = express.Router();
 
@@ -159,6 +160,7 @@ router.use(authenticateAdmin);
 // ======================
 router.post(
   "/hotels",
+  upload.array("images", 5), // Allow up to 5 images
   rbac({ permissions: ["manageBranches"] }),
   requireActiveSubscription,
   checkResourceLimit("hotels"),
@@ -195,6 +197,7 @@ router.get(
 
 router.put(
   "/hotels/:hotelId",
+  upload.array("images", 10),
   rbac({ permissions: ["manageBranches"] }),
   requireActiveSubscription,
   updateHotel
@@ -232,6 +235,7 @@ router.get(
 // ======================
 router.post(
   "/branches",
+  upload.array("images", 5),
   rbac({ permissions: ["manageBranches"] }),
   requireActiveSubscription,
   checkResourceLimit("branches"),
@@ -268,6 +272,7 @@ router.get(
 
 router.put(
   "/branches/:branchId",
+  upload.array("images", 10),
   rbac({ permissions: ["manageBranches"] }),
   requireActiveSubscription,
   updateBranch
@@ -354,6 +359,7 @@ router.get(
 
 router.post(
   "/managers",
+  upload.single("profileImage"),
   rbac({ permissions: ["manageManagers"] }),
   requireActiveSubscription,
   checkResourceLimit("managers"),
@@ -362,6 +368,7 @@ router.post(
 
 router.put(
   "/managers/:managerId",
+  upload.single("profileImage"),
   rbac({ permissions: ["manageManagers"] }),
   requireActiveSubscription,
   updateManager
@@ -412,6 +419,7 @@ router.get(
 
 router.post(
   "/staff",
+  upload.single("profileImage"),
   rbac({ permissions: ["manageStaff"] }),
   requireActiveSubscription,
   checkResourceLimit("staff"),
@@ -420,6 +428,7 @@ router.post(
 
 router.put(
   "/staff/:staffId",
+  upload.single("profileImage"),
   rbac({ permissions: ["manageStaff"] }),
   requireActiveSubscription,
   updateStaff
@@ -483,6 +492,7 @@ router.get(
 
 router.post(
   "/menu/categories",
+  upload.single("image"),
   rbac({ permissions: ["manageMenu"] }),
   createCategory
 );
@@ -495,6 +505,7 @@ router.get(
 
 router.put(
   "/menu/categories/:categoryId",
+  upload.single("image"),
   rbac({ permissions: ["manageMenu"] }),
   updateCategory
 );
@@ -514,6 +525,7 @@ router.get(
 
 router.post(
   "/menu/items",
+  upload.single("image"),
   rbac({ permissions: ["manageMenu"] }),
   createFoodItem
 );
@@ -526,6 +538,7 @@ router.get(
 
 router.put(
   "/menu/items/:itemId",
+  upload.single("image"),
   rbac({ permissions: ["manageMenu"] }),
   updateFoodItem
 );

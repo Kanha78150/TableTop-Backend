@@ -7,8 +7,10 @@ import { Booking } from "../../models/Booking.model.js";
 import { Complaint } from "../../models/Complaint.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import { uploadToCloudinary } from "../../utils/cloudinary.js";
 import { logger } from "../../utils/logger.js";
 import bcrypt from "bcrypt";
+import fs from "fs";
 import Joi from "joi";
 
 /**
@@ -307,7 +309,13 @@ export const updateManagerProfile = async (req, res, next) => {
     }
 
     // Update allowed fields
-    const allowedUpdates = ["name", "phone", "settings", "preferences"];
+    const allowedUpdates = [
+      "name",
+      "phone",
+      "settings",
+      "preferences",
+      "profileImage",
+    ];
     const updates = {};
 
     allowedUpdates.forEach((field) => {
@@ -315,6 +323,22 @@ export const updateManagerProfile = async (req, res, next) => {
         updates[field] = req.body[field];
       }
     });
+
+    // Handle profile image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        updates.profileImage = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading manager profile image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
 
     updates.updatedAt = new Date();
 

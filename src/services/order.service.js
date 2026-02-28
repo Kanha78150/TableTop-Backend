@@ -201,9 +201,7 @@ export const placeOrderFromCart = async (
 
     // 11. Update table status if table was selected
     if (table) {
-      table.status = "occupied";
-      table.currentOrder = order._id;
-      await table.save();
+      await table.updateStatus("occupied", userId, order._id);
     }
 
     // 12. Populate order details for response
@@ -414,6 +412,7 @@ export const cancelOrder = async (
       await Table.findByIdAndUpdate(order.table, {
         status: "available",
         currentOrder: null,
+        currentCustomer: null,
       });
     }
 
@@ -851,13 +850,11 @@ export const placeDirectOrder = async (
     await newOrder.save();
 
     // 9. Update table status if applicable
-    if (table && table.status === "available") {
-      table.status = "occupied";
-      table.currentCustomer = userId;
-      table.lastUsed = new Date();
-      table.totalOrders += 1;
-      table.totalRevenue += total;
-      await table.save();
+    if (
+      table &&
+      (table.status === "available" || table.status === "occupied")
+    ) {
+      await table.updateStatus("occupied", userId, newOrder._id);
     }
 
     // 10. Populate order details for response

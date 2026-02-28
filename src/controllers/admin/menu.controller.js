@@ -3,6 +3,8 @@ import { FoodItem } from "../../models/FoodItem.model.js";
 import { Offer } from "../../models/Offer.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
+import { uploadToCloudinary } from "../../utils/cloudinary.js";
+import fs from "fs";
 import mongoose from "mongoose";
 import {
   resolveHotelId,
@@ -159,6 +161,22 @@ export const createCategory = async (req, res, next) => {
       ...otherFields,
     };
 
+    // Handle image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        categoryData.image = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading category image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
+
     const category = new FoodCategory(categoryData);
 
     await category.save();
@@ -233,6 +251,22 @@ export const updateCategory = async (req, res, next) => {
       !req.admin.canAccessBranch(category.branch._id)
     ) {
       return next(new APIError(403, "You don't have access to this category"));
+    }
+
+    // Handle image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        updates.image = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading category image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
     }
 
     const updatedCategory = await FoodCategory.findByIdAndUpdate(
@@ -474,6 +508,22 @@ export const createFoodItem = async (req, res, next) => {
       ...otherFields,
     });
 
+    // Handle image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        foodItem.image = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading food item image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
+
     await foodItem.save();
 
     const populatedFoodItem = await FoodItem.findById(foodItem._id)
@@ -575,6 +625,22 @@ export const updateFoodItem = async (req, res, next) => {
     }
 
     updates.lastModifiedBy = req.admin._id;
+
+    // Handle image upload
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        updates.image = result.secure_url;
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading food item image:", uploadError);
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      }
+    }
 
     // Update the food item fields
     Object.keys(updates).forEach((key) => {

@@ -1,6 +1,7 @@
 // src/routes/manager.route.js - Branch Manager Routes
 import express from "express";
 import { validateBulkGstUpdate } from "../validators/foodItem.validators.js";
+import { upload } from "../middleware/multer.middleware.js";
 import {
   authenticate,
   requireRole,
@@ -97,7 +98,12 @@ router.get(
 
 router.get("/profile", requireManagerOrHigher, getManagerProfile);
 
-router.put("/profile", requireManagerOrHigher, updateManagerProfile);
+router.put(
+  "/profile",
+  requireManagerOrHigher,
+  upload.single("profileImage"),
+  updateManagerProfile
+);
 
 router.put(
   "/change-password",
