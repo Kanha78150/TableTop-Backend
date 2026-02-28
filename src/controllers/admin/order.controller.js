@@ -407,29 +407,28 @@ export const getOrderAnalytics = async (req, res, next) => {
   try {
     const adminRole = req.admin.role;
     const {
-      period = "7",
       startDate: startDateParam,
       endDate: endDateParam,
-      groupBy = "day",
       hotelId,
       branchId,
     } = req.query;
 
-    // Calculate date range - prefer startDate/endDate params, fallback to period
+    // Calculate date range from startDate/endDate params (default: last 30 days)
     let startDate, endDate;
     if (startDateParam) {
       startDate = parseDate(startDateParam);
     } else {
       startDate = new Date();
-      startDate.setDate(startDate.getDate() - parseInt(period));
+      startDate.setDate(startDate.getDate() - 30);
     }
+    startDate.setHours(0, 0, 0, 0);
 
     if (endDateParam) {
       endDate = parseDate(endDateParam);
-      endDate.setHours(23, 59, 59, 999);
     } else {
       endDate = new Date();
     }
+    endDate.setHours(23, 59, 59, 999);
 
     // Build filter
     const filter = {
@@ -445,10 +444,10 @@ export const getOrderAnalytics = async (req, res, next) => {
           new APIResponse(
             200,
             {
-              period: startDateParam
-                ? `${startDateParam} to ${endDateParam || "now"}`
-                : `${period} days`,
-              groupBy,
+              dateRange: {
+                startDate: startDate.toISOString(),
+                endDate: endDate.toISOString(),
+              },
               summary: {
                 totalOrders: 0,
                 totalRevenue: 0,
@@ -485,30 +484,12 @@ export const getOrderAnalytics = async (req, res, next) => {
       if (branchId) filter.branch = new mongoose.Types.ObjectId(branchId);
     }
 
-    // Build groupBy date expression for aggregation
-    let dateGroupExpression;
-    switch (groupBy) {
-      case "week":
-        dateGroupExpression = {
-          year: { $isoWeekYear: "$createdAt" },
-          week: { $isoWeek: "$createdAt" },
-        };
-        break;
-      case "month":
-        dateGroupExpression = {
-          year: { $year: "$createdAt" },
-          month: { $month: "$createdAt" },
-        };
-        break;
-      case "day":
-      default:
-        dateGroupExpression = {
-          year: { $year: "$createdAt" },
-          month: { $month: "$createdAt" },
-          day: { $dayOfMonth: "$createdAt" },
-        };
-        break;
-    }
+    // Date expression for daily time series
+    const dateGroupExpression = {
+      year: { $year: "$createdAt" },
+      month: { $month: "$createdAt" },
+      day: { $dayOfMonth: "$createdAt" },
+    };
 
     // Get analytics data
     const [
@@ -616,32 +597,20 @@ export const getOrderAnalytics = async (req, res, next) => {
       ]),
     ]);
 
-    // Format time series labels
-    const formattedTimeSeries = timeSeriesData.map((item) => {
-      let label;
-      if (groupBy === "week") {
-        label = `${item._id.year}-W${String(item._id.week).padStart(2, "0")}`;
-      } else if (groupBy === "month") {
-        label = `${item._id.year}-${String(item._id.month).padStart(2, "0")}`;
-      } else {
-        label = `${item._id.year}-${String(item._id.month).padStart(2, "0")}-${String(item._id.day).padStart(2, "0")}`;
-      }
-      return {
-        label,
-        orders: item.orders,
-        revenue: item.revenue,
-        completedOrders: item.completedOrders,
-        cancelledOrders: item.cancelledOrders,
-      };
-    });
-
-    const periodLabel = startDateParam
-      ? `${startDateParam} to ${endDateParam || "now"}`
-      : `${period} days`;
+    // Format time series labels (daily)
+    const formattedTimeSeries = timeSeriesData.map((item) => ({
+      label: `${item._id.year}-${String(item._id.month).padStart(2, "0")}-${String(item._id.day).padStart(2, "0")}`,
+      orders: item.orders,
+      revenue: item.revenue,
+      completedOrders: item.completedOrders,
+      cancelledOrders: item.cancelledOrders,
+    }));
 
     const analytics = {
-      period: periodLabel,
-      groupBy,
+      dateRange: {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      },
       summary: {
         totalOrders,
         totalRevenue:

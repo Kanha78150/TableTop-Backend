@@ -209,27 +209,56 @@ export const requireAnyRole = (req, res, next) => {
 // Check specific permission (works for all user types)
 export const requirePermission = (permission) => {
   return (req, res, next) => {
-    if (!req.user.hasPermission || !req.user.hasPermission(permission)) {
-      // Fallback for users without hasPermission method
-      if (req.user.permissions && !req.user.permissions[permission]) {
-        return next(new APIError(403, `Permission required: ${permission}`));
-      }
-      if (!req.user.permissions) {
+    // Parse permissions if stored as JSON string in DB
+    let permissions = req.user.permissions;
+    if (typeof permissions === "string") {
+      try {
+        permissions = JSON.parse(permissions);
+        // Also fix it on req.user so downstream code works
+        req.user.permissions = permissions;
+      } catch (e) {
         return next(new APIError(403, `Permission required: ${permission}`));
       }
     }
-    next();
+
+    // Check using hasPermission method if available
+    if (req.user.hasPermission && req.user.hasPermission(permission)) {
+      return next();
+    }
+
+    // Fallback: check permissions object directly
+    if (permissions && permissions[permission]) {
+      return next();
+    }
+
+    return next(new APIError(403, `Permission required: ${permission}`));
   };
 };
 
 // Check multiple permissions (user must have ALL permissions)
 export const requirePermissions = (permissions) => {
   return (req, res, next) => {
+    // Parse permissions if stored as JSON string in DB
+    let userPermissions = req.user.permissions;
+    if (typeof userPermissions === "string") {
+      try {
+        userPermissions = JSON.parse(userPermissions);
+        req.user.permissions = userPermissions;
+      } catch (e) {
+        return next(
+          new APIError(
+            403,
+            `Insufficient permissions. Required: ${permissions.join(", ")}`
+          )
+        );
+      }
+    }
+
     const hasAllPermissions = permissions.every((permission) => {
       if (req.user.hasPermission) {
         return req.user.hasPermission(permission);
       }
-      return req.user.permissions && req.user.permissions[permission];
+      return userPermissions && userPermissions[permission];
     });
 
     if (!hasAllPermissions) {

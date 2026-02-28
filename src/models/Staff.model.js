@@ -318,6 +318,25 @@ staffSchema.pre("save", async function (next) {
   next();
 });
 
+// Auto-parse string fields before save
+staffSchema.pre("save", function (next) {
+  // Auto-parse permissions if stored as JSON string
+  if (typeof this.permissions === "string") {
+    try {
+      this.permissions = JSON.parse(this.permissions);
+    } catch (e) {}
+  }
+
+  // Auto-parse emergencyContact if stored as JSON string
+  if (typeof this.emergencyContact === "string") {
+    try {
+      this.emergencyContact = JSON.parse(this.emergencyContact);
+    } catch (e) {}
+  }
+
+  next();
+});
+
 // Compare password method
 staffSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);

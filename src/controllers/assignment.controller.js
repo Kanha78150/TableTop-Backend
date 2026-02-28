@@ -367,12 +367,95 @@ export const getSystemHealth = async (req, res, next) => {
 
 /**
  * Get time tracker performance metrics
- * GET /api/v1/assignment/system/metrics
+ * GET /api/v1/assignment/system/metrics?startDate=DD-MM-YYYY&endDate=DD-MM-YYYY
  * @access Manager/Admin
  */
 export const getPerformanceMetrics = async (req, res, next) => {
   try {
-    const metrics = timeTracker.getMetrics();
+    const { startDate: startDateParam, endDate: endDateParam } = req.query;
+
+    // Default to last 30 days if no dates provided
+    let startDate, endDate;
+    if (startDateParam) {
+      startDate = parseDateString(startDateParam);
+    } else {
+      startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30);
+    }
+    startDate.setHours(0, 0, 0, 0);
+
+    if (endDateParam) {
+      endDate = parseDateString(endDateParam);
+    } else {
+      endDate = new Date();
+    }
+    endDate.setHours(23, 59, 59, 999);
+
+    // Query orders within the date range that have a staff assignment
+    const dateFilter = {
+      createdAt: { $gte: startDate, $lte: endDate },
+    };
+
+    const [totalAssignments, timeoutOrders, avgAssignmentTime] =
+      await Promise.all([
+        // Total orders assigned to staff in this period
+        Order.countDocuments({
+          ...dateFilter,
+          staff: { $exists: true, $ne: null },
+        }),
+
+        // Orders that were cancelled due to timeout in this period
+        Order.countDocuments({ ...dateFilter, status: "cancelled" }),
+
+        // Average time between order creation and staff assignment
+        Order.aggregate([
+          {
+            $match: {
+              ...dateFilter,
+              staff: { $exists: true, $ne: null },
+              assignedAt: { $exists: true },
+            },
+          },
+          {
+            $project: {
+              assignmentTime: {
+                $subtract: ["$assignedAt", "$createdAt"],
+              },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              avgTime: { $avg: "$assignmentTime" },
+            },
+          },
+        ]),
+      ]);
+
+    // Get real-time system status from in-memory tracker
+    const systemStatus = {
+      isRunning: timeTracker.isRunning,
+      lastCleanup: timeTracker.lastCleanup,
+      uptime: timeTracker.isRunning
+        ? Date.now() - timeTracker.metrics.lastReset.getTime()
+        : 0,
+      monitoringInterval: timeTracker.MONITORING_INTERVAL,
+      cleanupInterval: timeTracker.CLEANUP_INTERVAL,
+    };
+
+    const metrics = {
+      dateRange: {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      },
+      totalAssignments,
+      timeoutHandled: timeoutOrders,
+      averageAssignmentTime:
+        avgAssignmentTime.length > 0
+          ? Math.round(avgAssignmentTime[0].avgTime)
+          : 0,
+      ...systemStatus,
+    };
 
     res
       .status(200)

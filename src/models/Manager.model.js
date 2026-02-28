@@ -200,6 +200,20 @@ managerSchema.pre("save", async function (next) {
     this.password = await bcrypt.hash(this.password, 12);
   }
 
+  // Auto-parse permissions if stored as JSON string
+  if (typeof this.permissions === "string") {
+    try {
+      this.permissions = JSON.parse(this.permissions);
+    } catch (e) {}
+  }
+
+  // Auto-parse emergencyContact if stored as JSON string
+  if (typeof this.emergencyContact === "string") {
+    try {
+      this.emergencyContact = JSON.parse(this.emergencyContact);
+    } catch (e) {}
+  }
+
   next();
 });
 

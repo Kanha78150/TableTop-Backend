@@ -375,6 +375,18 @@ export const getManagerById = async (req, res, next) => {
 // create manger
 export const createManager = async (req, res, next) => {
   try {
+    // Parse FormData string fields (when sent via multipart/form-data)
+    if (typeof req.body.permissions === "string") {
+      try {
+        req.body.permissions = JSON.parse(req.body.permissions);
+      } catch (e) {}
+    }
+    if (typeof req.body.emergencyContact === "string") {
+      try {
+        req.body.emergencyContact = JSON.parse(req.body.emergencyContact);
+      } catch (e) {}
+    }
+
     // Validate request body using Joi schema
     const { error } = managerValidationSchemas.register.validate(req.body);
     if (error) {
@@ -1056,6 +1068,18 @@ export const getStaffById = async (req, res, next) => {
 
 export const createStaff = async (req, res, next) => {
   try {
+    // Parse FormData string fields (when sent via multipart/form-data)
+    if (typeof req.body.permissions === "string") {
+      try {
+        req.body.permissions = JSON.parse(req.body.permissions);
+      } catch (e) {}
+    }
+    if (typeof req.body.emergencyContact === "string") {
+      try {
+        req.body.emergencyContact = JSON.parse(req.body.emergencyContact);
+      } catch (e) {}
+    }
+
     // Validate request body using Joi schema
     const { error } = staffValidationSchemas.register.validate(req.body);
     if (error) {
