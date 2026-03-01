@@ -13,7 +13,6 @@ import { logger } from "../utils/logger.js";
 import Joi from "joi";
 import { asyncHandler } from "../middleware/errorHandler.middleware.js";
 
-
 /**
  * Helper function to parse date strings in multiple formats
  * Accepts: YYYY-MM-DD, DD-MM-YYYY, or ISO string
@@ -75,10 +74,8 @@ export const manualAssignOrder = asyncHandler(async (req, res, next) => {
 
   res
     .status(200)
-    .json(
-      new APIResponse(200, result, "Order manually assigned successfully")
-    );
-  });
+    .json(new APIResponse(200, result, "Order manually assigned successfully"));
+});
 
 /**
  * Get assignment statistics for a branch/hotel
@@ -126,7 +123,7 @@ export const getAssignmentStats = asyncHandler(async (req, res, next) => {
         "Assignment statistics retrieved successfully"
       )
     );
-  });
+});
 
 /**
  * Get queue details and statistics
@@ -142,6 +139,14 @@ export const getQueueDetails = asyncHandler(async (req, res, next) => {
     return next(new APIError(400, "Invalid query parameters", error.details));
   }
 
+  // Ownership verification for admin users
+  if (req.userType === "admin" && req.admin.role !== "super_admin") {
+    const hotel = await Hotel.findById(hotelId).select("createdBy");
+    if (!hotel || hotel.createdBy.toString() !== req.admin._id.toString()) {
+      return next(new APIError(403, "You do not have access to this hotel"));
+    }
+  }
+
   // Get queue details
   const queueDetails = await queueService.getQueueDetails(
     { hotel: hotelId, branch: branchId },
@@ -151,13 +156,9 @@ export const getQueueDetails = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(
-      new APIResponse(
-        200,
-        queueDetails,
-        "Queue details retrieved successfully"
-      )
+      new APIResponse(200, queueDetails, "Queue details retrieved successfully")
     );
-  });
+});
 
 /**
  * Update queue priority for an order
@@ -183,10 +184,8 @@ export const updateQueuePriority = asyncHandler(async (req, res, next) => {
 
   res
     .status(200)
-    .json(
-      new APIResponse(200, result, "Queue priority updated successfully")
-    );
-  });
+    .json(new APIResponse(200, result, "Queue priority updated successfully"));
+});
 
 /**
  * Get available waiters for assignment
@@ -255,7 +254,7 @@ export const getAvailableWaiters = asyncHandler(async (req, res, next) => {
         "Available waiters retrieved successfully"
       )
     );
-  });
+});
 
 /**
  * Update waiter availability status
@@ -277,9 +276,7 @@ export const updateWaiterAvailability = asyncHandler(async (req, res, next) => {
   const isSelf = req.user._id.toString() === waiterId;
 
   if (!isManager && !isSelf) {
-    return next(
-      new APIError(403, "You can only update your own availability")
-    );
+    return next(new APIError(403, "You can only update your own availability"));
   }
 
   // Update waiter
@@ -310,7 +307,7 @@ export const updateWaiterAvailability = asyncHandler(async (req, res, next) => {
         "Waiter availability updated successfully"
       )
     );
-  });
+});
 
 /**
  * Get system health and performance metrics
@@ -324,21 +321,22 @@ export const getSystemHealth = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(
-      new APIResponse(
-        200,
-        healthStatus,
-        "System health retrieved successfully"
-      )
+      new APIResponse(200, healthStatus, "System health retrieved successfully")
     );
-  });
+});
 
 /**
  * Get time tracker performance metrics
  * GET /api/v1/assignment/system/metrics?startDate=DD-MM-YYYY&endDate=DD-MM-YYYY
  * @access Manager/Admin
  */
-export const getPerformanceMetrics = asyncHandler(async (req, res) => {
-  const { startDate: startDateParam, endDate: endDateParam } = req.query;
+export const getPerformanceMetrics = asyncHandler(async (req, res, next) => {
+  const {
+    startDate: startDateParam,
+    endDate: endDateParam,
+    hotelId,
+    branchId,
+  } = req.query;
 
   // Default to last 30 days if no dates provided
   let startDate, endDate;
@@ -361,6 +359,47 @@ export const getPerformanceMetrics = asyncHandler(async (req, res) => {
   const dateFilter = {
     createdAt: { $gte: startDate, $lte: endDate },
   };
+
+  // Auto-scope by user role
+  if (req.userType === "manager" && req.manager) {
+    // Manager: scope to their hotel/branch
+    if (req.manager.hotel)
+      dateFilter.hotel = req.manager.hotel._id || req.manager.hotel;
+    if (req.manager.branch)
+      dateFilter.branch = req.manager.branch._id || req.manager.branch;
+  } else if (req.userType === "admin") {
+    if (req.admin.role === "branch_admin") {
+      const assignedBranches = req.admin.assignedBranches || [];
+      if (assignedBranches.length > 0) {
+        dateFilter.branch = { $in: assignedBranches.map((b) => b._id || b) };
+      }
+    } else if (req.admin.role !== "super_admin") {
+      // Regular admin: auto-scope to their own hotels
+      const adminHotels = await Hotel.find({ createdBy: req.admin._id }).select(
+        "_id"
+      );
+      const adminHotelIds = adminHotels.map((h) => h._id);
+      if (adminHotelIds.length > 0) {
+        dateFilter.hotel = { $in: adminHotelIds };
+      }
+    }
+    // super_admin: no additional filter (can see all)
+  }
+
+  // Allow further drill-down by hotelId/branchId query params
+  if (hotelId) {
+    // Verify ownership for non-super_admin
+    if (req.userType === "admin" && req.admin.role !== "super_admin") {
+      const hotel = await Hotel.findById(hotelId).select("createdBy");
+      if (!hotel || hotel.createdBy.toString() !== req.admin._id.toString()) {
+        return next(new APIError(403, "You do not have access to this hotel"));
+      }
+    }
+    dateFilter.hotel = hotelId;
+  }
+  if (branchId) {
+    dateFilter.branch = branchId;
+  }
 
   const [totalAssignments, timeoutOrders, avgAssignmentTime] =
     await Promise.all([
@@ -432,7 +471,7 @@ export const getPerformanceMetrics = asyncHandler(async (req, res) => {
         "Performance metrics retrieved successfully"
       )
     );
-  });
+});
 
 /**
  * Force manual monitoring cycle (for testing/debugging)
@@ -452,7 +491,7 @@ export const forceMonitoring = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, result, "Manual monitoring cycle completed"));
-  });
+});
 
 /**
  * Reset round-robin tracking
@@ -465,9 +504,7 @@ export const resetRoundRobin = asyncHandler(async (req, res, next) => {
   // Validate request body
   const { error } = validateRoundRobinReset(req.body);
   if (error) {
-    return next(
-      new APIError(400, "Invalid request parameters", error.details)
-    );
+    return next(new APIError(400, "Invalid request parameters", error.details));
   }
 
   // Reset round-robin with hotel and branch context
@@ -487,7 +524,7 @@ export const resetRoundRobin = asyncHandler(async (req, res, next) => {
         "Round-robin tracking reset successfully"
       )
     );
-  });
+});
 
 /**
  * Get waiter performance report
@@ -534,13 +571,8 @@ export const getWaiterPerformance = asyncHandler(async (req, res, next) => {
 
   // Calculate performance metrics
   const totalOrders = orders.length;
-  const completedOrders = orders.filter(
-    (o) => o.status === "completed"
-  ).length;
-  const totalRevenue = orders.reduce(
-    (sum, order) => sum + order.totalPrice,
-    0
-  );
+  const completedOrders = orders.filter((o) => o.status === "completed").length;
+  const totalRevenue = orders.reduce((sum, order) => sum + order.totalPrice, 0);
   const avgServiceTime =
     completedOrders > 0
       ? orders
@@ -619,7 +651,7 @@ export const getWaiterPerformance = asyncHandler(async (req, res, next) => {
         "Waiter performance report generated successfully"
       )
     );
-  });
+});
 
 // Validation schemas
 const validateManualAssignment = (data) => {

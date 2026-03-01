@@ -6,7 +6,6 @@ import { paymentService } from "../../services/payment/payment.service.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
-
 /**
  * Handle Payment Webhook
  * Processes payment webhooks from Razorpay for subscriptions
@@ -151,12 +150,23 @@ const handleSuccessfulPayment = async (payload) => {
 
     // Send activation email
     try {
-      await sendEmail(subscription.admin.email, "subscription-activated", {
-        adminName: subscription.admin.name,
-        planName: subscription.plan.name,
-        startDate: subscription.startDate.toLocaleDateString(),
-        endDate: subscription.endDate.toLocaleDateString(),
-        amount: amount / 100,
+      await sendEmail({
+        to: subscription.admin.email,
+        subject: "Subscription Activated Successfully",
+        template: "subscription-activated",
+        data: {
+          name: subscription.admin.name,
+          planName: subscription.plan.name,
+          billingCycle: subscription.billingCycle,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+          amount: amount / 100,
+          maxHotels: subscription.plan.limits?.maxHotels || 0,
+          maxBranches: subscription.plan.limits?.maxBranches || 0,
+          maxManagers: subscription.plan.limits?.maxManagers || 0,
+          maxStaff: subscription.plan.limits?.maxStaff || 0,
+          maxTables: subscription.plan.limits?.maxTables || 0,
+        },
       });
     } catch (emailError) {
       console.error("Failed to send activation email:", emailError);
@@ -295,70 +305,72 @@ const handleRefundedPayment = async (payload) => {
  * Allows manual verification of subscription payment
  * @route POST /api/v1/payment/verify-subscription
  */
-export const verifySubscriptionPayment = asyncHandler(async (req, res, next) => {
-  const {
-    razorpay_payment_id,
-    razorpay_order_id,
-    razorpay_signature,
-    subscriptionId,
-  } = req.body;
+export const verifySubscriptionPayment = asyncHandler(
+  async (req, res, next) => {
+    const {
+      razorpay_payment_id,
+      razorpay_order_id,
+      razorpay_signature,
+      subscriptionId,
+    } = req.body;
 
-  // Validate input
-  if (
-    !razorpay_payment_id ||
-    !razorpay_order_id ||
-    !razorpay_signature ||
-    !subscriptionId
-  ) {
-    return next(
-      new APIError(400, "Missing required payment verification parameters")
+    // Validate input
+    if (
+      !razorpay_payment_id ||
+      !razorpay_order_id ||
+      !razorpay_signature ||
+      !subscriptionId
+    ) {
+      return next(
+        new APIError(400, "Missing required payment verification parameters")
+      );
+    }
+
+    // Verify signature
+    const isValid = paymentService.verifySubscriptionPayment({
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    });
+
+    if (!isValid) {
+      return next(new APIError(400, "Invalid payment signature"));
+    }
+
+    // Get payment details
+    const paymentDetails =
+      await paymentService.fetchPaymentDetails(razorpay_payment_id);
+
+    // Find subscription
+    const subscription = await AdminSubscription.findById(subscriptionId);
+    if (!subscription) {
+      return next(new APIError(404, "Subscription not found"));
+    }
+
+    // Activate subscription (reuse webhook handler logic)
+    // paymentDetails.amount from Razorpay API is already in paise
+    await handleSuccessfulPayment({
+      id: razorpay_payment_id,
+      order_id: razorpay_order_id,
+      amount: paymentDetails.amount, // Already in paise from Razorpay
+      method: paymentDetails.method,
+      notes: {
+        type: "subscription",
+        subscriptionId: subscriptionId,
+      },
+    });
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          subscriptionId,
+          paymentId: razorpay_payment_id,
+          status: "verified",
+          message: "Payment verified and subscription activated successfully",
+        },
+        "Payment verification successful"
+      )
     );
   }
-
-  // Verify signature
-  const isValid = paymentService.verifySubscriptionPayment({
-    razorpay_order_id,
-    razorpay_payment_id,
-    razorpay_signature,
-  });
-
-  if (!isValid) {
-    return next(new APIError(400, "Invalid payment signature"));
-  }
-
-  // Get payment details
-  const paymentDetails =
-    await paymentService.fetchPaymentDetails(razorpay_payment_id);
-
-  // Find subscription
-  const subscription = await AdminSubscription.findById(subscriptionId);
-  if (!subscription) {
-    return next(new APIError(404, "Subscription not found"));
-  }
-
-  // Activate subscription (reuse webhook handler logic)
-  // paymentDetails.amount from Razorpay API is already in paise
-  await handleSuccessfulPayment({
-    id: razorpay_payment_id,
-    order_id: razorpay_order_id,
-    amount: paymentDetails.amount, // Already in paise from Razorpay
-    method: paymentDetails.method,
-    notes: {
-      type: "subscription",
-      subscriptionId: subscriptionId,
-    },
-  });
-
-  res.status(200).json(
-    new APIResponse(
-      200,
-      {
-        subscriptionId,
-        paymentId: razorpay_payment_id,
-        status: "verified",
-        message: "Payment verified and subscription activated successfully",
-      },
-      "Payment verification successful"
-    )
-  );
-  });
+);
