@@ -238,12 +238,23 @@ export const activateSubscription = asyncHandler(async (req, res, next) => {
 
   // Send activation email
   try {
-    await sendEmail(subscription.admin.email, "subscription-activated", {
-      adminName: subscription.admin.name,
-      planName: subscription.plan.name,
-      startDate: subscription.startDate.toLocaleDateString(),
-      endDate: subscription.endDate.toLocaleDateString(),
-      amount: paymentDetails.amount,
+    await sendEmail({
+      to: subscription.admin.email,
+      subject: "Subscription Activated Successfully",
+      template: "subscription-activated",
+      data: {
+        name: subscription.admin.name,
+        planName: subscription.plan.name,
+        billingCycle: subscription.billingCycle,
+        startDate: subscription.startDate,
+        endDate: subscription.endDate,
+        amount: paymentDetails.amount,
+        maxHotels: subscription.plan.limits?.maxHotels || 0,
+        maxBranches: subscription.plan.limits?.maxBranches || 0,
+        maxManagers: subscription.plan.limits?.maxManagers || 0,
+        maxStaff: subscription.plan.limits?.maxStaff || 0,
+        maxTables: subscription.plan.limits?.maxTables || 0,
+      },
     });
   } catch (emailError) {
     console.error("Failed to send activation email:", emailError);

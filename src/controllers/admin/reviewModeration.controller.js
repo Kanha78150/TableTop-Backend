@@ -15,7 +15,6 @@ import { logger } from "../../utils/logger.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
-
 /**
  * Get all reviews with admin access control
  * GET /api/v1/admin/reviews
@@ -57,19 +56,76 @@ export const getAllReviews = asyncHandler(async (req, res, next) => {
       hotel: { $in: hotelIds },
       branch: { $in: req.admin.assignedBranches },
     };
+
+    // Allow branch admin to drill down by specific hotel/branch (within their scope)
+    if (hotelId) {
+      const isOwned = hotelIds.some((id) => id.toString() === hotelId);
+      if (!isOwned) {
+        return next(new APIError(403, "You do not have access to this hotel"));
+      }
+      filter.hotel = hotelId;
+    }
+    if (branchId) {
+      const isAllowed = req.admin.assignedBranches.some(
+        (b) => (b._id || b).toString() === branchId
+      );
+      if (!isAllowed) {
+        return next(new APIError(403, "You do not have access to this branch"));
+      }
+      filter.branch = branchId;
+    }
+  } else if (adminRole === "super_admin") {
+    // Super admin can see all reviews or filter by specific hotel/branch
+    if (hotelId) {
+      filter.hotel = hotelId;
+    }
+    if (branchId) {
+      filter.branch = branchId;
+    }
+  } else {
+    // Regular admin: auto-scope to their own hotels
+    const hotels = await Hotel.find({ createdBy: adminId }).select("_id");
+    const hotelIds = hotels.map((h) => h._id);
+
+    if (hotelIds.length === 0) {
+      return res
+        .status(200)
+        .json(
+          new APIResponse(
+            200,
+            {
+              reviews: [],
+              pagination: {
+                total: 0,
+                page: 1,
+                pages: 0,
+                limit: parseInt(limit),
+                hasMore: false,
+              },
+            },
+            "No hotels found for this admin"
+          )
+        );
+    }
+
+    if (hotelId) {
+      const isOwned = hotelIds.some((id) => id.toString() === hotelId);
+      if (!isOwned) {
+        return next(new APIError(403, "You do not have access to this hotel"));
+      }
+      filter.hotel = hotelId;
+    } else {
+      filter.hotel = { $in: hotelIds };
+    }
+
+    if (branchId) {
+      filter.branch = branchId;
+    }
   }
 
   // Apply additional filters
   if (status && status !== "all") {
     filter.status = status;
-  }
-
-  if (hotelId) {
-    filter.hotel = hotelId;
-  }
-
-  if (branchId) {
-    filter.branch = branchId;
   }
 
   // Add rating filter if provided
@@ -177,7 +233,7 @@ export const getAllReviews = asyncHandler(async (req, res, next) => {
       "Reviews retrieved successfully"
     )
   );
-  });
+});
 
 /**
  * Get pending reviews for moderation
@@ -256,7 +312,7 @@ export const getPendingReviews = asyncHandler(async (req, res) => {
       "Pending reviews retrieved successfully"
     )
   );
-  });
+});
 
 /**
  * Approve a review
@@ -342,7 +398,7 @@ export const approveReview = asyncHandler(async (req, res, next) => {
         "Review approved successfully and ratings updated"
       )
     );
-  });
+});
 
 /**
  * Reject a review
@@ -439,7 +495,7 @@ export const rejectReview = asyncHandler(async (req, res, next) => {
         "Review rejected successfully. No notification sent to user."
       )
     );
-  });
+});
 
 /**
  * Add admin response to a review
@@ -465,8 +521,7 @@ export const addResponse = asyncHandler(async (req, res, next) => {
   }
 
   // Get review
-  const review =
-    await Review.findById(reviewId).populate("user hotel branch");
+  const review = await Review.findById(reviewId).populate("user hotel branch");
 
   if (!review) {
     return next(new APIError(404, "Review not found"));
@@ -567,7 +622,7 @@ export const addResponse = asyncHandler(async (req, res, next) => {
         "Response added successfully and user notified via email"
       )
     );
-  });
+});
 
 /**
  * Update admin response
@@ -621,9 +676,7 @@ export const updateResponse = asyncHandler(async (req, res, next) => {
     message
   );
 
-  logger.info(
-    `Admin ${adminId} updated response on review ${review.reviewId}`
-  );
+  logger.info(`Admin ${adminId} updated response on review ${review.reviewId}`);
 
   return res
     .status(200)
@@ -634,7 +687,7 @@ export const updateResponse = asyncHandler(async (req, res, next) => {
         "Response updated successfully"
       )
     );
-  });
+});
 
 /**
  * Delete admin response
@@ -690,7 +743,7 @@ export const deleteResponse = asyncHandler(async (req, res, next) => {
         "Response deleted successfully"
       )
     );
-  });
+});
 
 /**
  * Get review analytics dashboard
@@ -729,7 +782,7 @@ export const getReviewAnalytics = asyncHandler(async (req, res) => {
         "Review analytics retrieved successfully"
       )
     );
-  });
+});
 
 export default {
   getAllReviews,

@@ -1,6 +1,7 @@
 // src/controllers/admin/order.controller.js - Admin Order Management Controller
 import mongoose from "mongoose";
 import { Order } from "../../models/Order.model.js";
+import { Hotel } from "../../models/Hotel.model.js";
 import orderService from "../../services/order/order.service.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
@@ -125,11 +126,51 @@ export const getAllOrders = asyncHandler(async (req, res, next) => {
     } else {
       filter.branch = { $in: assignedBranches.map((b) => b._id || b) };
     }
-  } else {
-    // Admin / super_admin can filter by specific hotel and/or branch
+  } else if (adminRole === "super_admin") {
+    // Super admin can filter by specific hotel and/or branch, or see all
     if (hotelId) {
       filter.hotel = hotelId;
     }
+    if (branchId) {
+      filter.branch = branchId;
+    }
+  } else {
+    // Regular admin: auto-scope to their own hotels
+    const adminHotels = await Hotel.find({ createdBy: req.admin._id }).select(
+      "_id"
+    );
+    const adminHotelIds = adminHotels.map((h) => h._id);
+
+    if (adminHotelIds.length === 0) {
+      return res.status(200).json(
+        new APIResponse(
+          200,
+          {
+            orders: [],
+            pagination: {
+              total: 0,
+              page: 1,
+              pages: 0,
+              limit: parseInt(limit) || 20,
+              hasMore: false,
+            },
+          },
+          "No hotels found for this admin"
+        )
+      );
+    }
+
+    if (hotelId) {
+      // Verify the requested hotel belongs to this admin
+      const isOwned = adminHotelIds.some((id) => id.toString() === hotelId);
+      if (!isOwned) {
+        return next(new APIError(403, "You do not have access to this hotel"));
+      }
+      filter.hotel = hotelId;
+    } else {
+      filter.hotel = { $in: adminHotelIds };
+    }
+
     if (branchId) {
       filter.branch = branchId;
     }
@@ -385,9 +426,58 @@ export const getOrderAnalytics = asyncHandler(async (req, res, next) => {
         ),
       };
     }
-  } else {
+  } else if (adminRole === "super_admin") {
+    // Super admin can filter by specific hotel/branch or see all
     if (hotelId) filter.hotel = new mongoose.Types.ObjectId(hotelId);
     if (branchId) filter.branch = new mongoose.Types.ObjectId(branchId);
+  } else {
+    // Regular admin: auto-scope to their own hotels
+    const adminHotels = await Hotel.find({ createdBy: req.admin._id }).select(
+      "_id"
+    );
+    const adminHotelIds = adminHotels.map((h) => h._id);
+
+    if (adminHotelIds.length === 0) {
+      return res.status(200).json(
+        new APIResponse(
+          200,
+          {
+            dateRange: {
+              startDate: startDate.toISOString(),
+              endDate: endDate.toISOString(),
+            },
+            summary: {
+              totalOrders: 0,
+              totalRevenue: 0,
+              averageOrderValue: 0,
+            },
+            statusDistribution: {},
+            timeSeries: [],
+            popularItems: [],
+            topPerformingStaff: [],
+          },
+          "No hotels found for this admin"
+        )
+      );
+    }
+
+    if (hotelId) {
+      const isOwned = adminHotelIds.some((id) => id.toString() === hotelId);
+      if (!isOwned) {
+        return next(new APIError(403, "You do not have access to this hotel"));
+      }
+      filter.hotel = new mongoose.Types.ObjectId(hotelId);
+    } else {
+      filter.hotel = {
+        $in: adminHotelIds.map(
+          (id) => new mongoose.Types.ObjectId(id.toString())
+        ),
+      };
+    }
+
+    if (branchId) {
+      filter.branch = new mongoose.Types.ObjectId(branchId);
+    }
   }
 
   // Delegate to shared analytics service
