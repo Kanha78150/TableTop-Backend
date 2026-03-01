@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import Joi from "joi";
 
 const inventorySchema = new mongoose.Schema(
   {
@@ -14,13 +13,5 @@ const inventorySchema = new mongoose.Schema(
 
 export const Inventory = mongoose.model("Inventory", inventorySchema);
 
-export const validateInventory = (data) => {
-  const schema = Joi.object({
-    branch: Joi.string().required(),
-    itemName: Joi.string().required(),
-    quantity: Joi.number().min(0).required(),
-    unit: Joi.string().required(),
-    threshold: Joi.number().min(0),
-  });
-  return schema.validate(data);
-};
+// Validators extracted to src/validators/inventory.validators.js
+export { validateInventory } from "../validators/inventory.validators.js";

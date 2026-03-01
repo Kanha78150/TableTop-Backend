@@ -7,7 +7,7 @@ import { APIError } from "../utils/APIError.js";
 import { APIResponse } from "../utils/APIResponse.js";
 import { logger } from "../utils/logger.js";
 import { coinService } from "./reward.service.js";
-import assignmentService from "./assignment.service.js";
+import assignmentService from "./assignment/assignment.service.js";
 
 class CartService {
   /**

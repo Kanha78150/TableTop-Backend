@@ -32,7 +32,6 @@ router.get(
   ensureDbReady,
   getPublicSubscriptionPlans
 );
-
 // Authentication routes (require DB connection)
 router.use("/auth", ensureDbReady, unifiedAuthRoutes); // Unified login endpoint
 router.use("/auth/user", ensureDbReady, userAuthRoutes);

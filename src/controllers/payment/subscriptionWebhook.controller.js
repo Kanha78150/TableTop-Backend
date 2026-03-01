@@ -2,8 +2,10 @@ import { AdminSubscription } from "../../models/AdminSubscription.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
-import { paymentService } from "../../services/payment.service.js";
+import { paymentService } from "../../services/payment/payment.service.js";
 import { sendEmail } from "../../utils/emailService.js";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+
 
 /**
  * Handle Payment Webhook
@@ -293,74 +295,70 @@ const handleRefundedPayment = async (payload) => {
  * Allows manual verification of subscription payment
  * @route POST /api/v1/payment/verify-subscription
  */
-export const verifySubscriptionPayment = async (req, res, next) => {
-  try {
-    const {
-      razorpay_payment_id,
-      razorpay_order_id,
-      razorpay_signature,
-      subscriptionId,
-    } = req.body;
+export const verifySubscriptionPayment = asyncHandler(async (req, res, next) => {
+  const {
+    razorpay_payment_id,
+    razorpay_order_id,
+    razorpay_signature,
+    subscriptionId,
+  } = req.body;
 
-    // Validate input
-    if (
-      !razorpay_payment_id ||
-      !razorpay_order_id ||
-      !razorpay_signature ||
-      !subscriptionId
-    ) {
-      return next(
-        new APIError(400, "Missing required payment verification parameters")
-      );
-    }
-
-    // Verify signature
-    const isValid = paymentService.verifySubscriptionPayment({
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-    });
-
-    if (!isValid) {
-      return next(new APIError(400, "Invalid payment signature"));
-    }
-
-    // Get payment details
-    const paymentDetails =
-      await paymentService.fetchPaymentDetails(razorpay_payment_id);
-
-    // Find subscription
-    const subscription = await AdminSubscription.findById(subscriptionId);
-    if (!subscription) {
-      return next(new APIError(404, "Subscription not found"));
-    }
-
-    // Activate subscription (reuse webhook handler logic)
-    // paymentDetails.amount from Razorpay API is already in paise
-    await handleSuccessfulPayment({
-      id: razorpay_payment_id,
-      order_id: razorpay_order_id,
-      amount: paymentDetails.amount, // Already in paise from Razorpay
-      method: paymentDetails.method,
-      notes: {
-        type: "subscription",
-        subscriptionId: subscriptionId,
-      },
-    });
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          subscriptionId,
-          paymentId: razorpay_payment_id,
-          status: "verified",
-          message: "Payment verified and subscription activated successfully",
-        },
-        "Payment verification successful"
-      )
+  // Validate input
+  if (
+    !razorpay_payment_id ||
+    !razorpay_order_id ||
+    !razorpay_signature ||
+    !subscriptionId
+  ) {
+    return next(
+      new APIError(400, "Missing required payment verification parameters")
     );
-  } catch (error) {
-    next(error);
   }
-};
+
+  // Verify signature
+  const isValid = paymentService.verifySubscriptionPayment({
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+  });
+
+  if (!isValid) {
+    return next(new APIError(400, "Invalid payment signature"));
+  }
+
+  // Get payment details
+  const paymentDetails =
+    await paymentService.fetchPaymentDetails(razorpay_payment_id);
+
+  // Find subscription
+  const subscription = await AdminSubscription.findById(subscriptionId);
+  if (!subscription) {
+    return next(new APIError(404, "Subscription not found"));
+  }
+
+  // Activate subscription (reuse webhook handler logic)
+  // paymentDetails.amount from Razorpay API is already in paise
+  await handleSuccessfulPayment({
+    id: razorpay_payment_id,
+    order_id: razorpay_order_id,
+    amount: paymentDetails.amount, // Already in paise from Razorpay
+    method: paymentDetails.method,
+    notes: {
+      type: "subscription",
+      subscriptionId: subscriptionId,
+    },
+  });
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        subscriptionId,
+        paymentId: razorpay_payment_id,
+        status: "verified",
+        message: "Payment verified and subscription activated successfully",
+      },
+      "Payment verification successful"
+    )
+  );
+  });

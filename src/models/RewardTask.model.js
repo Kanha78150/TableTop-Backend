@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import Joi from "joi";
 
 const rewardTaskSchema = new mongoose.Schema(
   {
@@ -13,11 +12,5 @@ const rewardTaskSchema = new mongoose.Schema(
 
 export const RewardTask = mongoose.model("RewardTask", rewardTaskSchema);
 
-export const validateRewardTask = (data) => {
-  const schema = Joi.object({
-    title: Joi.string().required(),
-    description: Joi.string().allow(""),
-    coins: Joi.number().positive().required(),
-  });
-  return schema.validate(data);
-};
+// Validators extracted to src/validators/rewardtask.validators.js
+export { validateRewardTask } from "../validators/rewardtask.validators.js";

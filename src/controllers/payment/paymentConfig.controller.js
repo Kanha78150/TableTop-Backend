@@ -6,7 +6,7 @@
 
 import { PaymentConfig } from "../../models/PaymentConfig.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
-import dynamicPaymentService from "../../services/dynamicPayment.service.js";
+import dynamicPaymentService from "../../services/payment/dynamicPayment.service.js";
 import notificationService from "../../services/notification.service.js";
 
 /**

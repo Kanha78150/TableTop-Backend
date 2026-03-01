@@ -12,862 +12,839 @@ import PDFDocument from "pdfkit";
 import { createObjectCsvWriter } from "csv-writer";
 import path from "path";
 import fs from "fs";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+
 
 /**
  * Get all transactions history with filters
  * GET /api/v1/admin/accounting/transactions
  * @access Admin
  */
-export const getAllTransactions = async (req, res, next) => {
-  try {
-    // Use validated query parameters if available, otherwise fallback to req.query
-    const queryParams = req.validatedQuery || req.query;
+export const getAllTransactions = asyncHandler(async (req, res) => {
+  // Use validated query parameters if available, otherwise fallback to req.query
+  const queryParams = req.validatedQuery || req.query;
 
-    const {
-      page = 1,
-      limit = 20,
-      hotelId,
-      branchId,
-      status,
-      paymentMethod,
-      startDate,
-      endDate,
-      minAmount,
-      maxAmount,
-      sortBy = "createdAt",
-      sortOrder = "desc",
-    } = queryParams;
+  const {
+    page = 1,
+    limit = 20,
+    hotelId,
+    branchId,
+    status,
+    paymentMethod,
+    startDate,
+    endDate,
+    minAmount,
+    maxAmount,
+    sortBy = "createdAt",
+    sortOrder = "desc",
+  } = queryParams;
 
-    // Build query for Transaction model
-    const query = {};
+  // Build query for Transaction model
+  const query = {};
 
-    if (hotelId) query.hotel = new mongoose.Types.ObjectId(hotelId);
-    if (branchId) query.branch = new mongoose.Types.ObjectId(branchId);
-    if (status) query.status = status;
-    if (paymentMethod) query.paymentMethod = paymentMethod;
+  if (hotelId) query.hotel = new mongoose.Types.ObjectId(hotelId);
+  if (branchId) query.branch = new mongoose.Types.ObjectId(branchId);
+  if (status) query.status = status;
+  if (paymentMethod) query.paymentMethod = paymentMethod;
 
-    // Date range filter
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        query.createdAt.$gte = start;
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
-      }
+  // Date range filter
+  if (startDate || endDate) {
+    query.createdAt = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      query.createdAt.$gte = start;
     }
-
-    // Amount range filter
-    if (minAmount || maxAmount) {
-      query.amount = {};
-      if (minAmount) query.amount.$gte = parseFloat(minAmount);
-      if (maxAmount) query.amount.$lte = parseFloat(maxAmount);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      query.createdAt.$lte = end;
     }
+  }
 
-    // Execute query with pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+  // Amount range filter
+  if (minAmount || maxAmount) {
+    query.amount = {};
+    if (minAmount) query.amount.$gte = parseFloat(minAmount);
+    if (maxAmount) query.amount.$lte = parseFloat(maxAmount);
+  }
 
-    const [transactions, totalCount] = await Promise.all([
-      Transaction.find(query)
-        .populate("hotel", "name hotelId location")
-        .populate("branch", "name branchId location")
-        .populate("user", "name email phone")
-        .populate("order", "totalPrice items")
-        .sort(sortOptions)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .lean(),
-      Transaction.countDocuments(query),
-    ]);
+  // Execute query with pagination
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
-    // Calculate summary statistics using aggregation
-    const summaryPipeline = [
-      { $match: query },
+  const [transactions, totalCount] = await Promise.all([
+    Transaction.find(query)
+      .populate("hotel", "name hotelId location")
+      .populate("branch", "name branchId location")
+      .populate("user", "name email phone")
+      .populate("order", "totalPrice items")
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean(),
+    Transaction.countDocuments(query),
+  ]);
+
+  // Calculate summary statistics using aggregation
+  const summaryPipeline = [
+    { $match: query },
+    {
+      $group: {
+        _id: null,
+        totalAmount: { $sum: "$amount" },
+        totalTransactions: { $sum: 1 },
+        successfulTransactions: {
+          $sum: {
+            $cond: [{ $eq: ["$status", "success"] }, 1, 0],
+          },
+        },
+        failedTransactions: {
+          $sum: {
+            $cond: [{ $eq: ["$status", "failed"] }, 1, 0],
+          },
+        },
+        pendingTransactions: {
+          $sum: {
+            $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
+          },
+        },
+        avgTransactionAmount: { $avg: "$amount" },
+      },
+    },
+  ];
+
+  const [summaryStats] = await Transaction.aggregate(summaryPipeline);
+
+  const stats = summaryStats || {
+    totalAmount: 0,
+    totalTransactions: 0,
+    successfulTransactions: 0,
+    failedTransactions: 0,
+    pendingTransactions: 0,
+    avgTransactionAmount: 0,
+  };
+
+  res.status(200).json(
+    new APIResponse(
+      200,
       {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: "$amount" },
-          totalTransactions: { $sum: 1 },
-          successfulTransactions: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "success"] }, 1, 0],
-            },
-          },
-          failedTransactions: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "failed"] }, 1, 0],
-            },
-          },
-          pendingTransactions: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
-            },
-          },
-          avgTransactionAmount: { $avg: "$amount" },
+        transactions,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(totalCount / parseInt(limit)),
+          totalTransactions: totalCount,
+          hasNext: skip + parseInt(limit) < totalCount,
+          hasPrev: parseInt(page) > 1,
+        },
+        summary: {
+          totalAmount: parseFloat(stats.totalAmount?.toFixed(2) || 0),
+          totalTransactions: stats.totalTransactions || 0,
+          successfulTransactions: stats.successfulTransactions || 0,
+          failedTransactions: stats.failedTransactions || 0,
+          pendingTransactions: stats.pendingTransactions || 0,
+          avgTransactionAmount: parseFloat(
+            stats.avgTransactionAmount?.toFixed(2) || 0
+          ),
+          successRate:
+            stats.totalTransactions > 0
+              ? parseFloat(
+                  (
+                    (stats.successfulTransactions / stats.totalTransactions) *
+                    100
+                  ).toFixed(2)
+                )
+              : 0,
+        },
+        filters: {
+          hotelId,
+          branchId,
+          status,
+          paymentMethod,
+          startDate,
+          endDate,
+          minAmount,
+          maxAmount,
         },
       },
-    ];
-
-    const [summaryStats] = await Transaction.aggregate(summaryPipeline);
-
-    const stats = summaryStats || {
-      totalAmount: 0,
-      totalTransactions: 0,
-      successfulTransactions: 0,
-      failedTransactions: 0,
-      pendingTransactions: 0,
-      avgTransactionAmount: 0,
-    };
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          transactions,
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(totalCount / parseInt(limit)),
-            totalTransactions: totalCount,
-            hasNext: skip + parseInt(limit) < totalCount,
-            hasPrev: parseInt(page) > 1,
-          },
-          summary: {
-            totalAmount: parseFloat(stats.totalAmount?.toFixed(2) || 0),
-            totalTransactions: stats.totalTransactions || 0,
-            successfulTransactions: stats.successfulTransactions || 0,
-            failedTransactions: stats.failedTransactions || 0,
-            pendingTransactions: stats.pendingTransactions || 0,
-            avgTransactionAmount: parseFloat(
-              stats.avgTransactionAmount?.toFixed(2) || 0
-            ),
-            successRate:
-              stats.totalTransactions > 0
-                ? parseFloat(
-                    (
-                      (stats.successfulTransactions / stats.totalTransactions) *
-                      100
-                    ).toFixed(2)
-                  )
-                : 0,
-          },
-          filters: {
-            hotelId,
-            branchId,
-            status,
-            paymentMethod,
-            startDate,
-            endDate,
-            minAmount,
-            maxAmount,
-          },
-        },
-        "Transactions retrieved successfully"
-      )
-    );
-  } catch (error) {
-    logger.error("Error fetching transactions:", error);
-    next(error);
-  }
-};
+      "Transactions retrieved successfully"
+    )
+  );
+  });
 
 /**
  * Get hotel-wise accounting summary
  * GET /api/v1/admin/accounting/hotels
  * @access Admin
  */
-export const getHotelWiseAccounting = async (req, res, next) => {
-  try {
-    const queryParams = req.validatedQuery || req.query;
-    const { startDate, endDate, status = "success" } = queryParams;
+export const getHotelWiseAccounting = asyncHandler(async (req, res) => {
+  const queryParams = req.validatedQuery || req.query;
+  const { startDate, endDate, status = "success" } = queryParams;
 
-    // Build date filter
-    const dateFilter = {};
-    if (startDate || endDate) {
-      dateFilter.createdAt = {};
-      if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        dateFilter.createdAt.$gte = start;
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        dateFilter.createdAt.$lte = end;
-      }
+  // Build date filter
+  const dateFilter = {};
+  if (startDate || endDate) {
+    dateFilter.createdAt = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      dateFilter.createdAt.$gte = start;
     }
-
-    const pipeline = [
-      {
-        $match: {
-          status: status,
-          ...dateFilter,
-        },
-      },
-      {
-        $group: {
-          _id: "$hotel",
-          totalRevenue: { $sum: "$amount" },
-          totalTransactions: { $sum: 1 },
-          avgTransactionAmount: { $avg: "$amount" },
-          paymentMethods: {
-            $push: {
-              method: "$paymentMethod",
-              amount: "$amount",
-            },
-          },
-        },
-      },
-      {
-        $lookup: {
-          from: "hotels",
-          localField: "_id",
-          foreignField: "_id",
-          as: "hotelDetails",
-        },
-      },
-      {
-        $unwind: "$hotelDetails",
-      },
-      {
-        $addFields: {
-          paymentBreakdown: {
-            $reduce: {
-              input: "$paymentMethods",
-              initialValue: {},
-              in: {
-                $mergeObjects: [
-                  "$$value",
-                  {
-                    $arrayToObject: [
-                      [
-                        {
-                          k: "$$this.method",
-                          v: {
-                            $add: [
-                              {
-                                $ifNull: [
-                                  {
-                                    $getField: {
-                                      field: "$$this.method",
-                                      input: "$$value",
-                                    },
-                                  },
-                                  0,
-                                ],
-                              },
-                              "$$this.amount",
-                            ],
-                          },
-                        },
-                      ],
-                    ],
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-      {
-        $sort: { totalRevenue: -1 },
-      },
-    ];
-
-    const hotelAccounting = await Transaction.aggregate(pipeline);
-
-    // Calculate overall totals
-    const overallTotals = hotelAccounting.reduce(
-      (acc, hotel) => ({
-        totalRevenue: acc.totalRevenue + hotel.totalRevenue,
-        totalTransactions: acc.totalTransactions + hotel.totalTransactions,
-      }),
-      { totalRevenue: 0, totalTransactions: 0 }
-    );
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          hotels: hotelAccounting.map((hotel) => ({
-            hotelId: hotel._id,
-            hotelName: hotel.hotelDetails.name,
-            hotelCode: hotel.hotelDetails.hotelId,
-            location: hotel.hotelDetails.location,
-            totalRevenue: parseFloat(hotel.totalRevenue.toFixed(2)),
-            totalTransactions: hotel.totalTransactions,
-            avgTransactionAmount: parseFloat(
-              hotel.avgTransactionAmount.toFixed(2)
-            ),
-            paymentBreakdown: hotel.paymentBreakdown,
-            revenueShare: parseFloat(
-              ((hotel.totalRevenue / overallTotals.totalRevenue) * 100).toFixed(
-                2
-              )
-            ),
-          })),
-          summary: {
-            totalRevenue: parseFloat(overallTotals.totalRevenue.toFixed(2)),
-            totalTransactions: overallTotals.totalTransactions,
-            totalHotels: hotelAccounting.length,
-            avgRevenuePerHotel: parseFloat(
-              (overallTotals.totalRevenue / hotelAccounting.length).toFixed(2)
-            ),
-          },
-          filters: { startDate, endDate, status },
-        },
-        "Hotel-wise accounting retrieved successfully"
-      )
-    );
-  } catch (error) {
-    logger.error("Error fetching hotel-wise accounting:", error);
-    next(error);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter.createdAt.$lte = end;
+    }
   }
-};
+
+  const pipeline = [
+    {
+      $match: {
+        status: status,
+        ...dateFilter,
+      },
+    },
+    {
+      $group: {
+        _id: "$hotel",
+        totalRevenue: { $sum: "$amount" },
+        totalTransactions: { $sum: 1 },
+        avgTransactionAmount: { $avg: "$amount" },
+        paymentMethods: {
+          $push: {
+            method: "$paymentMethod",
+            amount: "$amount",
+          },
+        },
+      },
+    },
+    {
+      $lookup: {
+        from: "hotels",
+        localField: "_id",
+        foreignField: "_id",
+        as: "hotelDetails",
+      },
+    },
+    {
+      $unwind: "$hotelDetails",
+    },
+    {
+      $addFields: {
+        paymentBreakdown: {
+          $reduce: {
+            input: "$paymentMethods",
+            initialValue: {},
+            in: {
+              $mergeObjects: [
+                "$$value",
+                {
+                  $arrayToObject: [
+                    [
+                      {
+                        k: "$$this.method",
+                        v: {
+                          $add: [
+                            {
+                              $ifNull: [
+                                {
+                                  $getField: {
+                                    field: "$$this.method",
+                                    input: "$$value",
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                            "$$this.amount",
+                          ],
+                        },
+                      },
+                    ],
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+    {
+      $sort: { totalRevenue: -1 },
+    },
+  ];
+
+  const hotelAccounting = await Transaction.aggregate(pipeline);
+
+  // Calculate overall totals
+  const overallTotals = hotelAccounting.reduce(
+    (acc, hotel) => ({
+      totalRevenue: acc.totalRevenue + hotel.totalRevenue,
+      totalTransactions: acc.totalTransactions + hotel.totalTransactions,
+    }),
+    { totalRevenue: 0, totalTransactions: 0 }
+  );
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        hotels: hotelAccounting.map((hotel) => ({
+          hotelId: hotel._id,
+          hotelName: hotel.hotelDetails.name,
+          hotelCode: hotel.hotelDetails.hotelId,
+          location: hotel.hotelDetails.location,
+          totalRevenue: parseFloat(hotel.totalRevenue.toFixed(2)),
+          totalTransactions: hotel.totalTransactions,
+          avgTransactionAmount: parseFloat(
+            hotel.avgTransactionAmount.toFixed(2)
+          ),
+          paymentBreakdown: hotel.paymentBreakdown,
+          revenueShare: parseFloat(
+            ((hotel.totalRevenue / overallTotals.totalRevenue) * 100).toFixed(
+              2
+            )
+          ),
+        })),
+        summary: {
+          totalRevenue: parseFloat(overallTotals.totalRevenue.toFixed(2)),
+          totalTransactions: overallTotals.totalTransactions,
+          totalHotels: hotelAccounting.length,
+          avgRevenuePerHotel: parseFloat(
+            (overallTotals.totalRevenue / hotelAccounting.length).toFixed(2)
+          ),
+        },
+        filters: { startDate, endDate, status },
+      },
+      "Hotel-wise accounting retrieved successfully"
+    )
+  );
+  });
 
 /**
  * Get branch-wise accounting summary
  * GET /api/v1/admin/accounting/branches
  * @access Admin
  */
-export const getBranchWiseAccounting = async (req, res, next) => {
-  try {
-    const queryParams = req.validatedQuery || req.query;
-    const { hotelId, startDate, endDate, status = "success" } = queryParams;
+export const getBranchWiseAccounting = asyncHandler(async (req, res) => {
+  const queryParams = req.validatedQuery || req.query;
+  const { hotelId, startDate, endDate, status = "success" } = queryParams;
 
-    // Build match filter
-    const matchFilter = { status: status };
-    if (hotelId) matchFilter.hotel = new mongoose.Types.ObjectId(hotelId);
-    if (startDate || endDate) {
-      matchFilter.createdAt = {};
-      if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        matchFilter.createdAt.$gte = start;
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        matchFilter.createdAt.$lte = end;
-      }
+  // Build match filter
+  const matchFilter = { status: status };
+  if (hotelId) matchFilter.hotel = new mongoose.Types.ObjectId(hotelId);
+  if (startDate || endDate) {
+    matchFilter.createdAt = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      matchFilter.createdAt.$gte = start;
     }
-
-    const pipeline = [
-      { $match: matchFilter },
-      {
-        $group: {
-          _id: {
-            branch: "$branch",
-            hotel: "$hotel",
-          },
-          totalRevenue: { $sum: "$amount" },
-          totalTransactions: { $sum: 1 },
-          avgTransactionAmount: { $avg: "$amount" },
-          dailyRevenue: {
-            $push: {
-              date: {
-                $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
-              },
-              amount: "$amount",
-            },
-          },
-        },
-      },
-      {
-        $lookup: {
-          from: "branches",
-          localField: "_id.branch",
-          foreignField: "_id",
-          as: "branchDetails",
-        },
-      },
-      {
-        $lookup: {
-          from: "hotels",
-          localField: "_id.hotel",
-          foreignField: "_id",
-          as: "hotelDetails",
-        },
-      },
-      {
-        $unwind: "$branchDetails",
-      },
-      {
-        $unwind: "$hotelDetails",
-      },
-      {
-        $sort: { totalRevenue: -1 },
-      },
-    ];
-
-    const branchAccounting = await Transaction.aggregate(pipeline);
-
-    // Process daily revenue data
-    const processedData = branchAccounting.map((branch) => {
-      const dailyData = branch.dailyRevenue.reduce((acc, item) => {
-        acc[item.date] = (acc[item.date] || 0) + item.amount;
-        return acc;
-      }, {});
-
-      return {
-        branchId: branch._id.branch,
-        branchName: branch.branchDetails.name,
-        branchCode: branch.branchDetails.branchId,
-        hotelId: branch._id.hotel,
-        hotelName: branch.hotelDetails.name,
-        location: branch.branchDetails.location,
-        totalRevenue: parseFloat(branch.totalRevenue.toFixed(2)),
-        totalTransactions: branch.totalTransactions,
-        avgTransactionAmount: parseFloat(
-          branch.avgTransactionAmount.toFixed(2)
-        ),
-        dailyRevenue: dailyData,
-      };
-    });
-
-    const summary = processedData.reduce(
-      (acc, branch) => ({
-        totalRevenue: acc.totalRevenue + branch.totalRevenue,
-        totalTransactions: acc.totalTransactions + branch.totalTransactions,
-      }),
-      { totalRevenue: 0, totalTransactions: 0 }
-    );
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          branches: processedData,
-          summary: {
-            totalRevenue: parseFloat(summary.totalRevenue.toFixed(2)),
-            totalTransactions: summary.totalTransactions,
-            totalBranches: processedData.length,
-            avgRevenuePerBranch: parseFloat(
-              (summary.totalRevenue / processedData.length).toFixed(2)
-            ),
-          },
-          filters: { hotelId, startDate, endDate, status },
-        },
-        "Branch-wise accounting retrieved successfully"
-      )
-    );
-  } catch (error) {
-    logger.error("Error fetching branch-wise accounting:", error);
-    next(error);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      matchFilter.createdAt.$lte = end;
+    }
   }
-};
+
+  const pipeline = [
+    { $match: matchFilter },
+    {
+      $group: {
+        _id: {
+          branch: "$branch",
+          hotel: "$hotel",
+        },
+        totalRevenue: { $sum: "$amount" },
+        totalTransactions: { $sum: 1 },
+        avgTransactionAmount: { $avg: "$amount" },
+        dailyRevenue: {
+          $push: {
+            date: {
+              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+            },
+            amount: "$amount",
+          },
+        },
+      },
+    },
+    {
+      $lookup: {
+        from: "branches",
+        localField: "_id.branch",
+        foreignField: "_id",
+        as: "branchDetails",
+      },
+    },
+    {
+      $lookup: {
+        from: "hotels",
+        localField: "_id.hotel",
+        foreignField: "_id",
+        as: "hotelDetails",
+      },
+    },
+    {
+      $unwind: "$branchDetails",
+    },
+    {
+      $unwind: "$hotelDetails",
+    },
+    {
+      $sort: { totalRevenue: -1 },
+    },
+  ];
+
+  const branchAccounting = await Transaction.aggregate(pipeline);
+
+  // Process daily revenue data
+  const processedData = branchAccounting.map((branch) => {
+    const dailyData = branch.dailyRevenue.reduce((acc, item) => {
+      acc[item.date] = (acc[item.date] || 0) + item.amount;
+      return acc;
+    }, {});
+
+    return {
+      branchId: branch._id.branch,
+      branchName: branch.branchDetails.name,
+      branchCode: branch.branchDetails.branchId,
+      hotelId: branch._id.hotel,
+      hotelName: branch.hotelDetails.name,
+      location: branch.branchDetails.location,
+      totalRevenue: parseFloat(branch.totalRevenue.toFixed(2)),
+      totalTransactions: branch.totalTransactions,
+      avgTransactionAmount: parseFloat(
+        branch.avgTransactionAmount.toFixed(2)
+      ),
+      dailyRevenue: dailyData,
+    };
+  });
+
+  const summary = processedData.reduce(
+    (acc, branch) => ({
+      totalRevenue: acc.totalRevenue + branch.totalRevenue,
+      totalTransactions: acc.totalTransactions + branch.totalTransactions,
+    }),
+    { totalRevenue: 0, totalTransactions: 0 }
+  );
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        branches: processedData,
+        summary: {
+          totalRevenue: parseFloat(summary.totalRevenue.toFixed(2)),
+          totalTransactions: summary.totalTransactions,
+          totalBranches: processedData.length,
+          avgRevenuePerBranch: parseFloat(
+            (summary.totalRevenue / processedData.length).toFixed(2)
+          ),
+        },
+        filters: { hotelId, startDate, endDate, status },
+      },
+      "Branch-wise accounting retrieved successfully"
+    )
+  );
+  });
 
 /**
  * Get settlement tracking & payout logs
  * GET /api/v1/admin/accounting/settlements
  * @access Admin
  */
-export const getSettlements = async (req, res, next) => {
-  try {
-    const queryParams = req.validatedQuery || req.query;
-    const {
-      page = 1,
-      limit = 20,
-      hotelId,
-      branchId,
-      status,
-      startDate,
-      endDate,
-      payoutStatus = "all",
-    } = queryParams;
+export const getSettlements = asyncHandler(async (req, res) => {
+  const queryParams = req.validatedQuery || req.query;
+  const {
+    page = 1,
+    limit = 20,
+    hotelId,
+    branchId,
+    status,
+    startDate,
+    endDate,
+    payoutStatus = "all",
+  } = queryParams;
 
-    // Build match filter for Transaction model
-    // Default to "success" for settlements, but allow override if specified
-    const matchFilter = {};
-    matchFilter.status = status || "success";
-    if (hotelId) matchFilter.hotel = new mongoose.Types.ObjectId(hotelId);
-    if (branchId) matchFilter.branch = new mongoose.Types.ObjectId(branchId);
+  // Build match filter for Transaction model
+  // Default to "success" for settlements, but allow override if specified
+  const matchFilter = {};
+  matchFilter.status = status || "success";
+  if (hotelId) matchFilter.hotel = new mongoose.Types.ObjectId(hotelId);
+  if (branchId) matchFilter.branch = new mongoose.Types.ObjectId(branchId);
 
-    if (startDate || endDate) {
-      matchFilter.createdAt = {};
-      if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        matchFilter.createdAt.$gte = start;
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        matchFilter.createdAt.$lte = end;
-      }
+  if (startDate || endDate) {
+    matchFilter.createdAt = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      matchFilter.createdAt.$gte = start;
     }
-
-    // Build aggregation pipeline for settlements
-    const pipeline = [
-      {
-        $match: matchFilter,
-      },
-      {
-        $addFields: {
-          settlementDate: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$createdAt",
-            },
-          },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            hotel: "$hotel",
-            branch: "$branch",
-            date: "$settlementDate",
-          },
-          totalAmount: { $sum: "$amount" },
-          transactionCount: { $sum: 1 },
-          transactions: {
-            $push: {
-              transactionId: "$transactionId",
-              orderId: "$order",
-              amount: "$amount",
-              paymentMethod: "$paymentMethod",
-              createdAt: "$createdAt",
-            },
-          },
-        },
-      },
-      {
-        $lookup: {
-          from: "hotels",
-          localField: "_id.hotel",
-          foreignField: "_id",
-          as: "hotelDetails",
-        },
-      },
-      {
-        $lookup: {
-          from: "branches",
-          localField: "_id.branch",
-          foreignField: "_id",
-          as: "branchDetails",
-        },
-      },
-      {
-        $unwind: "$hotelDetails",
-      },
-      {
-        $unwind: "$branchDetails",
-      },
-      {
-        $addFields: {
-          settlementStatus: {
-            $switch: {
-              branches: [
-                {
-                  case: { $lt: [{ $dayOfMonth: new Date() }, 5] },
-                  then: "pending",
-                },
-                {
-                  case: {
-                    $and: [
-                      { $gte: [{ $dayOfMonth: new Date() }, 5] },
-                      { $lt: [{ $dayOfMonth: new Date() }, 10] },
-                    ],
-                  },
-                  then: "processing",
-                },
-              ],
-              default: "settled",
-            },
-          },
-          estimatedPayoutDate: {
-            $dateAdd: {
-              startDate: { $dateFromString: { dateString: "$_id.date" } },
-              unit: "day",
-              amount: 7,
-            },
-          },
-        },
-      },
-      {
-        $sort: { "_id.date": -1, totalAmount: -1 },
-      },
-    ];
-
-    // Add pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    pipeline.push({ $skip: skip });
-    pipeline.push({ $limit: parseInt(limit) });
-
-    const settlements = await Transaction.aggregate(pipeline);
-
-    // Get total count for pagination
-    const countPipeline = [...pipeline.slice(0, -2), { $count: "total" }];
-    const [countResult] = await Transaction.aggregate(countPipeline);
-    const totalCount = countResult?.total || 0;
-
-    // Calculate settlement summary
-    const summaryPipeline = [
-      ...pipeline.slice(0, -3),
-      {
-        $group: {
-          _id: null,
-          totalSettlementAmount: { $sum: "$totalAmount" },
-          totalSettlements: { $sum: 1 },
-          pendingAmount: {
-            $sum: {
-              $cond: [
-                { $eq: ["$settlementStatus", "pending"] },
-                "$totalAmount",
-                0,
-              ],
-            },
-          },
-          processingAmount: {
-            $sum: {
-              $cond: [
-                { $eq: ["$settlementStatus", "processing"] },
-                "$totalAmount",
-                0,
-              ],
-            },
-          },
-          settledAmount: {
-            $sum: {
-              $cond: [
-                { $eq: ["$settlementStatus", "settled"] },
-                "$totalAmount",
-                0,
-              ],
-            },
-          },
-        },
-      },
-    ];
-
-    const [settlementSummary] = await Transaction.aggregate(summaryPipeline);
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          settlements: settlements.map((settlement) => ({
-            settlementId: `SET-${settlement._id.date}-${settlement._id.hotel
-              .toString()
-              .slice(-6)}`,
-            hotelId: settlement._id.hotel,
-            hotelName: settlement.hotelDetails.name,
-            branchId: settlement._id.branch,
-            branchName: settlement.branchDetails.name,
-            settlementDate: settlement._id.date,
-            totalAmount: parseFloat(settlement.totalAmount.toFixed(2)),
-            transactionCount: settlement.transactionCount,
-            settlementStatus: settlement.settlementStatus,
-            estimatedPayoutDate: settlement.estimatedPayoutDate,
-            transactions: settlement.transactions,
-          })),
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(totalCount / parseInt(limit)),
-            totalSettlements: totalCount,
-            hasNext: skip + parseInt(limit) < totalCount,
-            hasPrev: parseInt(page) > 1,
-          },
-          summary: {
-            totalSettlementAmount: parseFloat(
-              (settlementSummary?.totalSettlementAmount || 0).toFixed(2)
-            ),
-            totalSettlements: settlementSummary?.totalSettlements || 0,
-            pendingAmount: parseFloat(
-              (settlementSummary?.pendingAmount || 0).toFixed(2)
-            ),
-            processingAmount: parseFloat(
-              (settlementSummary?.processingAmount || 0).toFixed(2)
-            ),
-            settledAmount: parseFloat(
-              (settlementSummary?.settledAmount || 0).toFixed(2)
-            ),
-          },
-        },
-        "Settlements retrieved successfully"
-      )
-    );
-  } catch (error) {
-    logger.error("Error fetching settlements:", error);
-    next(error);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      matchFilter.createdAt.$lte = end;
+    }
   }
-};
+
+  // Build aggregation pipeline for settlements
+  const pipeline = [
+    {
+      $match: matchFilter,
+    },
+    {
+      $addFields: {
+        settlementDate: {
+          $dateToString: {
+            format: "%Y-%m-%d",
+            date: "$createdAt",
+          },
+        },
+      },
+    },
+    {
+      $group: {
+        _id: {
+          hotel: "$hotel",
+          branch: "$branch",
+          date: "$settlementDate",
+        },
+        totalAmount: { $sum: "$amount" },
+        transactionCount: { $sum: 1 },
+        transactions: {
+          $push: {
+            transactionId: "$transactionId",
+            orderId: "$order",
+            amount: "$amount",
+            paymentMethod: "$paymentMethod",
+            createdAt: "$createdAt",
+          },
+        },
+      },
+    },
+    {
+      $lookup: {
+        from: "hotels",
+        localField: "_id.hotel",
+        foreignField: "_id",
+        as: "hotelDetails",
+      },
+    },
+    {
+      $lookup: {
+        from: "branches",
+        localField: "_id.branch",
+        foreignField: "_id",
+        as: "branchDetails",
+      },
+    },
+    {
+      $unwind: "$hotelDetails",
+    },
+    {
+      $unwind: "$branchDetails",
+    },
+    {
+      $addFields: {
+        settlementStatus: {
+          $switch: {
+            branches: [
+              {
+                case: { $lt: [{ $dayOfMonth: new Date() }, 5] },
+                then: "pending",
+              },
+              {
+                case: {
+                  $and: [
+                    { $gte: [{ $dayOfMonth: new Date() }, 5] },
+                    { $lt: [{ $dayOfMonth: new Date() }, 10] },
+                  ],
+                },
+                then: "processing",
+              },
+            ],
+            default: "settled",
+          },
+        },
+        estimatedPayoutDate: {
+          $dateAdd: {
+            startDate: { $dateFromString: { dateString: "$_id.date" } },
+            unit: "day",
+            amount: 7,
+          },
+        },
+      },
+    },
+    {
+      $sort: { "_id.date": -1, totalAmount: -1 },
+    },
+  ];
+
+  // Add pagination
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  pipeline.push({ $skip: skip });
+  pipeline.push({ $limit: parseInt(limit) });
+
+  const settlements = await Transaction.aggregate(pipeline);
+
+  // Get total count for pagination
+  const countPipeline = [...pipeline.slice(0, -2), { $count: "total" }];
+  const [countResult] = await Transaction.aggregate(countPipeline);
+  const totalCount = countResult?.total || 0;
+
+  // Calculate settlement summary
+  const summaryPipeline = [
+    ...pipeline.slice(0, -3),
+    {
+      $group: {
+        _id: null,
+        totalSettlementAmount: { $sum: "$totalAmount" },
+        totalSettlements: { $sum: 1 },
+        pendingAmount: {
+          $sum: {
+            $cond: [
+              { $eq: ["$settlementStatus", "pending"] },
+              "$totalAmount",
+              0,
+            ],
+          },
+        },
+        processingAmount: {
+          $sum: {
+            $cond: [
+              { $eq: ["$settlementStatus", "processing"] },
+              "$totalAmount",
+              0,
+            ],
+          },
+        },
+        settledAmount: {
+          $sum: {
+            $cond: [
+              { $eq: ["$settlementStatus", "settled"] },
+              "$totalAmount",
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ];
+
+  const [settlementSummary] = await Transaction.aggregate(summaryPipeline);
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        settlements: settlements.map((settlement) => ({
+          settlementId: `SET-${settlement._id.date}-${settlement._id.hotel
+            .toString()
+            .slice(-6)}`,
+          hotelId: settlement._id.hotel,
+          hotelName: settlement.hotelDetails.name,
+          branchId: settlement._id.branch,
+          branchName: settlement.branchDetails.name,
+          settlementDate: settlement._id.date,
+          totalAmount: parseFloat(settlement.totalAmount.toFixed(2)),
+          transactionCount: settlement.transactionCount,
+          settlementStatus: settlement.settlementStatus,
+          estimatedPayoutDate: settlement.estimatedPayoutDate,
+          transactions: settlement.transactions,
+        })),
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(totalCount / parseInt(limit)),
+          totalSettlements: totalCount,
+          hasNext: skip + parseInt(limit) < totalCount,
+          hasPrev: parseInt(page) > 1,
+        },
+        summary: {
+          totalSettlementAmount: parseFloat(
+            (settlementSummary?.totalSettlementAmount || 0).toFixed(2)
+          ),
+          totalSettlements: settlementSummary?.totalSettlements || 0,
+          pendingAmount: parseFloat(
+            (settlementSummary?.pendingAmount || 0).toFixed(2)
+          ),
+          processingAmount: parseFloat(
+            (settlementSummary?.processingAmount || 0).toFixed(2)
+          ),
+          settledAmount: parseFloat(
+            (settlementSummary?.settledAmount || 0).toFixed(2)
+          ),
+        },
+      },
+      "Settlements retrieved successfully"
+    )
+  );
+  });
 
 /**
  * Export transactions report
  * POST /api/v1/admin/accounting/export
  * @access Admin
  */
-export const exportReport = async (req, res, next) => {
-  try {
-    const {
-      format = "csv", // csv, excel, pdf
-      reportType = "transactions", // transactions, hotels, branches, settlements
-      hotelId,
-      branchId,
-      startDate,
-      endDate,
-      status,
-    } = req.body;
+export const exportReport = asyncHandler(async (req, res, next) => {
+  const {
+    format = "csv", // csv, excel, pdf
+    reportType = "transactions", // transactions, hotels, branches, settlements
+    hotelId,
+    branchId,
+    startDate,
+    endDate,
+    status,
+  } = req.body;
 
-    // Validate format
-    if (!["csv", "excel", "pdf"].includes(format)) {
-      return next(
-        new APIError(400, "Invalid export format. Supported: csv, excel, pdf")
-      );
-    }
-
-    // Build query based on report type
-    let data;
-    let filename;
-    let headers;
-
-    switch (reportType) {
-      case "transactions":
-        data = await getTransactionsForExport({
-          hotelId,
-          branchId,
-          startDate,
-          endDate,
-          status,
-        });
-        filename = `transactions_report_${
-          new Date().toISOString().split("T")[0]
-        }`;
-        headers = [
-          { id: "transactionId", title: "Transaction ID" },
-          { id: "orderId", title: "Order ID" },
-          { id: "hotelName", title: "Hotel" },
-          { id: "branchName", title: "Branch" },
-          { id: "customerName", title: "Customer" },
-          { id: "amount", title: "Amount (₹)" },
-          { id: "paymentMethod", title: "Payment Method" },
-          { id: "status", title: "Status" },
-          { id: "createdAt", title: "Date" },
-        ];
-        break;
-
-      case "hotels":
-        data = await getHotelsForExport({ startDate, endDate, status });
-        filename = `hotels_accounting_${
-          new Date().toISOString().split("T")[0]
-        }`;
-        headers = [
-          { id: "hotelName", title: "Hotel Name" },
-          { id: "hotelCode", title: "Hotel Code" },
-          { id: "location", title: "Location" },
-          { id: "totalRevenue", title: "Total Revenue (₹)" },
-          { id: "totalTransactions", title: "Total Transactions" },
-          { id: "avgTransactionAmount", title: "Avg Transaction (₹)" },
-          { id: "revenueShare", title: "Revenue Share (%)" },
-        ];
-        break;
-
-      case "branches":
-        data = await getBranchesForExport({
-          hotelId,
-          startDate,
-          endDate,
-          status,
-        });
-        filename = `branches_accounting_${
-          new Date().toISOString().split("T")[0]
-        }`;
-        headers = [
-          { id: "hotelName", title: "Hotel" },
-          { id: "branchName", title: "Branch Name" },
-          { id: "branchCode", title: "Branch Code" },
-          { id: "location", title: "Location" },
-          { id: "totalRevenue", title: "Total Revenue (₹)" },
-          { id: "totalTransactions", title: "Total Transactions" },
-          { id: "avgTransactionAmount", title: "Avg Transaction (₹)" },
-        ];
-        break;
-
-      case "settlements":
-        data = await getSettlementsForExport({
-          hotelId,
-          branchId,
-          startDate,
-          endDate,
-        });
-        filename = `settlements_report_${
-          new Date().toISOString().split("T")[0]
-        }`;
-        headers = [
-          { id: "settlementId", title: "Settlement ID" },
-          { id: "hotelName", title: "Hotel" },
-          { id: "branchName", title: "Branch" },
-          { id: "settlementDate", title: "Settlement Date" },
-          { id: "totalAmount", title: "Amount (₹)" },
-          { id: "transactionCount", title: "Transaction Count" },
-          { id: "settlementStatus", title: "Status" },
-          { id: "estimatedPayoutDate", title: "Estimated Payout" },
-        ];
-        break;
-
-      default:
-        return next(new APIError(400, "Invalid report type"));
-    }
-
-    // Validate data and headers
-    if (!Array.isArray(data)) {
-      return next(
-        new APIError(500, "Invalid data format received from export function")
-      );
-    }
-    if (!Array.isArray(headers)) {
-      return next(new APIError(500, "Invalid headers format"));
-    }
-
-    // Generate file based on format
-    let filePath;
-    let contentType;
-
-    switch (format) {
-      case "csv":
-        filePath = await generateCSV(data, headers, filename);
-        contentType = "text/csv";
-        break;
-
-      case "excel":
-        filePath = await generateExcel(data, headers, filename, reportType);
-        contentType =
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-        break;
-
-      case "pdf":
-        filePath = await generatePDF(data, headers, filename, reportType);
-        contentType = "application/pdf";
-        break;
-    }
-
-    // Send file
-    res.setHeader("Content-Type", contentType);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${filename}.${format}"`
+  // Validate format
+  if (!["csv", "excel", "pdf"].includes(format)) {
+    return next(
+      new APIError(400, "Invalid export format. Supported: csv, excel, pdf")
     );
-
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
-
-    // Clean up file after sending
-    fileStream.on("end", () => {
-      fs.unlink(filePath, (err) => {
-        if (err) logger.error("Error deleting temp file:", err);
-      });
-    });
-  } catch (error) {
-    logger.error("Error exporting report:", error);
-    next(error);
   }
-};
+
+  // Build query based on report type
+  let data;
+  let filename;
+  let headers;
+
+  switch (reportType) {
+    case "transactions":
+      data = await getTransactionsForExport({
+        hotelId,
+        branchId,
+        startDate,
+        endDate,
+        status,
+      });
+      filename = `transactions_report_${
+        new Date().toISOString().split("T")[0]
+      }`;
+      headers = [
+        { id: "transactionId", title: "Transaction ID" },
+        { id: "orderId", title: "Order ID" },
+        { id: "hotelName", title: "Hotel" },
+        { id: "branchName", title: "Branch" },
+        { id: "customerName", title: "Customer" },
+        { id: "amount", title: "Amount (₹)" },
+        { id: "paymentMethod", title: "Payment Method" },
+        { id: "status", title: "Status" },
+        { id: "createdAt", title: "Date" },
+      ];
+      break;
+
+    case "hotels":
+      data = await getHotelsForExport({ startDate, endDate, status });
+      filename = `hotels_accounting_${
+        new Date().toISOString().split("T")[0]
+      }`;
+      headers = [
+        { id: "hotelName", title: "Hotel Name" },
+        { id: "hotelCode", title: "Hotel Code" },
+        { id: "location", title: "Location" },
+        { id: "totalRevenue", title: "Total Revenue (₹)" },
+        { id: "totalTransactions", title: "Total Transactions" },
+        { id: "avgTransactionAmount", title: "Avg Transaction (₹)" },
+        { id: "revenueShare", title: "Revenue Share (%)" },
+      ];
+      break;
+
+    case "branches":
+      data = await getBranchesForExport({
+        hotelId,
+        startDate,
+        endDate,
+        status,
+      });
+      filename = `branches_accounting_${
+        new Date().toISOString().split("T")[0]
+      }`;
+      headers = [
+        { id: "hotelName", title: "Hotel" },
+        { id: "branchName", title: "Branch Name" },
+        { id: "branchCode", title: "Branch Code" },
+        { id: "location", title: "Location" },
+        { id: "totalRevenue", title: "Total Revenue (₹)" },
+        { id: "totalTransactions", title: "Total Transactions" },
+        { id: "avgTransactionAmount", title: "Avg Transaction (₹)" },
+      ];
+      break;
+
+    case "settlements":
+      data = await getSettlementsForExport({
+        hotelId,
+        branchId,
+        startDate,
+        endDate,
+      });
+      filename = `settlements_report_${
+        new Date().toISOString().split("T")[0]
+      }`;
+      headers = [
+        { id: "settlementId", title: "Settlement ID" },
+        { id: "hotelName", title: "Hotel" },
+        { id: "branchName", title: "Branch" },
+        { id: "settlementDate", title: "Settlement Date" },
+        { id: "totalAmount", title: "Amount (₹)" },
+        { id: "transactionCount", title: "Transaction Count" },
+        { id: "settlementStatus", title: "Status" },
+        { id: "estimatedPayoutDate", title: "Estimated Payout" },
+      ];
+      break;
+
+    default:
+      return next(new APIError(400, "Invalid report type"));
+  }
+
+  // Validate data and headers
+  if (!Array.isArray(data)) {
+    return next(
+      new APIError(500, "Invalid data format received from export function")
+    );
+  }
+  if (!Array.isArray(headers)) {
+    return next(new APIError(500, "Invalid headers format"));
+  }
+
+  // Generate file based on format
+  let filePath;
+  let contentType;
+
+  switch (format) {
+    case "csv":
+      filePath = await generateCSV(data, headers, filename);
+      contentType = "text/csv";
+      break;
+
+    case "excel":
+      filePath = await generateExcel(data, headers, filename, reportType);
+      contentType =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      break;
+
+    case "pdf":
+      filePath = await generatePDF(data, headers, filename, reportType);
+      contentType = "application/pdf";
+      break;
+  }
+
+  // Send file
+  res.setHeader("Content-Type", contentType);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${filename}.${format}"`
+  );
+
+  const fileStream = fs.createReadStream(filePath);
+  fileStream.pipe(res);
+
+  // Clean up file after sending
+  fileStream.on("end", () => {
+    fs.unlink(filePath, (err) => {
+      if (err) logger.error("Error deleting temp file:", err);
+    });
+  });
+  });
 
 // Helper functions for data export
 async function getTransactionsForExport(filters) {

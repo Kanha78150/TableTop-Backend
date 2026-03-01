@@ -1,7 +1,7 @@
 // src/services/timeTracker.js - Time Tracking and Automatic Assignment Service
 import { Order } from "../models/Order.model.js";
 import { Staff } from "../models/Staff.model.js";
-import assignmentService from "./assignment.service.js";
+import assignmentService from "./assignment/assignment.service.js";
 import queueService from "./queue.service.js";
 import { logger } from "../utils/logger.js";
 

@@ -6,9 +6,9 @@ import mongoose from "mongoose";
 
 import app from "./src/app.js";
 import connectDB from "./src/config/database.js";
-import assignmentSystemInit from "./src/services/assignmentSystemInit.service.js";
-import scheduledJobsService from "./src/services/scheduledJobs.service.js";
-import { startAllJobs } from "./src/services/subscriptionJobs.service.js";
+import assignmentSystemInit from "./src/services/assignment/init.service.js";
+import scheduledJobsService from "./src/services/jobs/scheduledJobs.service.js";
+import { startAllJobs } from "./src/services/jobs/subscriptionJobs.service.js";
 import { emailQueueService } from "./src/services/emailQueue.service.js";
 import { setupComplaintEvents } from "./src/socket/complaintEvents.js";
 import { setupOrderEvents } from "./src/socket/socketHandler.js";
@@ -16,6 +16,7 @@ import socketAuthMiddleware from "./src/middleware/socket.auth.middleware.js";
 import { setIO } from "./src/utils/socketService.js";
 import { setSocketIO } from "./src/services/notification.service.js";
 import { logger } from "./src/utils/logger.js";
+import { paymentRetryService } from "./src/services/payment/retry.service.js";
 import {
   validateEnvironment,
   printEnvironmentSummary,
@@ -101,6 +102,10 @@ const initializeBackgroundServices = async () => {
       emailQueueService.startQueueProcessor();
       logger.info("Email queue started");
     }
+
+    // Start payment retry & cleanup jobs
+    paymentRetryService.startRetryJobs();
+    logger.info("Payment retry jobs started");
 
     logger.info("ALL BACKGROUND SERVICES READY");
   } catch (error) {
