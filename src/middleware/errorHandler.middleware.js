@@ -1,7 +1,15 @@
 import { APIError } from "../utils/APIError.js";
+import { logger } from "../utils/logger.js";
+
+const isDev = process.env.NODE_ENV === "development";
 
 export const errorHandler = (err, req, res, next) => {
-  console.error(err);
+  // Structured error logging with request context
+  logger.error(`${req.method} ${req.originalUrl} — ${err.message}`, {
+    name: err.name,
+    statusCode: err.statusCode,
+    stack: isDev ? err.stack : undefined,
+  });
 
   // Handle APIError instances
   if (err instanceof APIError) {
@@ -9,6 +17,7 @@ export const errorHandler = (err, req, res, next) => {
       success: false,
       message: err.message,
       error: err.error || null,
+      ...(isDev && { stack: err.stack }),
     });
   }
 
@@ -22,9 +31,17 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // Handle Mongoose CastError (invalid ObjectId, etc.)
+  if (err.name === "CastError") {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid ${err.path}: ${err.value}`,
+    });
+  }
+
   // Handle Mongoose duplicate key error
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
+    const field = Object.keys(err.keyValue || {})[0] || "field";
     return res.status(400).json({
       success: false,
       message: `${field} already exists`,
@@ -54,10 +71,27 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // Handle PayloadTooLargeError (body-parser)
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({
+      success: false,
+      message: "Request payload too large",
+    });
+  }
+
+  // Handle SyntaxError (malformed JSON body)
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({
+      success: false,
+      message: "Malformed JSON in request body",
+    });
+  }
+
   // Default error
   return res.status(500).json({
     success: false,
     message: "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
   });
 };
 

@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import Joi from "joi";
 
 const rewardHistorySchema = new mongoose.Schema(
   {
@@ -17,11 +16,5 @@ export const RewardHistory = mongoose.model(
   rewardHistorySchema
 );
 
-export const validateRewardHistory = (data) => {
-  const schema = Joi.object({
-    user: Joi.string().required(),
-    coins: Joi.number().required(),
-    type: Joi.string().valid("task", "order").required(),
-  });
-  return schema.validate(data);
-};
+// Validators extracted to src/validators/rewardhistory.validators.js
+export { validateRewardHistory } from "../validators/rewardhistory.validators.js";

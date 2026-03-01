@@ -7,7 +7,7 @@
 import { Order } from "../../models/Order.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
 import { PaymentConfig } from "../../models/PaymentConfig.model.js";
-import dynamicPaymentService from "../../services/dynamicPayment.service.js";
+import dynamicPaymentService from "../../services/payment/dynamicPayment.service.js";
 
 /**
  * Initiate payment for an order
@@ -708,7 +708,7 @@ export const cancelPayment = async (req, res) => {
 
     // Create Transaction record for accounting (failed payment)
     try {
-      const paymentService = (await import("../../services/payment.service.js"))
+      const paymentService = (await import("../../services/payment/payment.service.js"))
         .default;
       await paymentService.createTransactionRecord(order);
       console.log(

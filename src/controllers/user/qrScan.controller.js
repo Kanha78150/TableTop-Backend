@@ -9,153 +9,151 @@ import qrCodeService from "../../services/qrCode.service.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import jwt from "jsonwebtoken";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+
 
 /**
  * Handle QR code scan
  * GET /api/v1/scan
  * Query params: hotelId, branchId (optional), tableNo
  */
-export const handleQRScan = async (req, res, next) => {
-  try {
-    const { hotelId, branchId, tableNo } = req.query;
+export const handleQRScan = asyncHandler(async (req, res, next) => {
+  const { hotelId, branchId, tableNo } = req.query;
 
-    // Validate scan parameters
-    const { error } = tableValidationSchemas.qrScan.validate({
-      hotelId,
-      branchId,
-      tableNo,
-    });
+  // Validate scan parameters
+  const { error } = tableValidationSchemas.qrScan.validate({
+    hotelId,
+    branchId,
+    tableNo,
+  });
 
-    if (error) {
-      return next(new APIError(400, "Invalid QR code data", error.details));
-    }
+  if (error) {
+    return next(new APIError(400, "Invalid QR code data", error.details));
+  }
 
-    // Find the table
-    const table = await Table.findByQRData(hotelId, branchId, tableNo);
-    if (!table) {
-      return next(new APIError(404, "Table not found or inactive"));
-    }
+  // Find the table
+  const table = await Table.findByQRData(hotelId, branchId, tableNo);
+  if (!table) {
+    return next(new APIError(404, "Table not found or inactive"));
+  }
 
-    // Check if hotel/branch is active
-    if (!table.hotel || table.hotel.status !== "active") {
-      return next(new APIError(400, "Hotel is currently inactive"));
-    }
+  // Check if hotel/branch is active
+  if (!table.hotel || table.hotel.status !== "active") {
+    return next(new APIError(400, "Hotel is currently inactive"));
+  }
 
-    if (table.branch && table.branch.status !== "active") {
-      return next(new APIError(400, "Branch is currently inactive"));
-    }
+  if (table.branch && table.branch.status !== "active") {
+    return next(new APIError(400, "Branch is currently inactive"));
+  }
 
-    // Check authentication from token (if provided)
-    let user = null;
-    let isAuthenticated = false;
+  // Check authentication from token (if provided)
+  let user = null;
+  let isAuthenticated = false;
 
-    const token = req.headers.authorization?.split(" ")[1];
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        user = await User.findById(decoded._id);
-        if (user) {
-          isAuthenticated = true;
-        }
-      } catch (err) {
-        // Token invalid, continue as unauthenticated
-        console.log("Invalid token provided:", err.message);
+  const token = req.headers.authorization?.split(" ")[1];
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      user = await User.findById(decoded._id);
+      if (user) {
+        isAuthenticated = true;
       }
+    } catch (err) {
+      // Token invalid, continue as unauthenticated
+      console.log("Invalid token provided:", err.message);
     }
+  }
 
-    if (!isAuthenticated) {
-      // User is not authenticated
-      return res.status(200).json(
-        new APIResponse(
-          200,
-          {
-            authenticated: false,
-            message: "Please signup or login first",
-            table: {
-              tableNumber: table.tableNumber,
-              capacity: table.capacity,
-              location: table.location,
-            },
-            hotel: {
-              name: table.hotel.name,
-              location: table.hotel.location,
-            },
-            branch: table.branch
-              ? {
-                  name: table.branch.name,
-                  location: table.branch.location,
-                }
-              : null,
-            redirectUrl: `${
-              process.env.FRONTEND_URL
-            }/auth?redirect=${encodeURIComponent(
-              `/menu?hotelId=${hotelId}&branchId=${
-                branchId || ""
-              }&tableNo=${tableNo}`
-            )}`,
-          },
-          "Please signup or login to continue"
-        )
-      );
-    }
-
-    // User is authenticated - get menu data
-    const menuData = await getMenuData(hotelId, branchId);
-
-    // Update table status if needed
-    if (table.status === "available") {
-      table.currentCustomer = user._id;
-      table.lastUsed = new Date();
-      await table.save();
-    }
-
-    res.status(200).json(
+  if (!isAuthenticated) {
+    // User is not authenticated
+    return res.status(200).json(
       new APIResponse(
         200,
         {
-          authenticated: true,
-          user: {
-            id: user._id,
-            name: user.name,
-            email: user.email,
-          },
+          authenticated: false,
+          message: "Please signup or login first",
           table: {
-            id: table._id,
             tableNumber: table.tableNumber,
             capacity: table.capacity,
             location: table.location,
-            status: table.status,
-            features: table.features,
           },
           hotel: {
-            id: table.hotel._id,
             name: table.hotel.name,
             location: table.hotel.location,
-            contact: table.hotel.contact,
           },
           branch: table.branch
             ? {
-                id: table.branch._id,
                 name: table.branch.name,
                 location: table.branch.location,
-                contact: table.branch.contact,
               }
             : null,
-          menu: menuData,
-          scanData: {
-            hotelId,
-            branchId: branchId || null,
-            tableNo,
-            scannedAt: new Date().toISOString(),
-          },
+          redirectUrl: `${
+            process.env.FRONTEND_URL
+          }/auth?redirect=${encodeURIComponent(
+            `/menu?hotelId=${hotelId}&branchId=${
+              branchId || ""
+            }&tableNo=${tableNo}`
+          )}`,
         },
-        "QR scan successful - welcome to the menu!"
+        "Please signup or login to continue"
       )
     );
-  } catch (error) {
-    next(error);
   }
-};
+
+  // User is authenticated - get menu data
+  const menuData = await getMenuData(hotelId, branchId);
+
+  // Update table status if needed
+  if (table.status === "available") {
+    table.currentCustomer = user._id;
+    table.lastUsed = new Date();
+    await table.save();
+  }
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        authenticated: true,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+        },
+        table: {
+          id: table._id,
+          tableNumber: table.tableNumber,
+          capacity: table.capacity,
+          location: table.location,
+          status: table.status,
+          features: table.features,
+        },
+        hotel: {
+          id: table.hotel._id,
+          name: table.hotel.name,
+          location: table.hotel.location,
+          contact: table.hotel.contact,
+        },
+        branch: table.branch
+          ? {
+              id: table.branch._id,
+              name: table.branch.name,
+              location: table.branch.location,
+              contact: table.branch.contact,
+            }
+          : null,
+        menu: menuData,
+        scanData: {
+          hotelId,
+          branchId: branchId || null,
+          tableNo,
+          scannedAt: new Date().toISOString(),
+        },
+      },
+      "QR scan successful - welcome to the menu!"
+    )
+  );
+  });
 
 /**
  * Validate QR scan data
@@ -220,118 +218,110 @@ export const validateQRScan = async (req, res, next) => {
  * Get table info by scan parameters (for mobile app direct scan)
  * GET /api/v1/scan/table-info
  */
-export const getTableInfo = async (req, res, next) => {
-  try {
-    const { hotelId, branchId, tableNo } = req.query;
+export const getTableInfo = asyncHandler(async (req, res, next) => {
+  const { hotelId, branchId, tableNo } = req.query;
 
-    // Validate parameters
-    const { error } = tableValidationSchemas.qrScan.validate({
-      hotelId,
-      branchId,
-      tableNo,
-    });
+  // Validate parameters
+  const { error } = tableValidationSchemas.qrScan.validate({
+    hotelId,
+    branchId,
+    tableNo,
+  });
 
-    if (error) {
-      return next(new APIError(400, "Invalid parameters", error.details));
-    }
-
-    // Find table
-    const table = await Table.findByQRData(hotelId, branchId, tableNo);
-    if (!table) {
-      return next(new APIError(404, "Table not found"));
-    }
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          table: {
-            id: table._id,
-            tableNumber: table.tableNumber,
-            capacity: table.capacity,
-            location: table.location,
-            status: table.status,
-            features: table.features,
-          },
-          hotel: {
-            id: table.hotel._id,
-            name: table.hotel.name,
-            location: table.hotel.location,
-          },
-          branch: table.branch
-            ? {
-                id: table.branch._id,
-                name: table.branch.name,
-                location: table.branch.location,
-              }
-            : null,
-          qrCode: {
-            scanUrl: table.qrCode.scanUrl,
-            generatedAt: table.qrCode.generatedAt,
-          },
-        },
-        "Table information retrieved successfully"
-      )
-    );
-  } catch (error) {
-    next(error);
+  if (error) {
+    return next(new APIError(400, "Invalid parameters", error.details));
   }
-};
+
+  // Find table
+  const table = await Table.findByQRData(hotelId, branchId, tableNo);
+  if (!table) {
+    return next(new APIError(404, "Table not found"));
+  }
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        table: {
+          id: table._id,
+          tableNumber: table.tableNumber,
+          capacity: table.capacity,
+          location: table.location,
+          status: table.status,
+          features: table.features,
+        },
+        hotel: {
+          id: table.hotel._id,
+          name: table.hotel.name,
+          location: table.hotel.location,
+        },
+        branch: table.branch
+          ? {
+              id: table.branch._id,
+              name: table.branch.name,
+              location: table.branch.location,
+            }
+          : null,
+        qrCode: {
+          scanUrl: table.qrCode.scanUrl,
+          generatedAt: table.qrCode.generatedAt,
+        },
+      },
+      "Table information retrieved successfully"
+    )
+  );
+  });
 
 /**
  * Record table scan event (for analytics)
  * POST /api/v1/scan/record
  */
-export const recordScanEvent = async (req, res, next) => {
-  try {
-    const { hotelId, branchId, tableNo } = req.body;
+export const recordScanEvent = asyncHandler(async (req, res, next) => {
+  const { hotelId, branchId, tableNo } = req.body;
 
-    // Automatically extract userAgent and IP from request
-    const userAgent = req.headers["user-agent"] || "Unknown";
-    const ip =
-      req.headers["x-forwarded-for"]?.split(",")[0] ||
-      req.headers["x-real-ip"] ||
-      req.ip ||
-      req.connection.remoteAddress ||
-      "Unknown";
+  // Automatically extract userAgent and IP from request
+  const userAgent = req.headers["user-agent"] || "Unknown";
+  const ip =
+    req.headers["x-forwarded-for"]?.split(",")[0] ||
+    req.headers["x-real-ip"] ||
+    req.ip ||
+    req.connection.remoteAddress ||
+    "Unknown";
 
-    // Find table
-    const table = await Table.findByQRData(hotelId, branchId, tableNo);
-    if (!table) {
-      return next(new APIError(404, "Table not found"));
-    }
-
-    // Here you could save scan analytics to a separate collection
-    // For now, we'll just update the table's last used timestamp
-    table.lastUsed = new Date();
-    await table.save();
-
-    // Log analytics data (in production, save to analytics collection)
-    console.log("QR Scan Event:", {
-      hotelId,
-      branchId,
-      tableNo,
-      userAgent,
-      ip,
-      timestamp: new Date(),
-    });
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          recorded: true,
-          timestamp: new Date(),
-          userAgent,
-          ip,
-        },
-        "Scan event recorded successfully"
-      )
-    );
-  } catch (error) {
-    next(error);
+  // Find table
+  const table = await Table.findByQRData(hotelId, branchId, tableNo);
+  if (!table) {
+    return next(new APIError(404, "Table not found"));
   }
-};
+
+  // Here you could save scan analytics to a separate collection
+  // For now, we'll just update the table's last used timestamp
+  table.lastUsed = new Date();
+  await table.save();
+
+  // Log analytics data (in production, save to analytics collection)
+  console.log("QR Scan Event:", {
+    hotelId,
+    branchId,
+    tableNo,
+    userAgent,
+    ip,
+    timestamp: new Date(),
+  });
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        recorded: true,
+        timestamp: new Date(),
+        userAgent,
+        ip,
+      },
+      "Scan event recorded successfully"
+    )
+  );
+  });
 
 /**
  * Helper function to get menu data for hotel/branch
@@ -404,44 +394,40 @@ const getMenuData = async (hotelId, branchId) => {
  * Get menu for scanned table (public endpoint)
  * GET /api/v1/scan/menu
  */
-export const getMenuForTable = async (req, res, next) => {
-  try {
-    const { hotelId, branchId, tableNo } = req.query;
+export const getMenuForTable = asyncHandler(async (req, res, next) => {
+  const { hotelId, branchId, tableNo } = req.query;
 
-    // Validate table exists
-    const table = await Table.findByQRData(hotelId, branchId, tableNo);
-    if (!table) {
-      return next(new APIError(404, "Table not found"));
-    }
-
-    // Get menu data
-    const menuData = await getMenuData(hotelId, branchId);
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          table: {
-            tableNumber: table.tableNumber,
-            capacity: table.capacity,
-          },
-          hotel: {
-            name: table.hotel.name,
-          },
-          branch: table.branch
-            ? {
-                name: table.branch.name,
-              }
-            : null,
-          menu: menuData,
-        },
-        "Menu retrieved successfully"
-      )
-    );
-  } catch (error) {
-    next(error);
+  // Validate table exists
+  const table = await Table.findByQRData(hotelId, branchId, tableNo);
+  if (!table) {
+    return next(new APIError(404, "Table not found"));
   }
-};
+
+  // Get menu data
+  const menuData = await getMenuData(hotelId, branchId);
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        table: {
+          tableNumber: table.tableNumber,
+          capacity: table.capacity,
+        },
+        hotel: {
+          name: table.hotel.name,
+        },
+        branch: table.branch
+          ? {
+              name: table.branch.name,
+            }
+          : null,
+        menu: menuData,
+      },
+      "Menu retrieved successfully"
+    )
+  );
+  });
 
 export default {
   handleQRScan,

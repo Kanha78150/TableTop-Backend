@@ -4,7 +4,7 @@
  * Razorpay, PhonePe, and Paytm webhook processing
  */
 
-import dynamicPaymentService from "../../services/dynamicPayment.service.js";
+import dynamicPaymentService from "../../services/payment/dynamicPayment.service.js";
 import { Order } from "../../models/Order.model.js";
 
 /**

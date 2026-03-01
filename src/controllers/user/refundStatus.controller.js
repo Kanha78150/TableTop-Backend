@@ -1,4 +1,4 @@
-import asyncHandler from "express-async-handler";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 import { Order } from "../../models/Order.model.js";
 import { RefundRequest } from "../../models/RefundRequest.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";

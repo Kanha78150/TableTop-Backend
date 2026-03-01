@@ -1,4 +1,4 @@
-import { paymentService } from "../../services/payment.service.js";
+import { paymentService } from "../../services/payment/payment.service.js";
 import { invoiceService } from "../../services/invoice.service.js";
 import { paymentLogger } from "../../utils/paymentLogger.js";
 import { logger } from "../../utils/logger.js";
@@ -8,7 +8,7 @@ import { EmailQueue } from "../../models/EmailQueue.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { APIResponse } from "../../utils/APIResponse.js";
-import assignmentService from "../../services/assignment.service.js";
+import assignmentService from "../../services/assignment/assignment.service.js";
 
 /**
  * Comprehensive Razorpay Webhook Handler
