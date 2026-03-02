@@ -32,7 +32,7 @@ router.post(
   rateLimitSensitiveOps,
   bootstrapSuperAdmin
 ); // Bootstrap super admin (only works if no super admin exists)
-router.post("/register", registerAdmin); // Admin signup
+router.post("/register", upload.single("profileImage"), registerAdmin); // Admin signup
 router.post("/login", loginAdmin); // Admin login
 router.post("/forgot-password", rateLimitSensitiveOps, forgotPassword);
 router.post("/reset-password", rateLimitSensitiveOps, resetPassword);

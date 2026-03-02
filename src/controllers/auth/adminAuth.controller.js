@@ -14,6 +14,7 @@ import {
 } from "../../models/Admin.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
 import { Branch } from "../../models/Branch.model.js";
+import { AdminSubscription } from "../../models/AdminSubscription.model.js";
 
 /*-------------- Import utils ----------------*/
 import { APIResponse } from "../../utils/APIResponse.js";
@@ -24,6 +25,7 @@ import { generateResetToken, hashToken } from "../../utils/tokenGenerator.js";
 import {
   sendEmail,
   sendAdminPasswordResetEmail,
+  sendAdminVerificationOtpEmail,
 } from "../../utils/emailService.js";
 import { generateOtp, hashOtp, verifyOtp } from "../../utils/otpGenerator.js";
 import { logger } from "../../utils/logger.js";
@@ -73,7 +75,7 @@ export const updateAdminProfile = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, { admin }, "Profile updated successfully"));
-  });
+});
 
 // Change password
 export const changePassword = asyncHandler(async (req, res, next) => {
@@ -94,7 +96,7 @@ export const changePassword = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Password changed successfully"));
-  });
+});
 
 const setAuthCookies = (res, tokens) => {
   res.cookie("accessToken", tokens.accessToken, AccessTokenCookieOptions);
@@ -209,12 +211,15 @@ export const loginAdmin = asyncHandler(async (req, res, next) => {
     admin.refreshToken = tokens.refreshToken;
     await admin.save();
 
-    // Fetch hotels created by this admin
-    const createdHotels = await Hotel.find({ createdBy: admin._id })
-      .select(
-        "name hotelId mainLocation contactInfo status rating starRating images"
-      )
-      .lean();
+    // Fetch hotels created by this admin and check subscription status in parallel
+    const [createdHotels, activeSubscription] = await Promise.all([
+      Hotel.find({ createdBy: admin._id })
+        .select(
+          "name hotelId mainLocation contactInfo status rating starRating images"
+        )
+        .lean(),
+      AdminSubscription.findActiveSubscription(admin._id),
+    ]);
 
     // Set cookies
     setAuthCookies(res, tokens);
@@ -233,6 +238,7 @@ export const loginAdmin = asyncHandler(async (req, res, next) => {
             assignedBranches: admin.assignedBranches,
             lastLogin: admin.lastLogin,
           },
+          hasActiveSubscription: !!activeSubscription,
           createdHotels: createdHotels || [],
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
@@ -243,7 +249,7 @@ export const loginAdmin = asyncHandler(async (req, res, next) => {
   } catch (tokenError) {
     return next(new APIError(500, "Token generation failed"));
   }
-  });
+});
 
 // Admin logout
 export const logoutAdmin = asyncHandler(async (req, res) => {
@@ -259,7 +265,7 @@ export const logoutAdmin = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Admin logged out successfully"));
-  });
+});
 
 // Get admin profile
 export const getAdminProfile = asyncHandler(async (req, res, next) => {
@@ -276,7 +282,7 @@ export const getAdminProfile = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, { admin }, "Admin profile retrieved successfully")
     );
-  });
+});
 
 // Register Admin
 export const registerAdmin = asyncHandler(async (req, res, next) => {
@@ -285,12 +291,29 @@ export const registerAdmin = asyncHandler(async (req, res, next) => {
     return next(new APIError(400, error.details[0].message));
   }
 
-  const { name, email, phone, password, profileImage } = req.body;
+  const { name, email, phone, password } = req.body;
 
   // Check if admin with same email already exists
   const existingAdmin = await Admin.findOne({ email });
   if (existingAdmin) {
     return next(new APIError(400, "Admin with this email already exists"));
+  }
+
+  // Handle profile image upload
+  let profileImageUrl = null;
+  if (req.file) {
+    try {
+      const result = await uploadToCloudinary(req.file.path);
+      profileImageUrl = result.secure_url;
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (uploadError) {
+      logger.error("Error uploading profile image:", uploadError);
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    }
   }
 
   // Generate OTP and expiry
@@ -303,7 +326,7 @@ export const registerAdmin = asyncHandler(async (req, res, next) => {
     email,
     phone,
     password,
-    profileImage: profileImage || null,
+    profileImage: profileImageUrl,
     role: "admin",
     status: "active",
     emailVerified: false,
@@ -314,11 +337,7 @@ export const registerAdmin = asyncHandler(async (req, res, next) => {
   await admin.save();
 
   // Send OTP email
-  await sendEmail({
-    to: admin.email,
-    subject: "Verify your admin account",
-    text: `Your OTP for email verification is: ${otp}`,
-  });
+  await sendAdminVerificationOtpEmail(admin.email, otp, admin.name);
 
   res.status(201).json(
     new APIResponse(
@@ -336,7 +355,7 @@ export const registerAdmin = asyncHandler(async (req, res, next) => {
       "Admin created successfully. Please verify your email using the OTP sent to your email before logging in."
     )
   );
-  });
+});
 
 // Forgot password
 export const forgotPassword = asyncHandler(async (req, res, next) => {
@@ -380,7 +399,7 @@ export const forgotPassword = asyncHandler(async (req, res, next) => {
         "If the email exists, a password reset link has been sent"
       )
     );
-  });
+});
 
 // Reset password
 export const resetPassword = asyncHandler(async (req, res, next) => {
@@ -421,7 +440,7 @@ export const resetPassword = asyncHandler(async (req, res, next) => {
         "Password reset successfully. All existing sessions have been invalidated for security. Please log in again with your new password."
       )
     );
-  });
+});
 
 // Verify email by OTP
 export const verifyEmail = asyncHandler(async (req, res, next) => {
@@ -466,7 +485,7 @@ export const verifyEmail = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Email verified successfully"));
-  });
+});
 
 // Resend email verification OTP
 export const resendVerificationOtp = asyncHandler(async (req, res, next) => {
@@ -514,11 +533,7 @@ export const resendVerificationOtp = asyncHandler(async (req, res, next) => {
   await admin.save();
 
   // Send OTP email
-  await sendEmail({
-    to: admin.email,
-    subject: "Verify your admin account - New OTP",
-    text: `Your new OTP for email verification is: ${otp}. This OTP will expire in 10 minutes.`,
-  });
+  await sendAdminVerificationOtpEmail(admin.email, otp, admin.name);
 
   res
     .status(200)
@@ -529,18 +544,11 @@ export const resendVerificationOtp = asyncHandler(async (req, res, next) => {
         "New verification OTP has been sent to your email address"
       )
     );
-  });
+});
 
 // Get all admins (only for super_admin)
 export const getAllAdmins = asyncHandler(async (req, res) => {
-  const {
-    page = 1,
-    limit = 10,
-    role,
-    status,
-    department,
-    search,
-  } = req.query;
+  const { page = 1, limit = 10, role, status, department, search } = req.query;
 
   const query = {};
 
@@ -583,7 +591,7 @@ export const getAllAdmins = asyncHandler(async (req, res) => {
       "Admins retrieved successfully"
     )
   );
-  });
+});
 
 // Update admin (only for super_admin)
 export const updateAdmin = asyncHandler(async (req, res, next) => {
@@ -622,7 +630,7 @@ export const updateAdmin = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, { admin }, "Admin updated successfully"));
-  });
+});
 
 // Delete admin (only for super_admin)
 export const deleteAdmin = asyncHandler(async (req, res, next) => {
@@ -641,7 +649,7 @@ export const deleteAdmin = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Admin deactivated successfully"));
-  });
+});
 
 // Bootstrap Super Admin - Only works if no Super Admin exists
 export const bootstrapSuperAdmin = async (req, res, next) => {

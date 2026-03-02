@@ -727,6 +727,27 @@ export const sendAdminPasswordResetEmail = async (
   });
 };
 
+// Send email verification OTP for admin accounts
+export const sendAdminVerificationOtpEmail = async (to, otp, adminName) => {
+  await getTransporter().sendMail({
+    from: process.env.EMAIL_USER,
+    to,
+    subject: "Verify Your Admin Account - RMS",
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Email Verification</h2>
+        <p>Hello ${adminName},</p>
+        <p>Thank you for registering your admin account. Please use the OTP below to verify your email address:</p>
+        <h1 style="background-color: #f0f0f0; padding: 20px; text-align: center; font-size: 32px; letter-spacing: 5px; margin: 20px 0;">${otp}</h1>
+        <p><strong>This OTP is valid for 10 minutes.</strong></p>
+        <p>If you didn't create an admin account, please ignore this email.</p>
+        <hr style="margin: 30px 0;">
+        <p style="color: #666; font-size: 12px;">Hotel Management System - Admin Panel</p>
+      </div>
+    `,
+  });
+};
+
 // Send welcome email to newly created manager
 export const sendManagerWelcomeEmail = async (
   managerData,
