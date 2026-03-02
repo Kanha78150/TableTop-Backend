@@ -66,6 +66,7 @@ export const validateBranch = (data) => {
 export const validateUpdateBranch = (data) => {
   const schema = Joi.object({
     name: Joi.string().min(1).max(100).optional(),
+    hotel: Joi.string().optional(), // ObjectId as string - allow updating hotel
     location: Joi.object({
       address: Joi.string().optional(),
       city: Joi.string().optional(),
@@ -140,4 +141,3 @@ export const validateBranchLocationSearch = (data) => {
   });
   return schema.validate(data);
 };
-

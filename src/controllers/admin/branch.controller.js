@@ -117,7 +117,7 @@ export const createBranch = asyncHandler(async (req, res, next) => {
   res
     .status(201)
     .json(new APIResponse(201, branch, "Branch created successfully"));
-  });
+});
 
 // Get all branches with optional filtering (admin-specific)
 export const getAllBranches = asyncHandler(async (req, res) => {
@@ -208,7 +208,7 @@ export const getAllBranches = asyncHandler(async (req, res) => {
       "Branches retrieved successfully"
     )
   );
-  });
+});
 
 // Get branch by ID
 // Get branch by ID (admin-specific)
@@ -238,7 +238,7 @@ export const getBranchById = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, branchWithStatus, "Branch retrieved successfully")
     );
-  });
+});
 
 // Update branch (admin-specific)
 export const updateBranch = asyncHandler(async (req, res, next) => {
@@ -252,6 +252,34 @@ export const updateBranch = asyncHandler(async (req, res, next) => {
   const { error } = validateUpdateBranch(branchData);
   if (error) {
     return next(new APIError(400, error.details[0].message));
+  }
+
+  // Validate hotel if provided
+  if (branchData.hotel) {
+    let hotel;
+    const hotelIdentifier = branchData.hotel;
+
+    // Try to find by MongoDB ObjectId first
+    if (hotelIdentifier.match(/^[0-9a-fA-F]{24}$/)) {
+      const hotelQuery = { _id: hotelIdentifier };
+      if (req.admin.role !== "super_admin") {
+        hotelQuery.createdBy = req.admin._id;
+      }
+      hotel = await Hotel.findOne(hotelQuery);
+    }
+
+    // If not found by ObjectId, try to find by auto-generated hotelId
+    if (!hotel) {
+      const hotelQuery = { hotelId: hotelIdentifier };
+      if (req.admin.role !== "super_admin") {
+        hotelQuery.createdBy = req.admin._id;
+      }
+      hotel = await Hotel.findOne(hotelQuery);
+    }
+
+    if (!hotel) {
+      return next(new APIError(404, "Hotel not found or access denied"));
+    }
   }
 
   // Handle image uploads if present
@@ -276,9 +304,7 @@ export const updateBranch = asyncHandler(async (req, res, next) => {
     }
 
     if (uploadedImages.length > 0) {
-      const currentBranch = await Branch.findOne({ branchId }).select(
-        "images"
-      );
+      const currentBranch = await Branch.findOne({ branchId }).select("images");
       const dbImages = currentBranch?.images || [];
       const baseImages =
         branchData.images ||
@@ -308,7 +334,7 @@ export const updateBranch = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, branch, "Branch updated successfully"));
-  });
+});
 
 // Delete branch (soft delete by changing status) (admin-specific)
 export const deleteBranch = asyncHandler(async (req, res, next) => {
@@ -332,8 +358,7 @@ export const deleteBranch = asyncHandler(async (req, res, next) => {
     // Check for managers in this branch
     req.app
       .get("models")
-      ?.Manager?.countDocuments({ branch: branch._id, status: "active" }) ||
-      0,
+      ?.Manager?.countDocuments({ branch: branch._id, status: "active" }) || 0,
     // Check for staff in this branch
     req.app
       .get("models")
@@ -389,7 +414,7 @@ export const deleteBranch = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, null, "Branch permanently deleted from database")
     );
-  });
+});
 
 // Deactivate branch (set status to inactive) (admin-specific)
 export const deactivateBranch = asyncHandler(async (req, res, next) => {
@@ -434,7 +459,7 @@ export const deactivateBranch = asyncHandler(async (req, res, next) => {
         "Branch deactivated successfully. It will appear in search results but marked as no services provided."
       )
     );
-  });
+});
 
 // Reactivate branch (set status to active) (admin-specific)
 export const reactivateBranch = asyncHandler(async (req, res, next) => {
@@ -479,7 +504,7 @@ export const reactivateBranch = asyncHandler(async (req, res, next) => {
         "Branch reactivated successfully. Services are now available."
       )
     );
-  });
+});
 
 // Search branches by location (admin-specific)
 export const searchBranchesByLocation = asyncHandler(async (req, res, next) => {
@@ -580,7 +605,7 @@ export const searchBranchesByLocation = asyncHandler(async (req, res, next) => {
       "Branches found in the specified location"
     )
   );
-  });
+});
 
 // Get branches of a specific hotel
 export const getBranchesByHotel = asyncHandler(async (req, res, next) => {
@@ -636,4 +661,4 @@ export const getBranchesByHotel = asyncHandler(async (req, res, next) => {
       "Hotel branches retrieved successfully"
     )
   );
-  });
+});
