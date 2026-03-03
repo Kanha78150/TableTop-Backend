@@ -14,7 +14,6 @@ import {
 import { validateFoodItemData } from "../../validators/foodItem.validators.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
-
 // Food Category Management
 export const getAllCategories = asyncHandler(async (req, res) => {
   const {
@@ -72,7 +71,7 @@ export const getAllCategories = asyncHandler(async (req, res) => {
       "Categories retrieved successfully"
     )
   );
-  });
+});
 
 export const createCategory = asyncHandler(async (req, res, next) => {
   const {
@@ -108,15 +107,10 @@ export const createCategory = asyncHandler(async (req, res, next) => {
     }
 
     // Resolve branch ID
-    if (
-      typeof branchId === "string" &&
-      !branchId.match(/^[0-9a-fA-F]{24}$/)
-    ) {
+    if (typeof branchId === "string" && !branchId.match(/^[0-9a-fA-F]{24}$/)) {
       resolvedBranchId = await resolveBranchId(branchId, resolvedHotelId);
       if (!resolvedBranchId) {
-        return next(
-          new APIError(400, `Branch not found with ID: ${branchId}`)
-        );
+        return next(new APIError(400, `Branch not found with ID: ${branchId}`));
       }
     } else {
       resolvedBranchId = branchId;
@@ -140,10 +134,7 @@ export const createCategory = asyncHandler(async (req, res, next) => {
   });
   if (existingCategory) {
     return next(
-      new APIError(
-        400,
-        "Category with this name already exists in this branch"
-      )
+      new APIError(400, "Category with this name already exists in this branch")
     );
   }
 
@@ -157,6 +148,28 @@ export const createCategory = asyncHandler(async (req, res, next) => {
     createdBy: req.admin._id, // Set the creating admin
     ...otherFields,
   };
+
+  // Parse JSON string fields from FormData
+  if (
+    categoryData.availableTimings &&
+    typeof categoryData.availableTimings === "string"
+  ) {
+    try {
+      categoryData.availableTimings = JSON.parse(categoryData.availableTimings);
+    } catch (error) {
+      console.error("Error parsing availableTimings:", error);
+      categoryData.availableTimings = {};
+    }
+  }
+
+  if (categoryData.tags && typeof categoryData.tags === "string") {
+    try {
+      categoryData.tags = JSON.parse(categoryData.tags);
+    } catch (error) {
+      console.error("Error parsing tags:", error);
+      categoryData.tags = [];
+    }
+  }
 
   // Handle image upload
   if (req.file) {
@@ -191,7 +204,7 @@ export const createCategory = asyncHandler(async (req, res, next) => {
         "Category created successfully"
       )
     );
-  });
+});
 
 export const getCategoryById = asyncHandler(async (req, res, next) => {
   const { categoryId } = req.params;
@@ -220,7 +233,7 @@ export const getCategoryById = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, { category }, "Category retrieved successfully")
     );
-  });
+});
 
 export const updateCategory = asyncHandler(async (req, res, next) => {
   const { categoryId } = req.params;
@@ -240,6 +253,38 @@ export const updateCategory = asyncHandler(async (req, res, next) => {
     !req.admin.canAccessBranch(category.branch._id)
   ) {
     return next(new APIError(403, "You don't have access to this category"));
+  }
+
+  // Map hotelId to hotel and branchId to branch fields
+  if (updates.hotelId) {
+    updates.hotel = updates.hotelId;
+    delete updates.hotelId;
+  }
+  if (updates.branchId) {
+    updates.branch = updates.branchId;
+    delete updates.branchId;
+  }
+
+  // Parse JSON string fields from FormData
+  if (
+    updates.availableTimings &&
+    typeof updates.availableTimings === "string"
+  ) {
+    try {
+      updates.availableTimings = JSON.parse(updates.availableTimings);
+    } catch (error) {
+      console.error("Error parsing availableTimings:", error);
+      updates.availableTimings = {};
+    }
+  }
+
+  if (updates.tags && typeof updates.tags === "string") {
+    try {
+      updates.tags = JSON.parse(updates.tags);
+    } catch (error) {
+      console.error("Error parsing tags:", error);
+      updates.tags = [];
+    }
   }
 
   // Handle image upload
@@ -262,7 +307,9 @@ export const updateCategory = asyncHandler(async (req, res, next) => {
     categoryId,
     updates,
     { new: true, runValidators: true }
-  ).populate("branch", "name branchId location");
+  )
+    .populate("hotel", "name hotelId location")
+    .populate("branch", "name branchId location");
 
   res
     .status(200)
@@ -273,7 +320,7 @@ export const updateCategory = asyncHandler(async (req, res, next) => {
         "Category updated successfully"
       )
     );
-  });
+});
 
 export const deleteCategory = asyncHandler(async (req, res, next) => {
   const { categoryId } = req.params;
@@ -307,7 +354,7 @@ export const deleteCategory = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Category deleted successfully"));
-  });
+});
 
 // Food Item Management
 export const getAllFoodItems = asyncHandler(async (req, res) => {
@@ -379,11 +426,71 @@ export const getAllFoodItems = asyncHandler(async (req, res) => {
       "Food items retrieved successfully"
     )
   );
-  });
+});
 
 export const createFoodItem = asyncHandler(async (req, res, next) => {
+  // Parse JSON stringified fields from FormData
+  const bodyData = { ...req.body };
+
+  // Parse complex objects and arrays that FormData stringifies
+  const jsonFields = [
+    "ingredients",
+    "allergens",
+    "tags",
+    "nutritionalInfo",
+    "dietaryInfo",
+    "availableTimings",
+  ];
+  for (const field of jsonFields) {
+    if (bodyData[field] && typeof bodyData[field] === "string") {
+      try {
+        bodyData[field] = JSON.parse(bodyData[field]);
+      } catch (error) {
+        console.error(`Failed to parse ${field}:`, error);
+        // Keep as string if parse fails - validator will catch it
+      }
+    }
+  }
+
+  // Convert string numbers to actual numbers
+  const numericFields = [
+    "price",
+    "discountPrice",
+    "preparationTime",
+    "displayOrder",
+    "quantityAvailable",
+    "gstRate",
+  ];
+  for (const field of numericFields) {
+    if (bodyData[field] !== undefined && typeof bodyData[field] === "string") {
+      bodyData[field] = parseFloat(bodyData[field]) || 0;
+    }
+  }
+
+  // Convert string booleans to actual booleans
+  const booleanFields = [
+    "isAvailable",
+    "isBestSeller",
+    "isRecommended",
+    "isLimitedQuantity",
+  ];
+  for (const field of booleanFields) {
+    if (bodyData[field] !== undefined) {
+      if (typeof bodyData[field] === "string") {
+        bodyData[field] = bodyData[field] === "true" || bodyData[field] === "1";
+      } else if (typeof bodyData[field] === "number") {
+        bodyData[field] = !!bodyData[field];
+      }
+    }
+  }
+
+  // If isLimitedQuantity is false, clear quantityAvailable
+  if (bodyData.isLimitedQuantity === false && bodyData.quantityAvailable) {
+    bodyData.quantityAvailable = 0;
+  }
+
   // Validate food item data including GST rate
-  const validatedData = validateFoodItemData(req.body, false);
+  const validatedData = validateFoodItemData(bodyData, false);
 
   const {
     name,
@@ -439,9 +546,7 @@ export const createFoodItem = asyncHandler(async (req, res, next) => {
           : hotelId;
       resolvedBranchId = await resolveBranchId(branchId, resolvedHotelId);
       if (!resolvedBranchId) {
-        return next(
-          new APIError(400, `Branch not found with ID: ${branchId}`)
-        );
+        return next(new APIError(400, `Branch not found with ID: ${branchId}`));
       }
     } catch (error) {
       return next(
@@ -517,7 +622,7 @@ export const createFoodItem = asyncHandler(async (req, res, next) => {
         "Food item created successfully"
       )
     );
-  });
+});
 
 export const getFoodItemById = asyncHandler(async (req, res, next) => {
   const { itemId } = req.params;
@@ -547,13 +652,73 @@ export const getFoodItemById = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, { foodItem }, "Food item retrieved successfully")
     );
-  });
+});
 
 export const updateFoodItem = asyncHandler(async (req, res, next) => {
   const { itemId } = req.params;
 
+  // Parse JSON stringified fields from FormData
+  const bodyData = { ...req.body };
+
+  // Parse complex objects and arrays that FormData stringifies
+  const jsonFields = [
+    "ingredients",
+    "allergens",
+    "tags",
+    "nutritionalInfo",
+    "dietaryInfo",
+    "availableTimings",
+  ];
+  for (const field of jsonFields) {
+    if (bodyData[field] && typeof bodyData[field] === "string") {
+      try {
+        bodyData[field] = JSON.parse(bodyData[field]);
+      } catch (error) {
+        console.error(`Failed to parse ${field}:`, error);
+        // Keep as string if parse fails - validator will catch it
+      }
+    }
+  }
+
+  // Convert string numbers to actual numbers
+  const numericFields = [
+    "price",
+    "discountPrice",
+    "preparationTime",
+    "displayOrder",
+    "quantityAvailable",
+    "gstRate",
+  ];
+  for (const field of numericFields) {
+    if (bodyData[field] !== undefined && typeof bodyData[field] === "string") {
+      bodyData[field] = parseFloat(bodyData[field]) || 0;
+    }
+  }
+
+  // Convert string booleans to actual booleans
+  const booleanFields = [
+    "isAvailable",
+    "isBestSeller",
+    "isRecommended",
+    "isLimitedQuantity",
+  ];
+  for (const field of booleanFields) {
+    if (bodyData[field] !== undefined) {
+      if (typeof bodyData[field] === "string") {
+        bodyData[field] = bodyData[field] === "true" || bodyData[field] === "1";
+      } else if (typeof bodyData[field] === "number") {
+        bodyData[field] = !!bodyData[field];
+      }
+    }
+  }
+
+  // If isLimitedQuantity is false, clear quantityAvailable
+  if (bodyData.isLimitedQuantity === false && bodyData.quantityAvailable) {
+    bodyData.quantityAvailable = 0;
+  }
+
   // Validate update data including GST rate if provided
-  const validatedData = validateFoodItemData(req.body, true);
+  const validatedData = validateFoodItemData(bodyData, true);
   const updates = validatedData;
 
   const foodItem = await FoodItem.findOne({
@@ -633,7 +798,7 @@ export const updateFoodItem = asyncHandler(async (req, res, next) => {
         "Food item updated successfully"
       )
     );
-  });
+});
 
 export const deleteFoodItem = asyncHandler(async (req, res, next) => {
   const { itemId } = req.params;
@@ -659,98 +824,102 @@ export const deleteFoodItem = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Food item deleted successfully"));
-  });
+});
 
 // Update single food item availability
-export const updateSingleFoodItemAvailability = asyncHandler(async (req, res, next) => {
-  const { itemId } = req.params;
-  const { isAvailable, quantityAvailable } = req.body;
+export const updateSingleFoodItemAvailability = asyncHandler(
+  async (req, res, next) => {
+    const { itemId } = req.params;
+    const { isAvailable, quantityAvailable } = req.body;
 
-  // Validate that isAvailable is provided
-  if (isAvailable === undefined) {
-    return next(new APIError(400, "isAvailable field is required"));
+    // Validate that isAvailable is provided
+    if (isAvailable === undefined) {
+      return next(new APIError(400, "isAvailable field is required"));
+    }
+
+    // Build query based on admin's ownership
+    let query = {
+      _id: itemId,
+      createdBy: req.admin._id,
+    };
+
+    // Branch admin can only update items in their assigned branches
+    if (req.admin.role === "branch_admin") {
+      query.branch = { $in: req.admin.assignedBranches };
+    }
+
+    const menuItem = await FoodItem.findOne(query);
+
+    if (!menuItem) {
+      return next(
+        new APIError(
+          404,
+          "Menu item not found or you don't have permission to update it"
+        )
+      );
+    }
+
+    // Build update object
+    const updates = { isAvailable };
+    if (quantityAvailable !== undefined) {
+      updates.quantityAvailable = quantityAvailable;
+    }
+
+    const updatedItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
+      new: true,
+      runValidators: true,
+    })
+      .populate("category", "name type")
+      .populate("branch", "name branchId location")
+      .populate("hotel", "name");
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { menuItem: updatedItem },
+          "Menu item availability updated successfully"
+        )
+      );
   }
-
-  // Build query based on admin's ownership
-  let query = {
-    _id: itemId,
-    createdBy: req.admin._id,
-  };
-
-  // Branch admin can only update items in their assigned branches
-  if (req.admin.role === "branch_admin") {
-    query.branch = { $in: req.admin.assignedBranches };
-  }
-
-  const menuItem = await FoodItem.findOne(query);
-
-  if (!menuItem) {
-    return next(
-      new APIError(
-        404,
-        "Menu item not found or you don't have permission to update it"
-      )
-    );
-  }
-
-  // Build update object
-  const updates = { isAvailable };
-  if (quantityAvailable !== undefined) {
-    updates.quantityAvailable = quantityAvailable;
-  }
-
-  const updatedItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
-    new: true,
-    runValidators: true,
-  })
-    .populate("category", "name type")
-    .populate("branch", "name branchId location")
-    .populate("hotel", "name");
-
-  res
-    .status(200)
-    .json(
-      new APIResponse(
-        200,
-        { menuItem: updatedItem },
-        "Menu item availability updated successfully"
-      )
-    );
-  });
+);
 
 // Bulk update food item availability
-export const updateFoodItemAvailability = asyncHandler(async (req, res, next) => {
-  const { itemIds, isAvailable } = req.body;
+export const updateFoodItemAvailability = asyncHandler(
+  async (req, res, next) => {
+    const { itemIds, isAvailable } = req.body;
 
-  if (!Array.isArray(itemIds) || itemIds.length === 0) {
-    return next(new APIError(400, "Item IDs array is required"));
+    if (!Array.isArray(itemIds) || itemIds.length === 0) {
+      return next(new APIError(400, "Item IDs array is required"));
+    }
+
+    // Filter items based on admin's ownership and branch access
+    let query = {
+      _id: { $in: itemIds },
+      createdBy: req.admin._id,
+    };
+    if (req.admin.role === "branch_admin") {
+      query.branch = { $in: req.admin.assignedBranches };
+    }
+
+    const result = await FoodItem.updateMany(
+      query,
+      { isAvailable },
+      { runValidators: true }
+    );
+
+    res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          modifiedCount: result.modifiedCount,
+        },
+        `${result.modifiedCount} food items updated successfully`
+      )
+    );
   }
-
-  // Filter items based on admin's ownership and branch access
-  let query = {
-    _id: { $in: itemIds },
-    createdBy: req.admin._id,
-  };
-  if (req.admin.role === "branch_admin") {
-    query.branch = { $in: req.admin.assignedBranches };
-  }
-
-  const result = await FoodItem.updateMany(
-    query,
-    { isAvailable },
-    { runValidators: true }
-  );
-
-  res.status(200).json(
-    new APIResponse(
-      200,
-      {
-        modifiedCount: result.modifiedCount,
-      },
-      `${result.modifiedCount} food items updated successfully`
-    )
-  );
-  });
+);
 
 // Offers Management
 export const getAllOffers = asyncHandler(async (req, res) => {
@@ -823,7 +992,7 @@ export const getAllOffers = asyncHandler(async (req, res) => {
       "Offers retrieved successfully"
     )
   );
-  });
+});
 
 export const createOffer = asyncHandler(async (req, res, next) => {
   const {
@@ -899,7 +1068,7 @@ export const createOffer = asyncHandler(async (req, res, next) => {
         "Offer created successfully"
       )
     );
-  });
+});
 
 export const updateOffer = asyncHandler(async (req, res, next) => {
   const { offerId } = req.params;
@@ -942,7 +1111,7 @@ export const updateOffer = asyncHandler(async (req, res, next) => {
         "Offer updated successfully"
       )
     );
-  });
+});
 
 export const deleteOffer = asyncHandler(async (req, res, next) => {
   const { offerId } = req.params;
@@ -970,7 +1139,7 @@ export const deleteOffer = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Offer deleted successfully"));
-  });
+});
 
 /**
  * Bulk update GST rates for food items by category
@@ -1105,4 +1274,4 @@ export const bulkUpdateGstRate = asyncHandler(async (req, res, next) => {
       `Successfully updated GST rate to ${gstRate}% for ${updatedCount} food items`
     )
   );
-  });
+});
