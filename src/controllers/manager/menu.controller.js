@@ -6,6 +6,13 @@ import mongoose from "mongoose";
 import { validateFoodItemData } from "../../validators/foodItem.validators.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
+// Helper: build a branch filter that matches both ObjectId and string branchId
+const branchFilter = (manager) => {
+  const filters = [{ branch: manager.branch._id }];
+  if (manager.branch.branchId)
+    filters.push({ branch: manager.branch.branchId });
+  return { $or: filters };
+};
 
 // READ-ONLY OPERATIONS FOR MANAGERS
 // Managers can only view food categories and items, not create/update/delete them
@@ -20,9 +27,7 @@ export const getFoodCategories = asyncHandler(async (req, res) => {
     sortOrder = "asc",
   } = req.query;
 
-  const query = {
-    branch: req.manager.branch._id, // Manager can only see their branch categories
-  };
+  const query = { ...branchFilter(req.manager) };
 
   if (search) {
     query.name = new RegExp(search, "i");
@@ -56,7 +61,7 @@ export const getFoodCategories = asyncHandler(async (req, res) => {
       "Categories retrieved successfully"
     )
   );
-  });
+});
 
 // Get all food items for manager's branch
 export const getMenuItems = asyncHandler(async (req, res) => {
@@ -71,14 +76,16 @@ export const getMenuItems = asyncHandler(async (req, res) => {
     sortOrder = "asc",
   } = req.query;
 
-  const query = {
-    branch: req.manager.branch._id, // Manager can only see their branch items
-  };
+  const query = { ...branchFilter(req.manager) };
 
   if (search && search.trim()) {
-    query.$or = [
-      { name: new RegExp(search.trim(), "i") },
-      { description: new RegExp(search.trim(), "i") },
+    query.$and = [
+      {
+        $or: [
+          { name: new RegExp(search.trim(), "i") },
+          { description: new RegExp(search.trim(), "i") },
+        ],
+      },
     ];
   }
 
@@ -107,11 +114,7 @@ export const getMenuItems = asyncHandler(async (req, res) => {
     }
   }
 
-  if (
-    isAvailable !== undefined &&
-    isAvailable !== null &&
-    isAvailable !== ""
-  ) {
+  if (isAvailable !== undefined && isAvailable !== null && isAvailable !== "") {
     // Handle both boolean and string values
     query.isAvailable = isAvailable === true || isAvailable === "true";
   }
@@ -149,73 +152,77 @@ export const getMenuItems = asyncHandler(async (req, res) => {
       "Menu items retrieved successfully"
     )
   );
-  });
+});
 
 // Update menu item availability (only thing managers can modify)
-export const updateMenuItemAvailability = asyncHandler(async (req, res, next) => {
-  const { itemId } = req.params;
-  const { isAvailable, quantityAvailable } = req.body;
+export const updateMenuItemAvailability = asyncHandler(
+  async (req, res, next) => {
+    const { itemId } = req.params;
+    const { isAvailable, quantityAvailable } = req.body;
 
-  const menuItem = await FoodItem.findOne({
-    _id: itemId,
-    branch: req.manager.branch._id, // Ensure item belongs to manager's branch
-  });
+    const menuItem = await FoodItem.findOne({
+      _id: itemId,
+      ...branchFilter(req.manager),
+    });
 
-  if (!menuItem) {
-    return next(new APIError(404, "Menu item not found in your branch"));
+    if (!menuItem) {
+      return next(new APIError(404, "Menu item not found in your branch"));
+    }
+
+    const updates = { isAvailable };
+    if (quantityAvailable !== undefined) {
+      updates.quantityAvailable = quantityAvailable;
+    }
+
+    const updatedItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
+      new: true,
+      runValidators: true,
+    })
+      .populate("category", "name type")
+      .populate("branch", "name branchId location");
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { menuItem: updatedItem },
+          "Menu item availability updated successfully"
+        )
+      );
   }
-
-  const updates = { isAvailable };
-  if (quantityAvailable !== undefined) {
-    updates.quantityAvailable = quantityAvailable;
-  }
-
-  const updatedItem = await FoodItem.findByIdAndUpdate(itemId, updates, {
-    new: true,
-    runValidators: true,
-  })
-    .populate("category", "name type")
-    .populate("branch", "name branchId location");
-
-  res
-    .status(200)
-    .json(
-      new APIResponse(
-        200,
-        { menuItem: updatedItem },
-        "Menu item availability updated successfully"
-      )
-    );
-  });
+);
 
 // Bulk update menu item availability
-export const updateBulkMenuItemAvailability = asyncHandler(async (req, res, next) => {
-  const { itemIds, isAvailable } = req.body;
+export const updateBulkMenuItemAvailability = asyncHandler(
+  async (req, res, next) => {
+    const { itemIds, isAvailable } = req.body;
 
-  if (!Array.isArray(itemIds) || itemIds.length === 0) {
-    return next(new APIError(400, "Item IDs array is required"));
-  }
+    if (!Array.isArray(itemIds) || itemIds.length === 0) {
+      return next(new APIError(400, "Item IDs array is required"));
+    }
 
-  // Only update items in manager's branch
-  const result = await FoodItem.updateMany(
-    {
-      _id: { $in: itemIds },
-      branch: req.manager.branch._id,
-    },
-    { isAvailable },
-    { runValidators: true }
-  );
-
-  res
-    .status(200)
-    .json(
-      new APIResponse(
-        200,
-        { modifiedCount: result.modifiedCount },
-        `${result.modifiedCount} menu items updated successfully`
-      )
+    // Only update items in manager's branch
+    const result = await FoodItem.updateMany(
+      {
+        _id: { $in: itemIds },
+        ...branchFilter(req.manager),
+      },
+      { isAvailable },
+      { runValidators: true }
     );
-  });
+
+    res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          { modifiedCount: result.modifiedCount },
+          `${result.modifiedCount} menu items updated successfully`
+        )
+      );
+  }
+);
 
 // Get single menu item details
 export const getMenuItem = asyncHandler(async (req, res, next) => {
@@ -223,7 +230,7 @@ export const getMenuItem = asyncHandler(async (req, res, next) => {
 
   const menuItem = await FoodItem.findOne({
     _id: itemId,
-    branch: req.manager.branch._id,
+    ...branchFilter(req.manager),
   })
     .populate("category", "name type description")
     .populate("branch", "name branchId location")
@@ -238,7 +245,7 @@ export const getMenuItem = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, { menuItem }, "Menu item retrieved successfully")
     );
-  });
+});
 
 // Get category details
 export const getFoodCategory = asyncHandler(async (req, res, next) => {
@@ -246,7 +253,7 @@ export const getFoodCategory = asyncHandler(async (req, res, next) => {
 
   const category = await FoodCategory.findOne({
     _id: categoryId,
-    branch: req.manager.branch._id,
+    ...branchFilter(req.manager),
   })
     .populate("branch", "name branchId location")
     .populate("hotel", "name");
@@ -258,7 +265,7 @@ export const getFoodCategory = asyncHandler(async (req, res, next) => {
   // Get item count for this category
   const itemCount = await FoodItem.countDocuments({
     category: categoryId,
-    branch: req.manager.branch._id,
+    ...branchFilter(req.manager),
   });
 
   res
@@ -270,7 +277,7 @@ export const getFoodCategory = asyncHandler(async (req, res, next) => {
         "Category retrieved successfully"
       )
     );
-  });
+});
 
 // DEPRECATED FUNCTIONS - These should not be used by managers anymore
 // Keeping them for backward compatibility but they will return errors
@@ -340,7 +347,7 @@ export const bulkUpdateGstRate = asyncHandler(async (req, res, next) => {
   // Build query to find matching food items in manager's branch
   const query = {
     category: categoryId,
-    branch: req.manager.branch._id, // Manager can only update their branch items
+    ...branchFilter(req.manager), // Manager can only update their branch items
   };
 
   if (hotelId) {
@@ -407,4 +414,4 @@ export const bulkUpdateGstRate = asyncHandler(async (req, res, next) => {
       `Successfully updated GST rate to ${gstRate}% for ${updatedCount} food items`
     )
   );
-  });
+});
