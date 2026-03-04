@@ -142,8 +142,8 @@ export const createCategory = asyncHandler(async (req, res, next) => {
   const categoryData = {
     name,
     description,
-    hotel: hotelId, // Map hotelId to hotel field
-    branch: branchId, // Map branchId to branch field
+    hotel: resolvedHotelId, // Use resolved ObjectId, not raw string
+    branch: resolvedBranchId, // Use resolved ObjectId, not raw string
     isActive,
     createdBy: req.admin._id, // Set the creating admin
     ...otherFields,
@@ -255,13 +255,43 @@ export const updateCategory = asyncHandler(async (req, res, next) => {
     return next(new APIError(403, "You don't have access to this category"));
   }
 
-  // Map hotelId to hotel and branchId to branch fields
+  // Resolve hotelId and branchId to ObjectIds before storing
   if (updates.hotelId) {
-    updates.hotel = updates.hotelId;
+    if (
+      typeof updates.hotelId === "string" &&
+      !updates.hotelId.match(/^[0-9a-fA-F]{24}$/)
+    ) {
+      const resolvedHotelId = await resolveHotelId(updates.hotelId);
+      if (!resolvedHotelId) {
+        return next(
+          new APIError(400, `Hotel not found with ID: ${updates.hotelId}`)
+        );
+      }
+      updates.hotel = resolvedHotelId;
+    } else {
+      updates.hotel = updates.hotelId;
+    }
     delete updates.hotelId;
   }
   if (updates.branchId) {
-    updates.branch = updates.branchId;
+    const hotelRef = updates.hotel || category.hotel;
+    if (
+      typeof updates.branchId === "string" &&
+      !updates.branchId.match(/^[0-9a-fA-F]{24}$/)
+    ) {
+      const resolvedBranchId = await resolveBranchId(
+        updates.branchId,
+        hotelRef
+      );
+      if (!resolvedBranchId) {
+        return next(
+          new APIError(400, `Branch not found with ID: ${updates.branchId}`)
+        );
+      }
+      updates.branch = resolvedBranchId;
+    } else {
+      updates.branch = updates.branchId;
+    }
     delete updates.branchId;
   }
 
@@ -570,14 +600,25 @@ export const createFoodItem = asyncHandler(async (req, res, next) => {
     );
   }
 
+  // Resolve hotelId to ObjectId if needed
+  let resolvedHotelId;
+  if (typeof hotelId === "string" && !hotelId.match(/^[0-9a-fA-F]{24}$/)) {
+    resolvedHotelId = await resolveHotelId(hotelId);
+    if (!resolvedHotelId) {
+      return next(new APIError(400, `Hotel not found with ID: ${hotelId}`));
+    }
+  } else {
+    resolvedHotelId = hotelId;
+  }
+
   const foodItem = new FoodItem({
     name,
     description,
     price,
     foodType,
     category: categoryId,
-    hotel: hotelId,
-    branch: branchId,
+    hotel: resolvedHotelId, // Use resolved ObjectId, not raw string
+    branch: resolvedBranchId, // Use resolved ObjectId, not raw string
     isAvailable,
     preparationTime,
     ingredients,
