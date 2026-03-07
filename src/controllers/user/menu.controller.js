@@ -1,7 +1,13 @@
 import userMenuService from "../../services/userMenu.service.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
-import Joi from "joi";
+import {
+  getCategoriesSchema,
+  getFoodItemsSchema,
+  getItemsByCategorySchema,
+  getMenuForLocationSchema,
+  getCategoriesForScannedHotelSchema,
+} from "../../validators/userMenu.validators.js";
 
 class UserMenuController {
   /**
@@ -21,20 +27,7 @@ class UserMenuController {
       } = req.query;
 
       // Validate query parameters
-      const querySchema = Joi.object({
-        page: Joi.number().integer().min(1).default(1),
-        limit: Joi.number().integer().min(1).max(50).default(20),
-        sortBy: Joi.string()
-          .valid("name", "displayOrder", "createdAt")
-          .default("displayOrder"),
-        sortOrder: Joi.string().valid("asc", "desc").default("asc"),
-        hotel: Joi.string().optional(),
-        branch: Joi.string().optional(),
-        search: Joi.string().optional(),
-        type: Joi.string().valid("veg", "non-veg", "both").optional(),
-      });
-
-      const { error, value } = querySchema.validate({
+      const { error, value } = getCategoriesSchema.validate({
         page: parseInt(page),
         limit: parseInt(limit),
         sortBy,
@@ -120,30 +113,7 @@ class UserMenuController {
       } = req.query;
 
       // Validate query parameters
-      const querySchema = Joi.object({
-        page: Joi.number().integer().min(1).default(1),
-        limit: Joi.number().integer().min(1).max(50).default(20),
-        sortBy: Joi.string()
-          .valid("name", "price", "displayOrder", "averageRating", "createdAt")
-          .default("displayOrder"),
-        sortOrder: Joi.string().valid("asc", "desc").default("asc"),
-        hotel: Joi.string().optional(),
-        branch: Joi.string().optional(),
-        category: Joi.string().optional(),
-        foodType: Joi.string()
-          .valid("veg", "non-veg", "vegan", "jain")
-          .optional(),
-        search: Joi.string().optional(),
-        minPrice: Joi.number().min(0).optional(),
-        maxPrice: Joi.number().min(0).optional(),
-        isRecommended: Joi.boolean().optional(),
-        isBestSeller: Joi.boolean().optional(),
-        spiceLevel: Joi.string()
-          .valid("mild", "medium", "hot", "extra-hot", "none")
-          .optional(),
-      });
-
-      const { error, value } = querySchema.validate({
+      const { error, value } = getFoodItemsSchema.validate({
         page: parseInt(page),
         limit: parseInt(limit),
         sortBy,
@@ -169,6 +139,8 @@ class UserMenuController {
       const {
         page: validPage,
         limit: validLimit,
+        sortBy: validSortBy,
+        sortOrder: validSortOrder,
         minPrice: min,
         maxPrice: max,
         ...otherParams
@@ -177,11 +149,11 @@ class UserMenuController {
       const pagination = {
         page: validPage,
         limit: validLimit,
-        sortBy,
-        sortOrder,
+        sortBy: validSortBy,
+        sortOrder: validSortOrder,
       };
 
-      // Add filters
+      // Add filters (exclude pagination keys)
       Object.keys(otherParams).forEach((key) => {
         if (otherParams[key] !== undefined) {
           filters[key] = otherParams[key];
@@ -249,25 +221,7 @@ class UserMenuController {
       }
 
       // Validate query parameters
-      const querySchema = Joi.object({
-        page: Joi.number().integer().min(1).default(1),
-        limit: Joi.number().integer().min(1).max(50).default(20),
-        sortBy: Joi.string()
-          .valid("name", "price", "displayOrder", "averageRating")
-          .default("displayOrder"),
-        sortOrder: Joi.string().valid("asc", "desc").default("asc"),
-        foodType: Joi.string()
-          .valid("veg", "non-veg", "vegan", "jain")
-          .optional(),
-        search: Joi.string().optional(),
-        minPrice: Joi.number().min(0).optional(),
-        maxPrice: Joi.number().min(0).optional(),
-        spiceLevel: Joi.string()
-          .valid("mild", "medium", "hot", "extra-hot", "none")
-          .optional(),
-      });
-
-      const { error, value } = querySchema.validate({
+      const { error, value } = getItemsByCategorySchema.validate({
         page: parseInt(page),
         limit: parseInt(limit),
         sortBy,
@@ -286,6 +240,8 @@ class UserMenuController {
       const {
         page: validPage,
         limit: validLimit,
+        sortBy: validSortBy,
+        sortOrder: validSortOrder,
         minPrice: min,
         maxPrice: max,
         ...otherParams
@@ -294,11 +250,11 @@ class UserMenuController {
       const pagination = {
         page: validPage,
         limit: validLimit,
-        sortBy,
-        sortOrder,
+        sortBy: validSortBy,
+        sortOrder: validSortOrder,
       };
 
-      // Add filters
+      // Add filters (exclude pagination keys)
       Object.keys(otherParams).forEach((key) => {
         if (otherParams[key] !== undefined) {
           filters[key] = otherParams[key];
@@ -377,7 +333,12 @@ class UserMenuController {
       } = req.query;
 
       if (!searchTerm || searchTerm.trim().length === 0) {
-        return next(new APIError(400, "Search term is required"));
+        return next(
+          new APIError(
+            400,
+            "Please provide a search food item or category name."
+          )
+        );
       }
 
       const filters = {};
@@ -430,27 +391,7 @@ class UserMenuController {
       }
 
       // Validate query parameters
-      const querySchema = Joi.object({
-        categoryFilter: Joi.string().optional(),
-        category: Joi.string().optional(), // Support both parameter names
-        foodType: Joi.string()
-          .valid("veg", "non-veg", "vegan", "jain")
-          .optional(),
-        minPrice: Joi.number().min(0).optional(),
-        maxPrice: Joi.number().min(0).optional(),
-        isRecommended: Joi.boolean().optional(),
-        isBestSeller: Joi.boolean().optional(),
-        spiceLevel: Joi.string()
-          .valid("mild", "medium", "hot", "extra-hot", "none")
-          .optional(),
-        search: Joi.string().optional(),
-        sortBy: Joi.string()
-          .valid("name", "price", "displayOrder", "averageRating", "createdAt")
-          .default("displayOrder"),
-        sortOrder: Joi.string().valid("asc", "desc").default("asc"),
-      });
-
-      const { error, value } = querySchema.validate({
+      const { error, value } = getMenuForLocationSchema.validate({
         categoryFilter,
         category,
         foodType,
@@ -536,18 +477,7 @@ class UserMenuController {
       }
 
       // Validate query parameters
-      const querySchema = Joi.object({
-        foodType: Joi.string()
-          .valid("veg", "non-veg", "vegan", "jain")
-          .optional(),
-        search: Joi.string().optional(),
-        sortBy: Joi.string()
-          .valid("name", "displayOrder", "createdAt")
-          .default("displayOrder"),
-        sortOrder: Joi.string().valid("asc", "desc").default("asc"),
-      });
-
-      const { error, value } = querySchema.validate({
+      const { error, value } = getCategoriesForScannedHotelSchema.validate({
         foodType,
         search,
         sortBy,
