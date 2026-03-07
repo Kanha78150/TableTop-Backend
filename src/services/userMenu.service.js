@@ -183,15 +183,30 @@ class UserMenuService {
       const query = { isAvailable };
 
       if (hotel) {
-        query.hotel = hotel;
+        // Convert to ObjectId if it's a valid ObjectId string
+        if (mongoose.Types.ObjectId.isValid(hotel)) {
+          query.hotel = new mongoose.Types.ObjectId(hotel);
+        } else {
+          query.hotel = hotel;
+        }
       }
 
       if (branch) {
-        query.branch = branch;
+        // Convert to ObjectId if it's a valid ObjectId string
+        if (mongoose.Types.ObjectId.isValid(branch)) {
+          query.branch = new mongoose.Types.ObjectId(branch);
+        } else {
+          query.branch = branch;
+        }
       }
 
       if (category) {
-        query.category = category;
+        // Convert to ObjectId if it's a valid ObjectId string
+        if (mongoose.Types.ObjectId.isValid(category)) {
+          query.category = new mongoose.Types.ObjectId(category);
+        } else {
+          query.category = category;
+        }
       }
 
       if (foodType) {
@@ -379,16 +394,80 @@ class UserMenuService {
    */
   async getFeaturedItems(filters = {}, pagination = { limit: 10 }) {
     try {
-      const featuredFilters = {
-        ...filters,
+      // Build the query for featured items (recommended OR bestseller)
+      const {
+        page = 1,
+        limit = 10,
+        sortBy = "averageRating",
+        sortOrder = "desc",
+      } = pagination;
+
+      const { hotel, branch, foodType, isAvailable = true } = filters;
+
+      const query = {
+        isAvailable,
         $or: [{ isRecommended: true }, { isBestSeller: true }],
       };
 
-      return await this.getFoodItems(featuredFilters, {
-        ...pagination,
-        sortBy: "averageRating",
-        sortOrder: "desc",
-      });
+      if (hotel) {
+        if (mongoose.Types.ObjectId.isValid(hotel)) {
+          query.hotel = new mongoose.Types.ObjectId(hotel);
+        } else {
+          query.hotel = hotel;
+        }
+      }
+      if (branch) {
+        if (mongoose.Types.ObjectId.isValid(branch)) {
+          query.branch = new mongoose.Types.ObjectId(branch);
+        } else {
+          query.branch = branch;
+        }
+      }
+      if (foodType) {
+        query.foodType = foodType;
+      }
+
+      const skip = (page - 1) * limit;
+      const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
+      const [items, totalCount] = await Promise.all([
+        FoodItem.find(query)
+          .populate("category", "name categoryId type")
+          .populate("hotel", "name hotelId")
+          .populate("branch", "name branchId")
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limit)
+          .select(
+            `name itemId description shortDescription price discountPrice
+            foodType spiceLevel isRecommended isBestSeller image images
+            preparationTime servingSize ingredients allergens tags
+            nutritionalInfo averageRating totalReviews availableTimings
+            displayOrder dietaryInfo`
+          )
+          .lean(),
+        FoodItem.countDocuments(query),
+      ]);
+
+      const itemsWithCalculations = items.map((item) => ({
+        ...item,
+        effectivePrice: item.discountPrice || item.price,
+        discountPercentage: item.discountPrice
+          ? Math.round(((item.price - item.discountPrice) / item.price) * 100)
+          : 0,
+        hasDiscount: !!item.discountPrice && item.discountPrice < item.price,
+      }));
+
+      return {
+        items: itemsWithCalculations,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(totalCount / limit),
+          totalCount,
+          hasNext: page < Math.ceil(totalCount / limit),
+          hasPrev: page > 1,
+        },
+      };
     } catch (error) {
       throw new APIError(
         `Failed to fetch featured items: ${error.message}`,
@@ -415,10 +494,17 @@ class UserMenuService {
         search: searchTerm.trim(),
       };
 
+      // Build separate category filters — categories use "type" not "foodType"
+      const categoryFilters = { ...searchFilters };
+      if (categoryFilters.foodType) {
+        categoryFilters.type = categoryFilters.foodType;
+        delete categoryFilters.foodType;
+      }
+
       // Also search in categories
       const [itemResults, categoryResults] = await Promise.all([
         this.getFoodItems(searchFilters, pagination),
-        this.getCategories(searchFilters, pagination),
+        this.getCategories(categoryFilters, pagination),
       ]);
 
       return {
@@ -501,12 +587,17 @@ class UserMenuService {
         foodItemQuery.isBestSeller = filters.isBestSeller;
       }
 
+      // Apply sort from user filters or use defaults
+      const sortBy = filters.sortBy || "displayOrder";
+      const sortOrder = filters.sortOrder || "asc";
+      const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
       const foodItems = await FoodItem.find(foodItemQuery)
         .populate("category", "name description image")
         .select(
           "name description price discountPrice image images foodType spiceLevel preparationTime category allergens isAvailable isRecommended isBestSeller averageRating displayOrder createdAt"
         )
-        .sort({ displayOrder: 1, name: 1 });
+        .sort(sortOptions);
 
       // Get unique category IDs from filtered food items
       const categoryIds = [
