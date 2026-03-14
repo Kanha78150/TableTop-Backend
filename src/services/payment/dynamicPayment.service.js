@@ -746,6 +746,12 @@ class DynamicPaymentService {
         order.payment.paidAt = new Date();
       } else if (paymentInfo.status === "failed") {
         order.payment.paymentStatus = "failed";
+
+        // Commission not applicable — payment failed
+        if (order.payment.commissionStatus !== "not_applicable") {
+          order.payment.commissionStatus = "not_applicable";
+          order.payment.commissionAmount = 0;
+        }
       }
 
       await order.save();

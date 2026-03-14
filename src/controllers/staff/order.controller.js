@@ -150,6 +150,24 @@ export const updateOrderStatus = asyncHandler(async (req, res, next) => {
     updateData.actualServiceTime = order.calculateServiceTime();
   }
 
+  // Handle commission when staff cancels an order
+  if (status === "cancelled") {
+    if (
+      order.payment?.paymentStatus === "paid" ||
+      order.payment?.commissionStatus === "due"
+    ) {
+      // Payment was made — commission should be waived
+      updateData["payment.commissionStatus"] = "waived";
+      updateData["payment.commissionAmount"] = 0;
+      updateData["payment.commissionWaivedAt"] = new Date();
+      updateData["payment.commissionWaivedBy"] = staffId;
+    } else if (order.payment?.commissionStatus !== "not_applicable") {
+      // Payment was never made — commission not applicable
+      updateData["payment.commissionStatus"] = "not_applicable";
+      updateData["payment.commissionAmount"] = 0;
+    }
+  }
+
   const updatedOrder = await Order.findByIdAndUpdate(orderId, updateData, {
     new: true,
   })

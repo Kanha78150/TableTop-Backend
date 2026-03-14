@@ -3,14 +3,15 @@ import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
 import { Transaction } from "../../models/Transaction.model.js";
+import mongoose from "mongoose";
 import {
   getTransactionAnalytics,
   getRevenueComparison,
   getTopPerformers,
   getPaymentMethodDistribution,
-  getPendingSettlements,
 } from "../../services/accounting.service.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+import { getAdminHotelScope } from "../../utils/adminHotelScope.js";
 
 /**
  * Get accounting dashboard summary
@@ -21,22 +22,72 @@ export const getAccountingDashboard = asyncHandler(async (req, res) => {
   const queryParams = req.validatedQuery || req.query;
   const { period = "30d", hotelId, branchId } = queryParams;
 
+  // Scope to admin's own hotels
+  const adminHotelIds = await getAdminHotelScope(req, { hotelId });
+
+  if (adminHotelIds !== null && adminHotelIds.length === 0) {
+    return res.status(200).json(
+      new APIResponse(
+        200,
+        {
+          overview: {
+            period,
+            totalRevenue: 0,
+            totalTransactions: 0,
+            avgTransactionAmount: 0,
+            successRate: 0,
+          },
+          growth: { revenue: 0, transactions: 0, avgTransaction: 0 },
+          dailyTrends: [],
+          topPerformers: { hotels: [], branches: [] },
+          paymentMethods: [],
+          quickStats: {
+            todayRevenue: 0,
+            yesterdayRevenue: 0,
+            avgDailyRevenue: 0,
+            peakTransactionDay: { transactionCount: 0, date: null },
+          },
+        },
+        "Accounting dashboard data retrieved successfully"
+      )
+    );
+  }
+
   // Get all dashboard data in parallel
-  const [
-    analytics,
-    comparison,
-    topHotels,
-    topBranches,
-    paymentDistribution,
-    pendingSettlements,
-  ] = await Promise.all([
-    getTransactionAnalytics({ period, hotelId, branchId }),
-    getRevenueComparison({ currentPeriod: period, hotelId, branchId }),
-    getTopPerformers({ period, type: "hotels", limit: 5 }),
-    getTopPerformers({ period, type: "branches", limit: 5 }),
-    getPaymentMethodDistribution({ period, hotelId, branchId }),
-    getPendingSettlements({ hotelId, branchId }),
-  ]);
+  const [analytics, comparison, topHotels, topBranches, paymentDistribution] =
+    await Promise.all([
+      getTransactionAnalytics({ period, hotelId, branchId, adminHotelIds }),
+      getRevenueComparison({
+        currentPeriod: period,
+        hotelId,
+        branchId,
+        adminHotelIds,
+      }),
+      getTopPerformers({ period, type: "hotels", limit: 5, adminHotelIds }),
+      getTopPerformers({ period, type: "branches", limit: 5, adminHotelIds }),
+      getPaymentMethodDistribution({
+        period,
+        hotelId,
+        branchId,
+        adminHotelIds,
+      }),
+    ]);
+
+  // Build base match for total transaction count (all statuses)
+  const totalCountMatch = {
+    createdAt: {
+      $gte: analytics.dateRange.startDate,
+      $lte: analytics.dateRange.endDate,
+    },
+  };
+  if (adminHotelIds !== null && adminHotelIds.length > 0) {
+    totalCountMatch.hotel = { $in: adminHotelIds };
+  }
+  if (hotelId) totalCountMatch.hotel = new mongoose.Types.ObjectId(hotelId);
+  if (branchId) totalCountMatch.branch = new mongoose.Types.ObjectId(branchId);
+
+  const totalTransactionsAllStatuses =
+    await Transaction.countDocuments(totalCountMatch);
 
   const dashboardData = {
     overview: {
@@ -45,11 +96,11 @@ export const getAccountingDashboard = asyncHandler(async (req, res) => {
       totalTransactions: analytics.summary.totalTransactions,
       avgTransactionAmount: analytics.summary.avgTransactionAmount,
       successRate:
-        comparison.currentPeriod.totalTransactions > 0
+        totalTransactionsAllStatuses > 0
           ? parseFloat(
               (
                 (analytics.summary.totalTransactions /
-                  comparison.currentPeriod.totalTransactions) *
+                  totalTransactionsAllStatuses) *
                 100
               ).toFixed(2)
             )
@@ -62,11 +113,6 @@ export const getAccountingDashboard = asyncHandler(async (req, res) => {
       branches: topBranches.performers,
     },
     paymentMethods: paymentDistribution.distribution,
-    pendingSettlements: {
-      totalAmount: pendingSettlements.summary.totalPendingAmount,
-      totalCount: pendingSettlements.summary.totalPendingSettlements,
-      items: pendingSettlements.pendingSettlements.slice(0, 5), // Show top 5
-    },
     quickStats: {
       todayRevenue:
         analytics.dailyData.find(
@@ -87,8 +133,7 @@ export const getAccountingDashboard = asyncHandler(async (req, res) => {
             )
           : 0,
       peakTransactionDay: analytics.dailyData.reduce(
-        (max, day) =>
-          day.transactionCount > max.transactionCount ? day : max,
+        (max, day) => (day.transactionCount > max.transactionCount ? day : max),
         { transactionCount: 0, date: null }
       ),
     },
@@ -110,7 +155,7 @@ export const getAccountingDashboard = asyncHandler(async (req, res) => {
     hotelId,
     branchId,
   });
-  });
+});
 
 /**
  * Get quick financial summary
@@ -121,20 +166,25 @@ export const getFinancialSummary = asyncHandler(async (req, res) => {
   const queryParams = req.validatedQuery || req.query;
   const { period = "30d" } = queryParams;
 
-  const [analytics, comparison, pendingSettlements] = await Promise.all([
-    getTransactionAnalytics({ period }),
-    getRevenueComparison({ currentPeriod: period }),
-    getPendingSettlements({}),
+  // Scope to admin's own hotels
+  const adminHotelIds = await getAdminHotelScope(req);
+
+  const [analytics, comparison] = await Promise.all([
+    getTransactionAnalytics({ period, adminHotelIds }),
+    getRevenueComparison({ currentPeriod: period, adminHotelIds }),
   ]);
 
-  // Count unique hotels and branches from recent transactions
+  // Count unique hotels and branches from recent transactions scoped to admin
+  const entityMatch = {
+    createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+    status: "success",
+  };
+  if (adminHotelIds !== null && adminHotelIds.length > 0) {
+    entityMatch.hotel = { $in: adminHotelIds };
+  }
+
   const uniqueEntities = await Transaction.aggregate([
-    {
-      $match: {
-        createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }, // Last 30 days
-        status: "success",
-      },
-    },
+    { $match: entityMatch },
     {
       $group: {
         _id: null,
@@ -162,21 +212,15 @@ export const getFinancialSummary = asyncHandler(async (req, res) => {
     status: {
       totalActiveHotels,
       totalActiveBranches,
-      totalPendingSettlements:
-        pendingSettlements.summary.totalPendingSettlements,
     },
   };
 
   res
     .status(200)
     .json(
-      new APIResponse(
-        200,
-        summary,
-        "Financial summary retrieved successfully"
-      )
+      new APIResponse(200, summary, "Financial summary retrieved successfully")
     );
-  });
+});
 
 export default {
   getAccountingDashboard,

@@ -99,11 +99,6 @@ export const handleRazorpayWebhook = async (req, res) => {
         result = await handleOrderPaid(entity);
         break;
 
-      // Settlement Events
-      case "settlement.processed":
-        result = await handleSettlementProcessed(entity);
-        break;
-
       // Dispute Events
       case "dispute.created":
         result = await handleDisputeCreated(entity);
@@ -499,32 +494,6 @@ async function handleOrderPaid(entity) {
     return { success: true, message: "Order paid event processed" };
   } catch (error) {
     logger.error("Error handling order.paid", { error: error.message });
-    return { success: false, message: error.message };
-  }
-}
-
-/**
- * Handle Settlement Processed Event
- */
-async function handleSettlementProcessed(entity) {
-  try {
-    const { id: settlementId, amount, utr, fees, tax } = entity;
-
-    paymentLogger.logSettlement({
-      settlementId,
-      amount: amount / 100,
-      utr,
-      fees: fees / 100,
-      tax: tax / 100,
-      netAmount: (amount - fees - tax) / 100,
-      settledAt: new Date(),
-    });
-
-    return { success: true, message: "Settlement processed" };
-  } catch (error) {
-    logger.error("Error handling settlement.processed", {
-      error: error.message,
-    });
     return { success: false, message: error.message };
   }
 }

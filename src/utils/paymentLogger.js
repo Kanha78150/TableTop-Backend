@@ -360,24 +360,6 @@ class PaymentLogger {
   }
 
   /**
-   * Log settlement information
-   */
-  logSettlement(data) {
-    logger.info("[PAYMENT_SETTLEMENT]", {
-      timestamp: new Date().toISOString(),
-      event: "payment_settlement",
-      settlementId: data.settlementId,
-      amount: data.amount,
-      settledAt: data.settledAt,
-      paymentCount: data.paymentCount,
-      utr: data.utr,
-      fees: data.fees,
-      tax: data.tax,
-      netAmount: data.netAmount,
-    });
-  }
-
-  /**
    * Log payment method statistics
    */
   logPaymentMethodStats(data) {

@@ -9,7 +9,6 @@ import {
   getAllTransactions,
   getHotelWiseAccounting,
   getBranchWiseAccounting,
-  getSettlements,
   exportReport,
 } from "../../controllers/admin/accounting.controller.js";
 import {
@@ -18,7 +17,6 @@ import {
   validateTransactionQueryMiddleware,
   validateHotelAccountingQueryMiddleware,
   validateBranchAccountingQueryMiddleware,
-  validateSettlementQueryMiddleware,
   validateExportRequestMiddleware,
   exportRateLimit,
 } from "../../middleware/accounting.validation.middleware.js";
@@ -83,14 +81,6 @@ router.get(
   validateBranchAccountingQueryMiddleware,
   getBranchWiseAccounting
 );
-
-/**
- * @route   GET /api/v1/super-admin/accounting/settlements
- * @desc    Get settlements and payout tracking
- * @access  SuperAdmin
- * @query   page, limit, hotelId, branchId, status, startDate, endDate, payoutStatus
- */
-router.get("/settlements", validateSettlementQueryMiddleware, getSettlements);
 
 /**
  * @route   POST /api/v1/super-admin/accounting/export

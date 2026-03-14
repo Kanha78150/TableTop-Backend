@@ -385,12 +385,20 @@ class AssignmentSystemInit {
               order.payment.failureReason =
                 "Payment timeout - not completed within 15 minutes";
               order.status = "cancelled";
+
+              // Commission not applicable — payment timed out
+              if (order.payment.commissionStatus !== "not_applicable") {
+                order.payment.commissionStatus = "not_applicable";
+                order.payment.commissionAmount = 0;
+              }
+
               await order.save();
 
               // Create Transaction record for accounting (failed/timeout)
               try {
-                const paymentService = (await import("../payment/payment.service.js"))
-                  .default;
+                const paymentService = (
+                  await import("../payment/payment.service.js")
+                ).default;
                 await paymentService.createTransactionRecord(order);
                 logger.info(
                   `📊 Transaction record (timeout-failed) created for order ${order._id}`

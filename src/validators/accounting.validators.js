@@ -77,38 +77,12 @@ export const validateBranchAccountingQuery = Joi.object({
 });
 
 /**
- * Settlement query validation
- */
-export const validateSettlementQuery = Joi.object({
-  page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
-  hotelId: Joi.string()
-    .pattern(/^[0-9a-fA-F]{24}$/)
-    .optional(),
-  branchId: Joi.string()
-    .pattern(/^[0-9a-fA-F]{24}$/)
-    .optional(),
-  status: Joi.string()
-    .valid("pending", "success", "failed", "refunded")
-    .optional(),
-  startDate: Joi.string()
-    .pattern(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-  endDate: Joi.string()
-    .pattern(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-  payoutStatus: Joi.string()
-    .valid("all", "pending", "processing", "settled")
-    .default("all"),
-});
-
-/**
  * Export report validation
  */
 export const validateExportRequest = Joi.object({
   format: Joi.string().valid("csv", "excel", "pdf").required(),
   reportType: Joi.string()
-    .valid("transactions", "hotels", "branches", "settlements")
+    .valid("transactions", "hotels", "branches")
     .required(),
   hotelId: Joi.string()
     .pattern(/^[0-9a-fA-F]{24}$/)
@@ -195,7 +169,6 @@ export default {
   validateTransactionQuery,
   validateHotelAccountingQuery,
   validateBranchAccountingQuery,
-  validateSettlementQuery,
   validateExportRequest,
   validateDashboardQuery,
   validateSummaryQuery,

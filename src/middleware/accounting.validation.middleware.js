@@ -69,33 +69,10 @@ const validateBranchAccountingQuery = Joi.object({
     .default("success"),
 });
 
-const validateSettlementQuery = Joi.object({
-  page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
-  hotelId: Joi.string()
-    .pattern(/^[0-9a-fA-F]{24}$/)
-    .optional(),
-  branchId: Joi.string()
-    .pattern(/^[0-9a-fA-F]{24}$/)
-    .optional(),
-  status: Joi.string()
-    .valid("pending", "success", "failed", "refunded")
-    .optional(),
-  startDate: Joi.string()
-    .pattern(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-  endDate: Joi.string()
-    .pattern(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-  payoutStatus: Joi.string()
-    .valid("all", "pending", "processing", "settled")
-    .default("all"),
-});
-
 const validateExportRequest = Joi.object({
   format: Joi.string().valid("csv", "excel", "pdf").required(),
   reportType: Joi.string()
-    .valid("transactions", "hotels", "branches", "settlements")
+    .valid("transactions", "hotels", "branches")
     .required(),
   hotelId: Joi.string()
     .pattern(/^[0-9a-fA-F]{24}$/)
@@ -244,13 +221,6 @@ export const validateBranchAccountingQueryMiddleware =
   createValidationMiddleware(validateBranchAccountingQuery);
 
 /**
- * Settlement query validation middleware
- */
-export const validateSettlementQueryMiddleware = createValidationMiddleware(
-  validateSettlementQuery
-);
-
-/**
  * Export request validation middleware
  */
 export const validateExportRequestMiddleware = createValidationMiddleware(
@@ -325,7 +295,6 @@ export default {
   validateTransactionQueryMiddleware,
   validateHotelAccountingQueryMiddleware,
   validateBranchAccountingQueryMiddleware,
-  validateSettlementQueryMiddleware,
   validateExportRequestMiddleware,
   validateDashboardQueryMiddleware,
   validateSummaryQueryMiddleware,

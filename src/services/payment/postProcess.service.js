@@ -3,6 +3,7 @@ import { Cart } from "../../models/Cart.model.js";
 import { CoinTransaction } from "../../models/CoinTransaction.model.js";
 import { Transaction } from "../../models/Transaction.model.js";
 import { logger } from "../../utils/logger.js";
+import { generateTransactionId } from "../../utils/idGenerator.js";
 
 /**
  * Clear cart and process coins after successful payment
@@ -227,7 +228,10 @@ export async function createTransactionRecord(order) {
         order.payment?.provider ||
         (order.payment?.paymentMethod === "cash" ? "cash" : "razorpay"),
       status: transactionStatus,
-      transactionId: order.payment?.transactionId || order.payment?.paymentId,
+      transactionId:
+        order.payment?.transactionId ||
+        order.payment?.paymentId ||
+        generateTransactionId(),
     });
 
     logger.info("Transaction record created successfully", {

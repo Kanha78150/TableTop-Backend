@@ -8,6 +8,7 @@ import { APIResponse } from "../utils/APIResponse.js";
 import { logger } from "../utils/logger.js";
 import { coinService } from "./reward.service.js";
 import assignmentService from "./assignment/assignment.service.js";
+import { calculateCommission } from "../utils/commissionCalculator.js";
 
 class CartService {
   /**
@@ -980,6 +981,14 @@ class CartService {
           ...orderItems.map((item) => item.foodItem.preparationTime || 15)
         ) + 5; // Add 5 minutes buffer
 
+      // 10.5. Calculate commission for this order
+      const hotelForCommission =
+        await Hotel.findById(hotelId).select("commissionConfig");
+      const commissionResult = calculateCommission(
+        hotelForCommission,
+        Math.max(0, finalTotal)
+      );
+
       // 11. Create order
       const orderData = {
         user: userId,
@@ -1000,6 +1009,11 @@ class CartService {
         payment: {
           paymentMethod,
           paymentStatus: "pending", // Always start as pending
+          commissionAmount: commissionResult.amount,
+          commissionRate: commissionResult.rate,
+          commissionStatus: commissionResult.applicable
+            ? "pending"
+            : "not_applicable",
         },
         status: "pending",
         estimatedTime,

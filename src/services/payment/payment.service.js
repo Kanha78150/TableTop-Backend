@@ -1088,9 +1088,37 @@ class PaymentService {
         },
       });
 
+      // Calculate commission adjustment for refund
+      const refundAmountRupees = refundAmount / 100;
+      const commissionUpdate = {};
+      if (
+        order.payment.commissionStatus === "due" ||
+        order.payment.commissionStatus === "collected" ||
+        order.payment.commissionStatus === "pending"
+      ) {
+        if (refundAmountRupees >= order.totalPrice) {
+          // Full refund — waive all commission
+          commissionUpdate["payment.commissionStatus"] = "waived";
+          commissionUpdate["payment.commissionAmount"] = 0;
+          commissionUpdate["payment.commissionWaivedAt"] = new Date();
+        } else {
+          // Partial refund — reduce commission proportionally
+          const refundRatio = refundAmountRupees / order.totalPrice;
+          const commissionReduction =
+            order.payment.commissionAmount * refundRatio;
+          commissionUpdate["payment.commissionAmount"] = Math.max(
+            0,
+            Math.round(
+              (order.payment.commissionAmount - commissionReduction) * 100
+            ) / 100
+          );
+        }
+      }
+
       // Update order status to refunded (since Razorpay refund was successful)
       await Order.findByIdAndUpdate(orderId, {
         "payment.paymentStatus": "refunded",
+        ...commissionUpdate,
         "payment.refund": {
           refundId: refund.id,
           amount: refundAmount / 100,
