@@ -1,4 +1,4 @@
-import asyncHandler from "express-async-handler";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import {
@@ -9,7 +9,7 @@ import {
   triggerAutoRenewal,
   triggerPaymentRetry,
   triggerCleanup,
-} from "../../services/subscriptionJobs.service.js";
+} from "../../services/jobs/subscriptionJobs.service.js";
 
 /**
  * Get status of all subscription-related scheduled jobs

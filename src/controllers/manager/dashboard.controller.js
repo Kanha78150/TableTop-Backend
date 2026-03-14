@@ -12,408 +12,385 @@ import { logger } from "../../utils/logger.js";
 import bcrypt from "bcrypt";
 import fs from "fs";
 import Joi from "joi";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+
 
 /**
  * Get manager dashboard overview
  * GET /api/v1/manager/dashboard
  * @access Manager
  */
-export const getDashboard = async (req, res, next) => {
-  try {
-    const managerBranch = req.user.branch;
-    const managerId = req.user._id;
+export const getDashboard = asyncHandler(async (req, res) => {
+  const managerBranch = req.user.branch;
+  const managerId = req.user._id;
 
-    // Calculate date ranges
-    const today = new Date();
-    const startOfToday = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate()
+  // Calculate date ranges
+  const today = new Date();
+  const startOfToday = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
+  const startOfWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+
+  // Get dashboard metrics in parallel
+  const [
+    todayStats,
+    weeklyStats,
+    monthlyStats,
+    tableStatus,
+    staffStatus,
+    recentOrders,
+    upcomingReservations,
+    recentComplaints,
+    branchPerformance,
+  ] = await Promise.all([
+    // Today's statistics
+    getDayStats(managerBranch, startOfToday),
+
+    // Weekly statistics
+    getDateRangeStats(managerBranch, startOfWeek),
+
+    // Monthly statistics
+    getDateRangeStats(managerBranch, startOfMonth),
+
+    // Current table status
+    getTableStatusSummary(managerBranch),
+
+    // Staff status
+    getStaffStatusSummary(managerBranch),
+
+    // Recent orders (last 10)
+    Order.find({ branch: managerBranch })
+      .populate("user", "name phone")
+      .populate("staff", "name staffId")
+      .populate("table", "tableNumber")
+      .sort({ createdAt: -1 })
+      .limit(10),
+
+    // Upcoming reservations (next 24 hours)
+    Booking.find({
+      branch: managerBranch,
+      reservationTime: {
+        $gte: new Date(),
+        $lte: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+      status: { $in: ["confirmed", "seated"] },
+    })
+      .populate("table", "tableNumber seatingCapacity")
+      .sort({ reservationTime: 1 })
+      .limit(10),
+
+    // Recent complaints (last 5)
+    Complaint.find({ branch: managerBranch })
+      .populate("user", "name phone")
+      .populate("assignedTo", "name staffId")
+      .sort({ createdAt: -1 })
+      .limit(5),
+
+    // Branch performance metrics
+    getBranchPerformanceMetrics(managerBranch, startOfMonth),
+  ]);
+
+  const dashboard = {
+    summary: {
+      today: todayStats,
+      thisWeek: weeklyStats,
+      thisMonth: monthlyStats,
+    },
+    operationalStatus: {
+      tables: tableStatus,
+      staff: staffStatus,
+    },
+    recentActivity: {
+      orders: recentOrders.map((order) => ({
+        id: order._id,
+        orderNumber: order.orderNumber,
+        customerName: order.user?.name || "Guest",
+        table: order.table?.tableNumber || "N/A",
+        status: order.status,
+        totalPrice: order.totalPrice,
+        createdAt: order.createdAt,
+        waiter: order.staff?.name || "Unassigned",
+      })),
+      reservations: upcomingReservations.map((reservation) => ({
+        id: reservation._id,
+        customerName: reservation.customerName,
+        table: reservation.table?.tableNumber,
+        partySize: reservation.partySize,
+        reservationTime: reservation.reservationTime,
+        status: reservation.status,
+      })),
+      complaints: recentComplaints.map((complaint) => ({
+        id: complaint._id,
+        title: complaint.title,
+        customer: complaint.user?.name || "Anonymous",
+        priority: complaint.priority,
+        status: complaint.status,
+        createdAt: complaint.createdAt,
+        assignedTo: complaint.assignedTo?.name || "Unassigned",
+      })),
+    },
+    performance: branchPerformance,
+  };
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(200, dashboard, "Dashboard data retrieved successfully")
     );
-    const startOfWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-
-    // Get dashboard metrics in parallel
-    const [
-      todayStats,
-      weeklyStats,
-      monthlyStats,
-      tableStatus,
-      staffStatus,
-      recentOrders,
-      upcomingReservations,
-      recentComplaints,
-      branchPerformance,
-    ] = await Promise.all([
-      // Today's statistics
-      getDayStats(managerBranch, startOfToday),
-
-      // Weekly statistics
-      getDateRangeStats(managerBranch, startOfWeek),
-
-      // Monthly statistics
-      getDateRangeStats(managerBranch, startOfMonth),
-
-      // Current table status
-      getTableStatusSummary(managerBranch),
-
-      // Staff status
-      getStaffStatusSummary(managerBranch),
-
-      // Recent orders (last 10)
-      Order.find({ branch: managerBranch })
-        .populate("user", "name phone")
-        .populate("staff", "name staffId")
-        .populate("table", "tableNumber")
-        .sort({ createdAt: -1 })
-        .limit(10),
-
-      // Upcoming reservations (next 24 hours)
-      Booking.find({
-        branch: managerBranch,
-        reservationTime: {
-          $gte: new Date(),
-          $lte: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        },
-        status: { $in: ["confirmed", "seated"] },
-      })
-        .populate("table", "tableNumber seatingCapacity")
-        .sort({ reservationTime: 1 })
-        .limit(10),
-
-      // Recent complaints (last 5)
-      Complaint.find({ branch: managerBranch })
-        .populate("user", "name phone")
-        .populate("assignedTo", "name staffId")
-        .sort({ createdAt: -1 })
-        .limit(5),
-
-      // Branch performance metrics
-      getBranchPerformanceMetrics(managerBranch, startOfMonth),
-    ]);
-
-    const dashboard = {
-      summary: {
-        today: todayStats,
-        thisWeek: weeklyStats,
-        thisMonth: monthlyStats,
-      },
-      operationalStatus: {
-        tables: tableStatus,
-        staff: staffStatus,
-      },
-      recentActivity: {
-        orders: recentOrders.map((order) => ({
-          id: order._id,
-          orderNumber: order.orderNumber,
-          customerName: order.user?.name || "Guest",
-          table: order.table?.tableNumber || "N/A",
-          status: order.status,
-          totalPrice: order.totalPrice,
-          createdAt: order.createdAt,
-          waiter: order.staff?.name || "Unassigned",
-        })),
-        reservations: upcomingReservations.map((reservation) => ({
-          id: reservation._id,
-          customerName: reservation.customerName,
-          table: reservation.table?.tableNumber,
-          partySize: reservation.partySize,
-          reservationTime: reservation.reservationTime,
-          status: reservation.status,
-        })),
-        complaints: recentComplaints.map((complaint) => ({
-          id: complaint._id,
-          title: complaint.title,
-          customer: complaint.user?.name || "Anonymous",
-          priority: complaint.priority,
-          status: complaint.status,
-          createdAt: complaint.createdAt,
-          assignedTo: complaint.assignedTo?.name || "Unassigned",
-        })),
-      },
-      performance: branchPerformance,
-    };
-
-    res
-      .status(200)
-      .json(
-        new APIResponse(200, dashboard, "Dashboard data retrieved successfully")
-      );
-  } catch (error) {
-    logger.error("Error getting dashboard:", error);
-    next(error);
-  }
-};
+  });
 
 /**
  * Get branch analytics
  * GET /api/v1/manager/analytics
  * @access Manager
  */
-export const getBranchAnalytics = async (req, res, next) => {
-  try {
-    const managerBranch = req.user.branch;
-    const { period = "30", metrics = "all" } = req.query;
+export const getBranchAnalytics = asyncHandler(async (req, res) => {
+  const managerBranch = req.user.branch;
+  const { period = "30", metrics = "all" } = req.query;
 
-    // Calculate date range
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - parseInt(period));
+  // Calculate date range
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - parseInt(period));
 
-    const filter = {
-      branch: managerBranch,
-      createdAt: { $gte: startDate },
-    };
+  const filter = {
+    branch: managerBranch,
+    createdAt: { $gte: startDate },
+  };
 
-    // Get comprehensive analytics
-    const [
-      orderAnalytics,
-      revenueAnalytics,
-      staffAnalytics,
-      customerAnalytics,
-      tableAnalytics,
-      complaintAnalytics,
-    ] = await Promise.all([
-      // Order analytics
-      getOrderAnalytics(filter, startDate),
+  // Get comprehensive analytics
+  const [
+    orderAnalytics,
+    revenueAnalytics,
+    staffAnalytics,
+    customerAnalytics,
+    tableAnalytics,
+    complaintAnalytics,
+  ] = await Promise.all([
+    // Order analytics
+    getOrderAnalytics(filter, startDate),
 
-      // Revenue analytics
-      getRevenueAnalytics(filter),
+    // Revenue analytics
+    getRevenueAnalytics(filter),
 
-      // Staff performance analytics
-      getStaffAnalytics(managerBranch, startDate),
+    // Staff performance analytics
+    getStaffAnalytics(managerBranch, startDate),
 
-      // Customer analytics
-      getCustomerAnalytics(filter),
+    // Customer analytics
+    getCustomerAnalytics(filter),
 
-      // Table utilization analytics
-      getTableAnalytics(managerBranch, startDate),
+    // Table utilization analytics
+    getTableAnalytics(managerBranch, startDate),
 
-      // Complaint analytics
-      getComplaintAnalytics({ ...filter, branch: managerBranch }),
-    ]);
+    // Complaint analytics
+    getComplaintAnalytics({ ...filter, branch: managerBranch }),
+  ]);
 
-    const analytics = {
-      period: `${period} days`,
-      dateRange: {
-        start: startDate,
-        end: new Date(),
-      },
-      orders: orderAnalytics,
-      revenue: revenueAnalytics,
-      staff: staffAnalytics,
-      customers: customerAnalytics,
-      tables: tableAnalytics,
-      complaints: complaintAnalytics,
-    };
+  const analytics = {
+    period: `${period} days`,
+    dateRange: {
+      start: startDate,
+      end: new Date(),
+    },
+    orders: orderAnalytics,
+    revenue: revenueAnalytics,
+    staff: staffAnalytics,
+    customers: customerAnalytics,
+    tables: tableAnalytics,
+    complaints: complaintAnalytics,
+  };
 
-    res
-      .status(200)
-      .json(
-        new APIResponse(
-          200,
-          analytics,
-          "Branch analytics retrieved successfully"
-        )
-      );
-  } catch (error) {
-    logger.error("Error getting branch analytics:", error);
-    next(error);
-  }
-};
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        analytics,
+        "Branch analytics retrieved successfully"
+      )
+    );
+  });
 
 /**
  * Get manager profile
  * GET /api/v1/manager/profile
  * @access Manager
  */
-export const getManagerProfile = async (req, res, next) => {
-  try {
-    const managerId = req.user._id;
+export const getManagerProfile = asyncHandler(async (req, res, next) => {
+  const managerId = req.user._id;
 
-    const manager = await Manager.findById(managerId)
-      .populate("branch", "name address city state phone email")
-      .populate("hotel", "name address city state phone email")
-      .select("-password");
+  const manager = await Manager.findById(managerId)
+    .populate("branch", "name address city state phone email")
+    .populate("hotel", "name address city state phone email")
+    .select("-password");
 
-    if (!manager) {
-      return next(new APIError(404, "Manager profile not found"));
-    }
-
-    // Get manager statistics
-    const managerStats = await getManagerStats(managerId, manager.branch._id);
-
-    const profile = {
-      personal: {
-        id: manager._id,
-        name: manager.name,
-        email: manager.email,
-        phone: manager.phone,
-        staffId: manager.staffId,
-        position: manager.position || "Branch Manager",
-        joinedAt: manager.createdAt,
-        lastLogin: manager.lastLogin,
-      },
-      branch: {
-        id: manager.branch._id,
-        name: manager.branch.name,
-        address: manager.branch.address,
-        city: manager.branch.city,
-        state: manager.branch.state,
-        phone: manager.branch.phone,
-        email: manager.branch.email,
-      },
-      hotel: {
-        id: manager.hotel._id,
-        name: manager.hotel.name,
-        address: manager.hotel.address,
-        city: manager.hotel.city,
-        state: manager.hotel.state,
-        phone: manager.hotel.phone,
-        email: manager.hotel.email,
-      },
-      statistics: managerStats,
-      permissions: manager.permissions || [],
-      settings: manager.settings || {},
-    };
-
-    res
-      .status(200)
-      .json(
-        new APIResponse(200, profile, "Manager profile retrieved successfully")
-      );
-  } catch (error) {
-    logger.error("Error getting manager profile:", error);
-    next(error);
+  if (!manager) {
+    return next(new APIError(404, "Manager profile not found"));
   }
-};
+
+  // Get manager statistics
+  const managerStats = await getManagerStats(managerId, manager.branch._id);
+
+  const profile = {
+    personal: {
+      id: manager._id,
+      name: manager.name,
+      email: manager.email,
+      phone: manager.phone,
+      staffId: manager.staffId,
+      position: manager.position || "Branch Manager",
+      joinedAt: manager.createdAt,
+      lastLogin: manager.lastLogin,
+    },
+    branch: {
+      id: manager.branch._id,
+      name: manager.branch.name,
+      address: manager.branch.address,
+      city: manager.branch.city,
+      state: manager.branch.state,
+      phone: manager.branch.phone,
+      email: manager.branch.email,
+    },
+    hotel: {
+      id: manager.hotel._id,
+      name: manager.hotel.name,
+      address: manager.hotel.address,
+      city: manager.hotel.city,
+      state: manager.hotel.state,
+      phone: manager.hotel.phone,
+      email: manager.hotel.email,
+    },
+    statistics: managerStats,
+    permissions: manager.permissions || [],
+    settings: manager.settings || {},
+  };
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(200, profile, "Manager profile retrieved successfully")
+    );
+  });
 
 /**
  * Update manager profile
  * PUT /api/v1/manager/profile
  * @access Manager
  */
-export const updateManagerProfile = async (req, res, next) => {
-  try {
-    const managerId = req.user._id;
+export const updateManagerProfile = asyncHandler(async (req, res, next) => {
+  const managerId = req.user._id;
 
-    // Validate input
-    const { error } = validateProfileUpdate(req.body);
-    if (error) {
-      return next(new APIError(400, "Validation failed", error.details));
-    }
-
-    // Get current manager
-    const manager = await Manager.findById(managerId);
-    if (!manager) {
-      return next(new APIError(404, "Manager not found"));
-    }
-
-    // Update allowed fields
-    const allowedUpdates = [
-      "name",
-      "phone",
-      "settings",
-      "preferences",
-      "profileImage",
-    ];
-    const updates = {};
-
-    allowedUpdates.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
-      }
-    });
-
-    // Handle profile image upload
-    if (req.file) {
-      try {
-        const result = await uploadToCloudinary(req.file.path);
-        updates.profileImage = result.secure_url;
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
-      } catch (uploadError) {
-        console.error("Error uploading manager profile image:", uploadError);
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
-      }
-    }
-
-    updates.updatedAt = new Date();
-
-    const updatedManager = await Manager.findByIdAndUpdate(managerId, updates, {
-      new: true,
-      runValidators: true,
-    }).select("-password");
-
-    logger.info(`Manager profile updated: ${managerId}`);
-
-    res
-      .status(200)
-      .json(
-        new APIResponse(
-          200,
-          { manager: updatedManager },
-          "Profile updated successfully"
-        )
-      );
-  } catch (error) {
-    logger.error("Error updating manager profile:", error);
-    next(error);
+  // Validate input
+  const { error } = validateProfileUpdate(req.body);
+  if (error) {
+    return next(new APIError(400, "Validation failed", error.details));
   }
-};
+
+  // Get current manager
+  const manager = await Manager.findById(managerId);
+  if (!manager) {
+    return next(new APIError(404, "Manager not found"));
+  }
+
+  // Update allowed fields
+  const allowedUpdates = [
+    "name",
+    "phone",
+    "settings",
+    "preferences",
+    "profileImage",
+  ];
+  const updates = {};
+
+  allowedUpdates.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      updates[field] = req.body[field];
+    }
+  });
+
+  // Handle profile image upload
+  if (req.file) {
+    try {
+      const result = await uploadToCloudinary(req.file.path);
+      updates.profileImage = result.secure_url;
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (uploadError) {
+      console.error("Error uploading manager profile image:", uploadError);
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    }
+  }
+
+  updates.updatedAt = new Date();
+
+  const updatedManager = await Manager.findByIdAndUpdate(managerId, updates, {
+    new: true,
+    runValidators: true,
+  }).select("-password");
+
+  logger.info(`Manager profile updated: ${managerId}`);
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { manager: updatedManager },
+        "Profile updated successfully"
+      )
+    );
+  });
 
 /**
  * Change manager password
  * PUT /api/v1/manager/change-password
  * @access Manager
  */
-export const changePassword = async (req, res, next) => {
-  try {
-    const managerId = req.user._id;
-    const { currentPassword, newPassword } = req.body;
+export const changePassword = asyncHandler(async (req, res, next) => {
+  const managerId = req.user._id;
+  const { currentPassword, newPassword } = req.body;
 
-    // Validate input
-    const { error } = validatePasswordChange({ currentPassword, newPassword });
-    if (error) {
-      return next(new APIError(400, "Validation failed", error.details));
-    }
-
-    // Get manager with password
-    const manager = await Manager.findById(managerId).select("+password");
-    if (!manager) {
-      return next(new APIError(404, "Manager not found"));
-    }
-
-    // Verify current password
-    const isCurrentPasswordValid = await bcrypt.compare(
-      currentPassword,
-      manager.password
-    );
-    if (!isCurrentPasswordValid) {
-      return next(new APIError(401, "Current password is incorrect"));
-    }
-
-    // Hash new password
-    const saltRounds = 12;
-    const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
-
-    // Update password
-    manager.password = hashedNewPassword;
-    manager.passwordChangedAt = new Date();
-    await manager.save();
-
-    logger.info(`Password changed for manager: ${managerId}`);
-
-    res
-      .status(200)
-      .json(new APIResponse(200, {}, "Password changed successfully"));
-  } catch (error) {
-    logger.error("Error changing password:", error);
-    next(error);
+  // Validate input
+  const { error } = validatePasswordChange({ currentPassword, newPassword });
+  if (error) {
+    return next(new APIError(400, "Validation failed", error.details));
   }
-};
+
+  // Get manager with password
+  const manager = await Manager.findById(managerId).select("+password");
+  if (!manager) {
+    return next(new APIError(404, "Manager not found"));
+  }
+
+  // Verify current password
+  const isCurrentPasswordValid = await bcrypt.compare(
+    currentPassword,
+    manager.password
+  );
+  if (!isCurrentPasswordValid) {
+    return next(new APIError(401, "Current password is incorrect"));
+  }
+
+  // Hash new password
+  const saltRounds = 12;
+  const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
+
+  // Update password
+  manager.password = hashedNewPassword;
+  manager.passwordChangedAt = new Date();
+  await manager.save();
+
+  logger.info(`Password changed for manager: ${managerId}`);
+
+  res
+    .status(200)
+    .json(new APIResponse(200, {}, "Password changed successfully"));
+  });
 
 // Helper functions
 const getDayStats = async (branchId, startDate) => {

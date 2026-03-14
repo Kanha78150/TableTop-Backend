@@ -7,7 +7,7 @@
 import { Order } from "../../models/Order.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
 import { PaymentConfig } from "../../models/PaymentConfig.model.js";
-import dynamicPaymentService from "../../services/dynamicPayment.service.js";
+import dynamicPaymentService from "../../services/payment/dynamicPayment.service.js";
 
 /**
  * Initiate payment for an order
@@ -704,12 +704,20 @@ export const cancelPayment = async (req, res) => {
     order.payment.failureReason = "Payment cancelled by user";
     order.status = "cancelled";
     order.cancelledAt = new Date();
+
+    // Commission not applicable — payment was never completed
+    if (order.payment.commissionStatus !== "not_applicable") {
+      order.payment.commissionStatus = "not_applicable";
+      order.payment.commissionAmount = 0;
+    }
+
     await order.save();
 
     // Create Transaction record for accounting (failed payment)
     try {
-      const paymentService = (await import("../../services/payment.service.js"))
-        .default;
+      const paymentService = (
+        await import("../../services/payment/payment.service.js")
+      ).default;
       await paymentService.createTransactionRecord(order);
       console.log(
         `📊 Transaction record (failed) created for order ${orderId}`

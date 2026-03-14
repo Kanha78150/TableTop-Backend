@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import Joi from "joi";
 
 const bookingSchema = new mongoose.Schema(
   {
@@ -18,12 +17,5 @@ const bookingSchema = new mongoose.Schema(
 
 export const Booking = mongoose.model("Booking", bookingSchema);
 
-export const validateBooking = (data) => {
-  const schema = Joi.object({
-    user: Joi.string().required(),
-    branch: Joi.string().required(),
-    table: Joi.string().required(),
-    bookingTime: Joi.date().greater("now").required(),
-  });
-  return schema.validate(data);
-};
+// Validators extracted to src/validators/booking.validators.js
+export { validateBooking } from "../validators/booking.validators.js";

@@ -1,4 +1,4 @@
-import { paymentService } from "../../services/payment.service.js";
+import { paymentService } from "../../services/payment/payment.service.js";
 import { invoiceService } from "../../services/invoice.service.js";
 import { paymentLogger } from "../../utils/paymentLogger.js";
 import { logger } from "../../utils/logger.js";
@@ -8,7 +8,7 @@ import { EmailQueue } from "../../models/EmailQueue.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { APIResponse } from "../../utils/APIResponse.js";
-import assignmentService from "../../services/assignment.service.js";
+import assignmentService from "../../services/assignment/assignment.service.js";
 
 /**
  * Comprehensive Razorpay Webhook Handler
@@ -97,11 +97,6 @@ export const handleRazorpayWebhook = async (req, res) => {
       // Order Events
       case "order.paid":
         result = await handleOrderPaid(entity);
-        break;
-
-      // Settlement Events
-      case "settlement.processed":
-        result = await handleSettlementProcessed(entity);
         break;
 
       // Dispute Events
@@ -499,32 +494,6 @@ async function handleOrderPaid(entity) {
     return { success: true, message: "Order paid event processed" };
   } catch (error) {
     logger.error("Error handling order.paid", { error: error.message });
-    return { success: false, message: error.message };
-  }
-}
-
-/**
- * Handle Settlement Processed Event
- */
-async function handleSettlementProcessed(entity) {
-  try {
-    const { id: settlementId, amount, utr, fees, tax } = entity;
-
-    paymentLogger.logSettlement({
-      settlementId,
-      amount: amount / 100,
-      utr,
-      fees: fees / 100,
-      tax: tax / 100,
-      netAmount: (amount - fees - tax) / 100,
-      settledAt: new Date(),
-    });
-
-    return { success: true, message: "Settlement processed" };
-  } catch (error) {
-    logger.error("Error handling settlement.processed", {
-      error: error.message,
-    });
     return { success: false, message: error.message };
   }
 }

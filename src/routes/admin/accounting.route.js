@@ -5,7 +5,6 @@ import {
   getAllTransactions,
   getHotelWiseAccounting,
   getBranchWiseAccounting,
-  getSettlements,
   exportReport,
 } from "../../controllers/admin/accounting.controller.js";
 
@@ -18,7 +17,6 @@ import {
   validateTransactionQueryMiddleware,
   validateHotelAccountingQueryMiddleware,
   validateBranchAccountingQueryMiddleware,
-  validateSettlementQueryMiddleware,
   validateExportRequestMiddleware,
   validateDashboardQueryMiddleware,
   validateSummaryQueryMiddleware,
@@ -90,23 +88,12 @@ router.get(
 );
 
 /**
- * @route GET /api/v1/admin/accounting/settlements
- * @desc Get settlement tracking & payout logs
- * @access Admin
- * @queryParams {
- *   page, limit, hotelId, branchId, status,
- *   startDate, endDate, payoutStatus
- * }
- */
-router.get("/settlements", validateSettlementQueryMiddleware, getSettlements);
-
-/**
  * @route POST /api/v1/admin/accounting/export
  * @desc Export accounting reports (CSV, Excel, PDF)
  * @access Admin
  * @body {
  *   format: "csv" | "excel" | "pdf",
- *   reportType: "transactions" | "hotels" | "branches" | "settlements",
+ *   reportType: "transactions" | "hotels" | "branches",
  *   hotelId?, branchId?, startDate?, endDate?, status?
  * }
  */

@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import Joi from "joi";
 
 const transactionSchema = new mongoose.Schema(
   {
@@ -32,31 +31,12 @@ const transactionSchema = new mongoose.Schema(
       enum: ["pending", "success", "failed", "refunded"],
       default: "pending",
     },
-    transactionId: { type: String, unique: true },
+    transactionId: { type: String, unique: true, sparse: true },
   },
   { timestamps: true }
 );
 
 export const Transaction = mongoose.model("Transaction", transactionSchema);
 
-export const validateTransaction = (data) => {
-  const schema = Joi.object({
-    user: Joi.string().required(),
-    order: Joi.string().required(),
-    amount: Joi.number().positive().required(),
-    paymentMethod: Joi.string()
-      .valid(
-        "cash",
-        "card",
-        "upi",
-        "wallet",
-        "razorpay",
-        "phonepe",
-        "paytm",
-        "netbanking",
-        "paylater"
-      )
-      .required(),
-  });
-  return schema.validate(data);
-};
+// Validators extracted to src/validators/transaction.validators.js
+export { validateTransaction } from "../validators/transaction.validators.js";

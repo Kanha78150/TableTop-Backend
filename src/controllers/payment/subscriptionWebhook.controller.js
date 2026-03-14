@@ -2,8 +2,9 @@ import { AdminSubscription } from "../../models/AdminSubscription.model.js";
 import { Admin } from "../../models/Admin.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
-import { paymentService } from "../../services/payment.service.js";
+import { paymentService } from "../../services/payment/payment.service.js";
 import { sendEmail } from "../../utils/emailService.js";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
 /**
  * Handle Payment Webhook
@@ -149,12 +150,23 @@ const handleSuccessfulPayment = async (payload) => {
 
     // Send activation email
     try {
-      await sendEmail(subscription.admin.email, "subscription-activated", {
-        adminName: subscription.admin.name,
-        planName: subscription.plan.name,
-        startDate: subscription.startDate.toLocaleDateString(),
-        endDate: subscription.endDate.toLocaleDateString(),
-        amount: amount / 100,
+      await sendEmail({
+        to: subscription.admin.email,
+        subject: "Subscription Activated Successfully",
+        template: "subscription-activated",
+        data: {
+          name: subscription.admin.name,
+          planName: subscription.plan.name,
+          billingCycle: subscription.billingCycle,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+          amount: amount / 100,
+          maxHotels: subscription.plan.limits?.maxHotels || 0,
+          maxBranches: subscription.plan.limits?.maxBranches || 0,
+          maxManagers: subscription.plan.limits?.maxManagers || 0,
+          maxStaff: subscription.plan.limits?.maxStaff || 0,
+          maxTables: subscription.plan.limits?.maxTables || 0,
+        },
       });
     } catch (emailError) {
       console.error("Failed to send activation email:", emailError);
@@ -293,8 +305,8 @@ const handleRefundedPayment = async (payload) => {
  * Allows manual verification of subscription payment
  * @route POST /api/v1/payment/verify-subscription
  */
-export const verifySubscriptionPayment = async (req, res, next) => {
-  try {
+export const verifySubscriptionPayment = asyncHandler(
+  async (req, res, next) => {
     const {
       razorpay_payment_id,
       razorpay_order_id,
@@ -360,7 +372,5 @@ export const verifySubscriptionPayment = async (req, res, next) => {
         "Payment verification successful"
       )
     );
-  } catch (error) {
-    next(error);
   }
-};
+);

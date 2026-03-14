@@ -21,6 +21,8 @@ import {
 import { getIO } from "../../utils/socketService.js";
 
 import fs from "fs";
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+
 
 /**
  * Submit a new complaint
@@ -306,154 +308,144 @@ export const submitComplaint = async (req, res, next) => {
  * GET /api/v1/user/complaints
  * @access User
  */
-export const getMyComplaints = async (req, res, next) => {
-  try {
-    const userId = req.user._id;
-    const {
-      status,
-      priority,
-      category,
-      page,
-      limit,
-      sortBy,
-      sortOrder,
-      search,
-      startDate,
-      endDate,
-    } = req.query;
+export const getMyComplaints = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const {
+    status,
+    priority,
+    category,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+    search,
+    startDate,
+    endDate,
+  } = req.query;
 
-    // Build filter
-    const filter = { user: userId };
+  // Build filter
+  const filter = { user: userId };
 
-    if (status && status !== "all") {
-      filter.status = status;
-    }
-
-    if (priority && priority !== "all") {
-      filter.priority = priority;
-    }
-
-    if (category && category !== "all") {
-      filter.category = category;
-    }
-
-    // Date range filter
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate) filter.createdAt.$lte = new Date(endDate);
-    }
-
-    // Search filter
-    if (search) {
-      filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
-        { complaintId: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    // Pagination
-    const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 10;
-    const skip = (pageNum - 1) * limitNum;
-
-    // Sort
-    const sort = {};
-    sort[sortBy || "createdAt"] = sortOrder === "asc" ? 1 : -1;
-
-    // Get complaints
-    const complaints = await Complaint.find(filter)
-      .populate("order", "orderId totalPrice createdAt")
-      .populate("assignedTo", "name staffId")
-      .populate("branch", "name location")
-      .sort(sort)
-      .skip(skip)
-      .limit(limitNum)
-      .select("-internalNotes"); // Don't show internal notes to users
-
-    const total = await Complaint.countDocuments(filter);
-
-    res.status(200).json(
-      new APIResponse(
-        200,
-        {
-          complaints,
-          pagination: {
-            currentPage: pageNum,
-            totalPages: Math.ceil(total / limitNum),
-            total,
-            hasNextPage: pageNum < Math.ceil(total / limitNum),
-            hasPrevPage: pageNum > 1,
-          },
-        },
-        "Complaints retrieved successfully"
-      )
-    );
-  } catch (error) {
-    logger.error("Error getting user complaints:", error);
-    next(error);
+  if (status && status !== "all") {
+    filter.status = status;
   }
-};
+
+  if (priority && priority !== "all") {
+    filter.priority = priority;
+  }
+
+  if (category && category !== "all") {
+    filter.category = category;
+  }
+
+  // Date range filter
+  if (startDate || endDate) {
+    filter.createdAt = {};
+    if (startDate) filter.createdAt.$gte = new Date(startDate);
+    if (endDate) filter.createdAt.$lte = new Date(endDate);
+  }
+
+  // Search filter
+  if (search) {
+    filter.$or = [
+      { title: { $regex: search, $options: "i" } },
+      { description: { $regex: search, $options: "i" } },
+      { complaintId: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  // Pagination
+  const pageNum = parseInt(page) || 1;
+  const limitNum = parseInt(limit) || 10;
+  const skip = (pageNum - 1) * limitNum;
+
+  // Sort
+  const sort = {};
+  sort[sortBy || "createdAt"] = sortOrder === "asc" ? 1 : -1;
+
+  // Get complaints
+  const complaints = await Complaint.find(filter)
+    .populate("order", "orderId totalPrice createdAt")
+    .populate("assignedTo", "name staffId")
+    .populate("branch", "name location")
+    .sort(sort)
+    .skip(skip)
+    .limit(limitNum)
+    .select("-internalNotes"); // Don't show internal notes to users
+
+  const total = await Complaint.countDocuments(filter);
+
+  res.status(200).json(
+    new APIResponse(
+      200,
+      {
+        complaints,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          total,
+          hasNextPage: pageNum < Math.ceil(total / limitNum),
+          hasPrevPage: pageNum > 1,
+        },
+      },
+      "Complaints retrieved successfully"
+    )
+  );
+  });
 
 /**
  * Get complaint details by ID
  * GET /api/v1/user/complaints/:complaintId
  * @access User
  */
-export const getComplaintDetails = async (req, res, next) => {
-  try {
-    const userId = req.user._id;
-    const { complaintId } = req.params;
+export const getComplaintDetails = asyncHandler(async (req, res, next) => {
+  const userId = req.user._id;
+  const { complaintId } = req.params;
 
-    // Validate complaint ID format
-    if (!complaintId.match(/^[0-9a-fA-F]{24}$/)) {
-      return next(new APIError(400, "Invalid complaint ID"));
-    }
-
-    const complaint = await Complaint.findById(complaintId)
-      .populate("user", "name phone email")
-      .populate("order", "orderId items totalPrice createdAt status")
-      .populate("branch", "name location phone")
-      .populate("hotel", "name")
-      .populate("assignedTo", "name staffId")
-      .populate("resolvedBy", "name")
-      .populate({
-        path: "responses.respondedBy.userId",
-        select: "name",
-      })
-      .select("-internalNotes"); // Hide internal notes from users
-
-    if (!complaint) {
-      return next(new APIError(404, "Complaint not found"));
-    }
-
-    // Verify complaint belongs to user
-    if (complaint.user._id.toString() !== userId.toString()) {
-      return next(new APIError(403, "You can only view your own complaints"));
-    }
-
-    // Filter responses to show only public ones
-    if (complaint.responses && complaint.responses.length > 0) {
-      complaint.responses = complaint.responses.filter(
-        (response) => response.isPublic === true
-      );
-    }
-
-    res
-      .status(200)
-      .json(
-        new APIResponse(
-          200,
-          { complaint },
-          "Complaint details retrieved successfully"
-        )
-      );
-  } catch (error) {
-    logger.error("Error getting complaint details:", error);
-    next(error);
+  // Validate complaint ID format
+  if (!complaintId.match(/^[0-9a-fA-F]{24}$/)) {
+    return next(new APIError(400, "Invalid complaint ID"));
   }
-};
+
+  const complaint = await Complaint.findById(complaintId)
+    .populate("user", "name phone email")
+    .populate("order", "orderId items totalPrice createdAt status")
+    .populate("branch", "name location phone")
+    .populate("hotel", "name")
+    .populate("assignedTo", "name staffId")
+    .populate("resolvedBy", "name")
+    .populate({
+      path: "responses.respondedBy.userId",
+      select: "name",
+    })
+    .select("-internalNotes"); // Hide internal notes from users
+
+  if (!complaint) {
+    return next(new APIError(404, "Complaint not found"));
+  }
+
+  // Verify complaint belongs to user
+  if (complaint.user._id.toString() !== userId.toString()) {
+    return next(new APIError(403, "You can only view your own complaints"));
+  }
+
+  // Filter responses to show only public ones
+  if (complaint.responses && complaint.responses.length > 0) {
+    complaint.responses = complaint.responses.filter(
+      (response) => response.isPublic === true
+    );
+  }
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { complaint },
+        "Complaint details retrieved successfully"
+      )
+    );
+  });
 
 /**
  * Add follow-up message to complaint
@@ -628,288 +620,273 @@ export const addFollowUpMessage = async (req, res, next) => {
  * PUT /api/v1/user/complaints/:complaintId/rate
  * @access User
  */
-export const rateResolution = async (req, res, next) => {
-  try {
-    const userId = req.user._id;
-    const { complaintId } = req.params;
-    const { rating, feedbackComment } = req.body;
+export const rateResolution = asyncHandler(async (req, res, next) => {
+  const userId = req.user._id;
+  const { complaintId } = req.params;
+  const { rating, feedbackComment } = req.body;
 
-    // Validate
-    if (!complaintId.match(/^[0-9a-fA-F]{24}$/)) {
-      return next(new APIError(400, "Invalid complaint ID"));
-    }
-
-    const { error } = validateRating({ rating, feedbackComment, complaintId });
-    if (error) {
-      return next(new APIError(400, "Validation failed", error.details));
-    }
-
-    const complaint = await Complaint.findById(complaintId);
-
-    if (!complaint) {
-      return next(new APIError(404, "Complaint not found"));
-    }
-
-    // Verify complaint belongs to user
-    if (complaint.user.toString() !== userId.toString()) {
-      return next(new APIError(403, "You can only rate your own complaints"));
-    }
-
-    // Check if complaint is resolved
-    if (complaint.status !== "resolved") {
-      return next(new APIError(400, "Can only rate resolved complaints"));
-    }
-
-    // Check if already rated
-    if (complaint.userRating) {
-      return next(new APIError(400, "Complaint has already been rated"));
-    }
-
-    // Update rating
-    complaint.userRating = rating;
-    complaint.feedbackComment = feedbackComment || "";
-
-    // If rating is low (≤ 2), allow reopening
-    if (rating <= 2) {
-      complaint.canReopen = true;
-    }
-
-    complaint.updatedBy = {
-      userType: "user",
-      userId,
-      timestamp: new Date(),
-    };
-
-    await complaint.save();
-
-    logger.info(
-      `User ${userId} rated complaint ${complaintId} with ${rating} stars`
-    );
-
-    // TODO: If rating <= 2, alert manager (Phase 7)
-
-    res
-      .status(200)
-      .json(
-        new APIResponse(
-          200,
-          { complaint },
-          "Thank you for rating the resolution"
-        )
-      );
-  } catch (error) {
-    logger.error("Error rating complaint:", error);
-    next(error);
+  // Validate
+  if (!complaintId.match(/^[0-9a-fA-F]{24}$/)) {
+    return next(new APIError(400, "Invalid complaint ID"));
   }
-};
+
+  const { error } = validateRating({ rating, feedbackComment, complaintId });
+  if (error) {
+    return next(new APIError(400, "Validation failed", error.details));
+  }
+
+  const complaint = await Complaint.findById(complaintId);
+
+  if (!complaint) {
+    return next(new APIError(404, "Complaint not found"));
+  }
+
+  // Verify complaint belongs to user
+  if (complaint.user.toString() !== userId.toString()) {
+    return next(new APIError(403, "You can only rate your own complaints"));
+  }
+
+  // Check if complaint is resolved
+  if (complaint.status !== "resolved") {
+    return next(new APIError(400, "Can only rate resolved complaints"));
+  }
+
+  // Check if already rated
+  if (complaint.userRating) {
+    return next(new APIError(400, "Complaint has already been rated"));
+  }
+
+  // Update rating
+  complaint.userRating = rating;
+  complaint.feedbackComment = feedbackComment || "";
+
+  // If rating is low (≤ 2), allow reopening
+  if (rating <= 2) {
+    complaint.canReopen = true;
+  }
+
+  complaint.updatedBy = {
+    userType: "user",
+    userId,
+    timestamp: new Date(),
+  };
+
+  await complaint.save();
+
+  logger.info(
+    `User ${userId} rated complaint ${complaintId} with ${rating} stars`
+  );
+
+  // TODO: If rating <= 2, alert manager (Phase 7)
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { complaint },
+        "Thank you for rating the resolution"
+      )
+    );
+  });
 
 /**
  * Reopen a resolved complaint
  * PUT /api/v1/user/complaints/:complaintId/reopen
  * @access User
  */
-export const reopenComplaint = async (req, res, next) => {
-  try {
-    const userId = req.user._id;
-    const { complaintId } = req.params;
-    const { reason } = req.body;
+export const reopenComplaint = asyncHandler(async (req, res, next) => {
+  const userId = req.user._id;
+  const { complaintId } = req.params;
+  const { reason } = req.body;
 
-    // Validate
-    if (!complaintId.match(/^[0-9a-fA-F]{24}$/)) {
-      return next(new APIError(400, "Invalid complaint ID"));
-    }
+  // Validate
+  if (!complaintId.match(/^[0-9a-fA-F]{24}$/)) {
+    return next(new APIError(400, "Invalid complaint ID"));
+  }
 
-    const { error } = validateReopenRequest({ reason, complaintId });
-    if (error) {
-      return next(new APIError(400, "Validation failed", error.details));
-    }
+  const { error } = validateReopenRequest({ reason, complaintId });
+  if (error) {
+    return next(new APIError(400, "Validation failed", error.details));
+  }
 
-    const complaint = await Complaint.findById(complaintId);
+  const complaint = await Complaint.findById(complaintId);
 
-    if (!complaint) {
-      return next(new APIError(404, "Complaint not found"));
-    }
+  if (!complaint) {
+    return next(new APIError(404, "Complaint not found"));
+  }
 
-    // Verify complaint belongs to user
-    if (complaint.user.toString() !== userId.toString()) {
-      return next(new APIError(403, "You can only reopen your own complaints"));
-    }
+  // Verify complaint belongs to user
+  if (complaint.user.toString() !== userId.toString()) {
+    return next(new APIError(403, "You can only reopen your own complaints"));
+  }
 
-    // Check if complaint is resolved
-    if (complaint.status !== "resolved") {
-      return next(new APIError(400, "Can only reopen resolved complaints"));
-    }
+  // Check if complaint is resolved
+  if (complaint.status !== "resolved") {
+    return next(new APIError(400, "Can only reopen resolved complaints"));
+  }
 
-    // Check if can reopen
-    if (!complaint.canReopen) {
-      return next(new APIError(400, "This complaint cannot be reopened"));
-    }
+  // Check if can reopen
+  if (!complaint.canReopen) {
+    return next(new APIError(400, "This complaint cannot be reopened"));
+  }
 
-    // Check if within 1 day of resolution
-    const daysSinceResolution =
-      (new Date() - complaint.resolvedAt) / (1000 * 60 * 60 * 24);
-    if (daysSinceResolution > 1) {
-      return next(
-        new APIError(
-          400,
-          "Complaints can only be reopened within 1 day of resolution"
-        )
-      );
-    }
+  // Check if within 1 day of resolution
+  const daysSinceResolution =
+    (new Date() - complaint.resolvedAt) / (1000 * 60 * 60 * 24);
+  if (daysSinceResolution > 1) {
+    return next(
+      new APIError(
+        400,
+        "Complaints can only be reopened within 1 day of resolution"
+      )
+    );
+  }
 
-    // Reopen complaint
-    complaint.status = "reopened";
-    complaint.canReopen = false; // Can't reopen again
-    complaint.assignedTo = null; // Reset assignment
-    complaint.priority = "high"; // Boost priority
+  // Reopen complaint
+  complaint.status = "reopened";
+  complaint.canReopen = false; // Can't reopen again
+  complaint.assignedTo = null; // Reset assignment
+  complaint.priority = "high"; // Boost priority
 
-    // Add to status history
-    complaint.statusHistory.push({
-      status: "reopened",
-      updatedBy: userId,
-      updatedByModel: "User",
-      timestamp: new Date(),
-      notes: `Reopened by user. Reason: ${reason}`,
-    });
+  // Add to status history
+  complaint.statusHistory.push({
+    status: "reopened",
+    updatedBy: userId,
+    updatedByModel: "User",
+    timestamp: new Date(),
+    notes: `Reopened by user. Reason: ${reason}`,
+  });
 
-    // Add response with reason
-    complaint.responses.push({
-      message: `Complaint reopened. Reason: ${reason}`,
-      respondedBy: {
-        userType: "user",
-        userId,
-      },
-      respondedAt: new Date(),
-      isPublic: true,
-      attachments: [],
-    });
-
-    complaint.updatedBy = {
+  // Add response with reason
+  complaint.responses.push({
+    message: `Complaint reopened. Reason: ${reason}`,
+    respondedBy: {
       userType: "user",
       userId,
-      timestamp: new Date(),
-    };
+    },
+    respondedAt: new Date(),
+    isPublic: true,
+    attachments: [],
+  });
 
-    await complaint.save();
+  complaint.updatedBy = {
+    userType: "user",
+    userId,
+    timestamp: new Date(),
+  };
 
-    logger.info(`User ${userId} reopened complaint ${complaintId}`);
+  await complaint.save();
 
-    // Emit socket event to notify manager and assigned staff
-    try {
-      const io = getIO();
-      emitComplaintUpdate(io, complaintId, {
-        complaintId,
-        userId: complaint.user,
-        branchId: complaint.branch,
-        staffId: complaint.assignedTo,
-        type: "reopened",
-        message: "Complaint reopened by user",
-        complaint: complaint.toObject(),
-        reason,
-      });
-      logger.info(`Socket event emitted for reopened complaint ${complaintId}`);
-    } catch (socketError) {
-      logger.error(
-        "Error emitting socket event for reopened complaint:",
-        socketError
-      );
-      // Don't block operation if socket emission fails
-    }
+  logger.info(`User ${userId} reopened complaint ${complaintId}`);
 
-    res
-      .status(200)
-      .json(
-        new APIResponse(200, { complaint }, "Complaint reopened successfully")
-      );
-  } catch (error) {
-    logger.error("Error reopening complaint:", error);
-    next(error);
+  // Emit socket event to notify manager and assigned staff
+  try {
+    const io = getIO();
+    emitComplaintUpdate(io, complaintId, {
+      complaintId,
+      userId: complaint.user,
+      branchId: complaint.branch,
+      staffId: complaint.assignedTo,
+      type: "reopened",
+      message: "Complaint reopened by user",
+      complaint: complaint.toObject(),
+      reason,
+    });
+    logger.info(`Socket event emitted for reopened complaint ${complaintId}`);
+  } catch (socketError) {
+    logger.error(
+      "Error emitting socket event for reopened complaint:",
+      socketError
+    );
+    // Don't block operation if socket emission fails
   }
-};
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(200, { complaint }, "Complaint reopened successfully")
+    );
+  });
 
 /**
  * Get user's complaint dashboard summary
  * GET /api/v1/user/complaints/dashboard
  * @access User
  */
-export const getMyComplaintsDashboard = async (req, res, next) => {
-  try {
-    const userId = req.user._id;
+export const getMyComplaintsDashboard = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
 
-    // Get counts by status
-    const statusCounts = await Complaint.aggregate([
-      { $match: { user: userId } },
-      { $group: { _id: "$status", count: { $sum: 1 } } },
-    ]);
+  // Get counts by status
+  const statusCounts = await Complaint.aggregate([
+    { $match: { user: userId } },
+    { $group: { _id: "$status", count: { $sum: 1 } } },
+  ]);
 
-    // Get average resolution time for user's resolved complaints
-    const resolutionTimes = await Complaint.aggregate([
-      {
-        $match: {
-          user: userId,
-          status: "resolved",
-          resolvedAt: { $exists: true },
+  // Get average resolution time for user's resolved complaints
+  const resolutionTimes = await Complaint.aggregate([
+    {
+      $match: {
+        user: userId,
+        status: "resolved",
+        resolvedAt: { $exists: true },
+      },
+    },
+    {
+      $project: {
+        resolutionTime: {
+          $divide: [
+            { $subtract: ["$resolvedAt", "$createdAt"] },
+            1000 * 60 * 60,
+          ],
         },
       },
-      {
-        $project: {
-          resolutionTime: {
-            $divide: [
-              { $subtract: ["$resolvedAt", "$createdAt"] },
-              1000 * 60 * 60,
-            ],
-          },
-        },
+    },
+    {
+      $group: {
+        _id: null,
+        avgResolutionTime: { $avg: "$resolutionTime" },
       },
-      {
-        $group: {
-          _id: null,
-          avgResolutionTime: { $avg: "$resolutionTime" },
-        },
+    },
+  ]);
+
+  // Get recent complaints (last 5)
+  const recentComplaints = await Complaint.find({ user: userId })
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .select("complaintId title status priority createdAt")
+    .populate("branch", "name");
+
+  // Get average rating given by user
+  const ratingStats = await Complaint.aggregate([
+    { $match: { user: userId, userRating: { $exists: true } } },
+    {
+      $group: {
+        _id: null,
+        avgRating: { $avg: "$userRating" },
+        totalRated: { $sum: 1 },
       },
-    ]);
+    },
+  ]);
 
-    // Get recent complaints (last 5)
-    const recentComplaints = await Complaint.find({ user: userId })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select("complaintId title status priority createdAt")
-      .populate("branch", "name");
+  const dashboard = {
+    statusCounts: statusCounts.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {}),
+    avgResolutionTime: resolutionTimes[0]?.avgResolutionTime || 0,
+    recentComplaints,
+    avgRating: ratingStats[0]?.avgRating || 0,
+    totalRated: ratingStats[0]?.totalRated || 0,
+  };
 
-    // Get average rating given by user
-    const ratingStats = await Complaint.aggregate([
-      { $match: { user: userId, userRating: { $exists: true } } },
-      {
-        $group: {
-          _id: null,
-          avgRating: { $avg: "$userRating" },
-          totalRated: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const dashboard = {
-      statusCounts: statusCounts.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {}),
-      avgResolutionTime: resolutionTimes[0]?.avgResolutionTime || 0,
-      recentComplaints,
-      avgRating: ratingStats[0]?.avgRating || 0,
-      totalRated: ratingStats[0]?.totalRated || 0,
-    };
-
-    res
-      .status(200)
-      .json(
-        new APIResponse(
-          200,
-          { dashboard },
-          "Dashboard data retrieved successfully"
-        )
-      );
-  } catch (error) {
-    logger.error("Error getting complaint dashboard:", error);
-    next(error);
-  }
-};
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { dashboard },
+        "Dashboard data retrieved successfully"
+      )
+    );
+  });

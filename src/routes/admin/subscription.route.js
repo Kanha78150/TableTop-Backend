@@ -5,6 +5,7 @@ import {
   activateSubscription,
   getMySubscription,
   getMyUsageStats,
+  cancelPendingPayment,
   cancelSubscription,
   renewSubscription,
   upgradePlan,
@@ -60,6 +61,19 @@ router.get(
  * @returns { usage, warnings }
  */
 router.get("/usage", authenticateAdmin, requireAdmin, getMyUsageStats);
+
+/**
+ * @route   POST /api/v1/subscription/cancel-pending
+ * @desc    Cancel a pending payment (admin abandoned/cancelled checkout)
+ * @access  Private (Admin)
+ * @returns { subscription }
+ */
+router.post(
+  "/cancel-pending",
+  authenticateAdmin,
+  requireAdmin,
+  cancelPendingPayment
+);
 
 /**
  * @route   POST /api/v1/subscription/cancel

@@ -1,4 +1,4 @@
-import { paymentService } from "../../services/payment.service.js";
+import { paymentService } from "../../services/payment/payment.service.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";

@@ -2,8 +2,7 @@ import cartService from "../../services/cart.service.js";
 import { APIError } from "../../utils/APIError.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { cartValidationSchemas } from "../../models/Cart.model.js";
-import asyncHandler from "express-async-handler";
-
+import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 /**
  * @desc    Add item to cart
  * @route   POST /api/user/cart/add

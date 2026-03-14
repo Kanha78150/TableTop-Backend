@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import Joi from "joi";
 
 const adminSubscriptionSchema = new mongoose.Schema(
   {
@@ -196,10 +195,19 @@ adminSubscriptionSchema.index({ endDate: 1 });
 adminSubscriptionSchema.index({ admin: 1, status: 1 }); // Compound index
 
 // Static method to find active subscription for admin
+// IMPORTANT: Only returns truly active (paid) subscriptions
 adminSubscriptionSchema.statics.findActiveSubscription = function (adminId) {
   return this.findOne({
     admin: adminId,
-    status: { $in: ["active", "pending_payment"] },
+    status: "active",
+  }).populate("plan");
+};
+
+// Static method to find pending payment subscription for admin
+adminSubscriptionSchema.statics.findPendingSubscription = function (adminId) {
+  return this.findOne({
+    admin: adminId,
+    status: "pending_payment",
   }).populate("plan");
 };
 
@@ -254,74 +262,5 @@ export const AdminSubscription = mongoose.model(
 );
 
 // Validation schema for creating subscription
-export const validateSubscription = (data) => {
-  const schema = Joi.object({
-    admin: Joi.string().required().messages({
-      "any.required": "Admin ID is required",
-    }),
-    plan: Joi.string().required().messages({
-      "any.required": "Plan ID is required",
-    }),
-    billingCycle: Joi.string().valid("monthly", "yearly").required().messages({
-      "any.only": "Billing cycle must be monthly or yearly",
-      "any.required": "Billing cycle is required",
-    }),
-    startDate: Joi.date().required().messages({
-      "any.required": "Start date is required",
-    }),
-    endDate: Joi.date().greater(Joi.ref("startDate")).required().messages({
-      "date.greater": "End date must be after start date",
-      "any.required": "End date is required",
-    }),
-    autoRenew: Joi.boolean().optional(),
-  });
-  return schema.validate(data);
-};
-
-// Validation schema for payment record
-export const validatePayment = (data) => {
-  const schema = Joi.object({
-    amount: Joi.number().min(0).required().messages({
-      "number.min": "Amount cannot be negative",
-      "any.required": "Amount is required",
-    }),
-    transactionId: Joi.string().required().messages({
-      "any.required": "Transaction ID is required",
-    }),
-    paymentMethod: Joi.string()
-      .valid("razorpay", "stripe", "paypal", "bank_transfer", "other")
-      .optional(),
-    status: Joi.string()
-      .valid("success", "failed", "pending", "refunded")
-      .optional(),
-    currency: Joi.string().optional(),
-    invoiceUrl: Joi.string().uri().optional(),
-    notes: Joi.string().max(500).optional(),
-  });
-  return schema.validate(data);
-};
-
-// Validation schema for selecting subscription plan
-export const validatePlanSelection = (data) => {
-  const schema = Joi.object({
-    planId: Joi.string().required().messages({
-      "any.required": "Plan ID is required",
-    }),
-    billingCycle: Joi.string().valid("monthly", "yearly").required().messages({
-      "any.only": "Billing cycle must be monthly or yearly",
-      "any.required": "Billing cycle is required",
-    }),
-  });
-  return schema.validate(data);
-};
-
-// Validation schema for cancellation
-export const validateCancellation = (data) => {
-  const schema = Joi.object({
-    reason: Joi.string().max(500).required().messages({
-      "string.max": "Reason cannot exceed 500 characters",
-      "any.required": "Cancellation reason is required",
-    }),
-  });
-  return schema.validate(data);
-};
+// Validators extracted to src/validators/adminsubscription.validators.js
+export { validateSubscription, validatePayment, validatePlanSelection, validateCancellation } from "../validators/adminsubscription.validators.js";
