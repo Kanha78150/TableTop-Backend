@@ -11,7 +11,6 @@ import { APIError } from "../../utils/APIError.js";
 import jwt from "jsonwebtoken";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
-
 /**
  * Handle QR code scan
  * GET /api/v1/scan
@@ -73,6 +72,7 @@ export const handleQRScan = asyncHandler(async (req, res, next) => {
           authenticated: false,
           message: "Please signup or login first",
           table: {
+            id: table._id,
             tableNumber: table.tableNumber,
             capacity: table.capacity,
             location: table.location,
@@ -153,7 +153,7 @@ export const handleQRScan = asyncHandler(async (req, res, next) => {
       "QR scan successful - welcome to the menu!"
     )
   );
-  });
+});
 
 /**
  * Validate QR scan data
@@ -270,7 +270,7 @@ export const getTableInfo = asyncHandler(async (req, res, next) => {
       "Table information retrieved successfully"
     )
   );
-  });
+});
 
 /**
  * Record table scan event (for analytics)
@@ -321,7 +321,7 @@ export const recordScanEvent = asyncHandler(async (req, res, next) => {
       "Scan event recorded successfully"
     )
   );
-  });
+});
 
 /**
  * Helper function to get menu data for hotel/branch
@@ -427,7 +427,7 @@ export const getMenuForTable = asyncHandler(async (req, res, next) => {
       "Menu retrieved successfully"
     )
   );
-  });
+});
 
 export default {
   handleQRScan,

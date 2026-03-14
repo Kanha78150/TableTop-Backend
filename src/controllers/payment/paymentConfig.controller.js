@@ -59,7 +59,46 @@ export const getPaymentConfig = async (req, res) => {
 
     const config = hotel.paymentConfig;
 
-    // Return config without sensitive credentials
+    // Admin and Super Admin get decrypted credentials (secrets partially masked)
+    let credentialsData;
+    const isSuperAdmin =
+      req.user.role === "superAdmin" || req.user.role === "super_admin";
+    const isAdmin = req.user.role === "admin";
+
+    if (isSuperAdmin || isAdmin) {
+      // Fetch config with credentials selected for decryption
+      const fullConfig = await PaymentConfig.findOne({ hotel: hotelId }).select(
+        "+credentials.keyId +credentials.keySecret +credentials.merchantId +credentials.saltKey +credentials.merchantKey +credentials.webhookSecret +credentials.isProduction"
+      );
+      if (fullConfig) {
+        const decrypted = fullConfig.getDecryptedCredentials();
+        credentialsData = {
+          // Show identifiers in full (keyId, merchantId)
+          keyId: decrypted.keyId || undefined,
+          merchantId: decrypted.merchantId || undefined,
+          saltIndex: decrypted.saltIndex || undefined,
+          websiteName: decrypted.websiteName || undefined,
+          // Partially mask secrets
+          keySecret: decrypted.keySecret
+            ? maskString(decrypted.keySecret)
+            : undefined,
+          webhookSecret: decrypted.webhookSecret
+            ? maskString(decrypted.webhookSecret)
+            : undefined,
+          saltKey: decrypted.saltKey
+            ? maskString(decrypted.saltKey)
+            : undefined,
+          merchantKey: decrypted.merchantKey
+            ? maskString(decrypted.merchantKey)
+            : undefined,
+        };
+      } else {
+        credentialsData = maskCredentials(config.provider, config.credentials);
+      }
+    } else {
+      credentialsData = maskCredentials(config.provider, config.credentials);
+    }
+
     return res.status(200).json({
       success: true,
       configured: true,
@@ -85,8 +124,7 @@ export const getPaymentConfig = async (req, res) => {
         deactivationRequestReason: config.deactivationRequestReason,
         createdAt: config.createdAt,
         updatedAt: config.updatedAt,
-        // Show only masked credentials
-        credentials: maskCredentials(config.provider, config.credentials),
+        credentials: credentialsData,
       },
     });
   } catch (error) {
@@ -154,6 +192,29 @@ export const setupPaymentConfig = async (req, res) => {
     let paymentConfig = await PaymentConfig.findOne({ hotel: hotelId });
 
     if (paymentConfig) {
+      // Block re-submission if the same provider is already active
+      if (paymentConfig.provider === provider && paymentConfig.isActive) {
+        return res.status(400).json({
+          success: false,
+          message: `Payment gateway (${provider}) is already active for this hotel. To change credentials, first request deactivation.`,
+          hint: "Use the request-deactivation endpoint to deactivate the current gateway before submitting new credentials.",
+        });
+      }
+
+      // Block re-submission if the same provider is pending Super Admin approval
+      if (
+        paymentConfig.provider === provider &&
+        paymentConfig.verified &&
+        !paymentConfig.isActive &&
+        paymentConfig.credentials?.isProduction
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: `Payment gateway (${provider}) credentials are already verified and pending Super Admin activation. Please wait for approval.`,
+          verifiedAt: paymentConfig.verifiedAt,
+        });
+      }
+
       // Update existing configuration
       paymentConfig.provider = provider;
       paymentConfig.credentials = credentials;
@@ -607,6 +668,9 @@ export const activateProductionConfig = async (req, res) => {
     paymentConfig.activatedBy = req.user._id;
     paymentConfig.activatedAt = new Date();
     paymentConfig.activationIp = req.ip || req.connection.remoteAddress;
+    // Mark webhook as active since config is now live
+    paymentConfig.webhookStatus = "active";
+    paymentConfig.webhookFailureCount = 0;
     await paymentConfig.save();
 
     // Populate activatedBy for response

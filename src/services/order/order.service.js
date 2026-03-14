@@ -8,6 +8,8 @@ import { User } from "../../models/User.model.js";
 import { APIError } from "../../utils/APIError.js";
 import coinService from "../reward.service.js";
 import assignmentService from "../assignment/assignment.service.js";
+import { createTransactionRecord } from "../payment/postProcess.service.js";
+import { generateTransactionId } from "../../utils/idGenerator.js";
 
 /**
  * Place order from user's cart
@@ -404,6 +406,18 @@ export const cancelOrder = async (
     order.cancelledAt = new Date();
     order.payment.paymentStatus =
       order.payment.paymentStatus === "paid" ? "refund_pending" : "cancelled";
+
+    // Handle commission on cancellation
+    if (order.payment.paymentStatus === "refund_pending") {
+      // Payment was made — commission should be waived (refund scenario)
+      order.payment.commissionStatus = "waived";
+      order.payment.commissionAmount = 0;
+      order.payment.commissionWaivedAt = new Date();
+    } else if (order.payment.commissionStatus !== "not_applicable") {
+      // Payment was never made — commission not applicable
+      order.payment.commissionStatus = "not_applicable";
+      order.payment.commissionAmount = 0;
+    }
 
     await order.save();
 
@@ -921,25 +935,34 @@ export const confirmCashPayment = async (
       );
     }
 
-    // Update payment status
-    const updatedOrder = await Order.findByIdAndUpdate(
-      orderId,
-      {
-        "payment.paymentStatus": "paid",
-        "payment.paidAt": new Date(),
-        "payment.provider": "cash",
-        "payment.cashConfirmedBy": confirmedBy,
-        "payment.cashConfirmedByRole": confirmedByRole,
-        "payment.cashConfirmedAt": new Date(),
-        updatedAt: new Date(),
-      },
-      { new: true }
-    )
+    // Update payment status and transition commission to "due" if applicable
+    const updateFields = {
+      "payment.paymentStatus": "paid",
+      "payment.paidAt": new Date(),
+      "payment.provider": "cash",
+      "payment.transactionId": generateTransactionId(),
+      "payment.cashConfirmedBy": confirmedBy,
+      "payment.cashConfirmedByRole": confirmedByRole,
+      "payment.cashConfirmedAt": new Date(),
+      updatedAt: new Date(),
+    };
+
+    // Transition commission from pending to due (same as online payment verification)
+    if (order.payment?.commissionStatus === "pending") {
+      updateFields["payment.commissionStatus"] = "due";
+    }
+
+    const updatedOrder = await Order.findByIdAndUpdate(orderId, updateFields, {
+      new: true,
+    })
       .populate("user", "name phone email")
       .populate("hotel", "name hotelId")
       .populate("branch", "name branchId")
       .populate("table", "tableNumber")
       .populate("staff", "name staffId");
+
+    // Create Transaction record for cash payment (same as online payments)
+    await createTransactionRecord(updatedOrder);
 
     return updatedOrder;
   } catch (error) {

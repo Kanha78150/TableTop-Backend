@@ -479,13 +479,16 @@ class AssignmentService {
       }
 
       // Get next order from queue for this hotel/branch
+      logger.info(
+        `assignFromQueue: waiter ${waiterId} hotel=${waiter.hotel}, branch=${waiter.branch}`
+      );
       const nextOrder = await queueService.getNextInQueue({
         hotel: waiter.hotel,
         branch: waiter.branch,
       });
 
       if (!nextOrder) {
-        logger.info("No orders in queue");
+        logger.info("No orders in queue for this waiter's hotel/branch");
         return null;
       }
 

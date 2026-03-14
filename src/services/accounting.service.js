@@ -11,7 +11,7 @@ import { logger } from "../utils/logger.js";
  */
 export const getTransactionAnalytics = async (filters = {}) => {
   try {
-    const { hotelId, branchId, period = "7d" } = filters;
+    const { hotelId, branchId, period = "7d", adminHotelIds } = filters;
 
     // Calculate date range based on period
     const endDate = new Date();
@@ -41,6 +41,13 @@ export const getTransactionAnalytics = async (filters = {}) => {
       createdAt: { $gte: startDate, $lte: endDate },
       status: "success",
     };
+
+    // Scope to admin's hotels if provided
+    if (adminHotelIds && adminHotelIds.length > 0) {
+      matchQuery.hotel = {
+        $in: adminHotelIds.map((id) => new mongoose.Types.ObjectId(id)),
+      };
+    }
 
     // Convert string IDs to ObjectIds for MongoDB aggregation
     if (hotelId) matchQuery.hotel = new mongoose.Types.ObjectId(hotelId);
@@ -137,6 +144,7 @@ export const getRevenueComparison = async (filters = {}) => {
       branchId,
       currentPeriod = "30d",
       comparisonPeriod = "30d",
+      adminHotelIds,
     } = filters;
 
     const currentEndDate = new Date();
@@ -173,6 +181,12 @@ export const getRevenueComparison = async (filters = {}) => {
     }
 
     const baseQuery = { status: "success" };
+    // Scope to admin's hotels if provided
+    if (adminHotelIds && adminHotelIds.length > 0) {
+      baseQuery.hotel = {
+        $in: adminHotelIds.map((id) => new mongoose.Types.ObjectId(id)),
+      };
+    }
     // Convert string IDs to ObjectIds for MongoDB aggregation
     if (hotelId) baseQuery.hotel = new mongoose.Types.ObjectId(hotelId);
     if (branchId) baseQuery.branch = new mongoose.Types.ObjectId(branchId);
@@ -223,27 +237,25 @@ export const getRevenueComparison = async (filters = {}) => {
       avgTransactionAmount: 0,
     };
 
-    const revenueGrowth =
-      previous.totalRevenue > 0
-        ? parseFloat(
-            (
-              ((current.totalRevenue - previous.totalRevenue) /
-                previous.totalRevenue) *
-              100
-            ).toFixed(2)
-          )
-        : 0;
+    const calcGrowth = (curr, prev) => {
+      if (prev > 0) {
+        return parseFloat((((curr - prev) / prev) * 100).toFixed(2));
+      }
+      return curr > 0 ? 100 : 0;
+    };
 
-    const transactionGrowth =
-      previous.totalTransactions > 0
-        ? parseFloat(
-            (
-              ((current.totalTransactions - previous.totalTransactions) /
-                previous.totalTransactions) *
-              100
-            ).toFixed(2)
-          )
-        : 0;
+    const revenueGrowth = calcGrowth(
+      current.totalRevenue,
+      previous.totalRevenue
+    );
+    const transactionGrowth = calcGrowth(
+      current.totalTransactions,
+      previous.totalTransactions
+    );
+    const avgTransactionGrowth = calcGrowth(
+      current.avgTransactionAmount,
+      previous.avgTransactionAmount
+    );
 
     return {
       currentPeriod: {
@@ -265,17 +277,7 @@ export const getRevenueComparison = async (filters = {}) => {
       growth: {
         revenue: revenueGrowth,
         transactions: transactionGrowth,
-        avgTransaction:
-          previous.avgTransactionAmount > 0
-            ? parseFloat(
-                (
-                  ((current.avgTransactionAmount -
-                    previous.avgTransactionAmount) /
-                    previous.avgTransactionAmount) *
-                  100
-                ).toFixed(2)
-              )
-            : 0,
+        avgTransaction: avgTransactionGrowth,
       },
     };
   } catch (error) {
@@ -289,7 +291,12 @@ export const getRevenueComparison = async (filters = {}) => {
  */
 export const getTopPerformers = async (filters = {}) => {
   try {
-    const { period = "30d", limit = 10, type = "hotels" } = filters;
+    const {
+      period = "30d",
+      limit = 10,
+      type = "hotels",
+      adminHotelIds,
+    } = filters;
 
     const endDate = new Date();
     const startDate = new Date();
@@ -312,6 +319,13 @@ export const getTopPerformers = async (filters = {}) => {
       createdAt: { $gte: startDate, $lte: endDate },
       status: "success",
     };
+
+    // Scope to admin's hotels if provided
+    if (adminHotelIds && adminHotelIds.length > 0) {
+      matchQuery.hotel = {
+        $in: adminHotelIds.map((id) => new mongoose.Types.ObjectId(id)),
+      };
+    }
 
     let pipeline;
 
@@ -424,7 +438,7 @@ export const getTopPerformers = async (filters = {}) => {
  */
 export const getPaymentMethodDistribution = async (filters = {}) => {
   try {
-    const { hotelId, branchId, period = "30d" } = filters;
+    const { hotelId, branchId, period = "30d", adminHotelIds } = filters;
 
     const endDate = new Date();
     const startDate = new Date();
@@ -447,6 +461,13 @@ export const getPaymentMethodDistribution = async (filters = {}) => {
       createdAt: { $gte: startDate, $lte: endDate },
       status: "success",
     };
+
+    // Scope to admin's hotels if provided
+    if (adminHotelIds && adminHotelIds.length > 0) {
+      matchQuery.hotel = {
+        $in: adminHotelIds.map((id) => new mongoose.Types.ObjectId(id)),
+      };
+    }
 
     // Convert string IDs to ObjectIds for MongoDB aggregation
     if (hotelId) matchQuery.hotel = new mongoose.Types.ObjectId(hotelId);
@@ -501,103 +522,9 @@ export const getPaymentMethodDistribution = async (filters = {}) => {
   }
 };
 
-/**
- * Get pending settlements summary
- */
-export const getPendingSettlements = async (filters = {}) => {
-  try {
-    const { hotelId, branchId } = filters;
-
-    // Get transactions that need settlement (older than 1 day, completed status)
-    const settlementCutoff = new Date();
-    settlementCutoff.setDate(settlementCutoff.getDate() - 1);
-
-    const matchQuery = {
-      status: "success",
-      createdAt: { $lte: settlementCutoff },
-    };
-
-    // Convert string IDs to ObjectIds for MongoDB aggregation
-    if (hotelId) matchQuery.hotel = new mongoose.Types.ObjectId(hotelId);
-    if (branchId) matchQuery.branch = new mongoose.Types.ObjectId(branchId);
-
-    const pipeline = [
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: {
-            hotel: "$hotel",
-            branch: "$branch",
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          },
-          totalAmount: { $sum: "$amount" },
-          transactionCount: { $sum: 1 },
-          oldestTransaction: { $min: "$createdAt" },
-        },
-      },
-      {
-        $lookup: {
-          from: "hotels",
-          localField: "_id.hotel",
-          foreignField: "_id",
-          as: "hotelDetails",
-        },
-      },
-      {
-        $lookup: {
-          from: "branches",
-          localField: "_id.branch",
-          foreignField: "_id",
-          as: "branchDetails",
-        },
-      },
-      { $unwind: "$hotelDetails" },
-      { $unwind: "$branchDetails" },
-      { $sort: { oldestTransaction: 1 } },
-    ];
-
-    const pendingSettlements = await Transaction.aggregate(pipeline);
-
-    const summary = pendingSettlements.reduce(
-      (acc, settlement) => ({
-        totalAmount: acc.totalAmount + settlement.totalAmount,
-        totalCount: acc.totalCount + settlement.transactionCount,
-      }),
-      { totalAmount: 0, totalCount: 0 }
-    );
-
-    return {
-      pendingSettlements: pendingSettlements.map((settlement) => ({
-        settlementId: `PEND-${settlement._id.date}-${settlement._id.hotel
-          .toString()
-          .slice(-6)}`,
-        hotelId: settlement._id.hotel,
-        hotelName: settlement.hotelDetails.name,
-        branchId: settlement._id.branch,
-        branchName: settlement.branchDetails.name,
-        settlementDate: settlement._id.date,
-        totalAmount: parseFloat(settlement.totalAmount.toFixed(2)),
-        transactionCount: settlement.transactionCount,
-        daysPending: Math.floor(
-          (new Date() - settlement.oldestTransaction) / (1000 * 60 * 60 * 24)
-        ),
-      })),
-      summary: {
-        totalPendingAmount: parseFloat(summary.totalAmount.toFixed(2)),
-        totalPendingTransactions: summary.totalCount,
-        totalPendingSettlements: pendingSettlements.length,
-      },
-    };
-  } catch (error) {
-    logger.error("Error in getPendingSettlements:", error);
-    throw error;
-  }
-};
-
 export default {
   getTransactionAnalytics,
   getRevenueComparison,
   getTopPerformers,
   getPaymentMethodDistribution,
-  getPendingSettlements,
 };

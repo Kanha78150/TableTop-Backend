@@ -31,7 +31,7 @@ const transactionSchema = new mongoose.Schema(
       enum: ["pending", "success", "failed", "refunded"],
       default: "pending",
     },
-    transactionId: { type: String, unique: true },
+    transactionId: { type: String, unique: true, sparse: true },
   },
   { timestamps: true }
 );

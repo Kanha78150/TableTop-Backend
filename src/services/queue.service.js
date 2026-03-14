@@ -111,7 +111,18 @@ class QueueService {
       };
 
       if (hotel) queryFilter.hotel = hotel;
-      if (branch) queryFilter.branch = branch;
+      // Match orders for this branch OR orders with no branch (hotel-level orders)
+      if (branch) {
+        queryFilter.$or = [
+          { branch: branch },
+          { branch: null },
+          { branch: { $exists: false } },
+        ];
+      }
+
+      logger.info(
+        `getNextInQueue filter: ${JSON.stringify({ hotel: hotel?.toString(), branch: branch?.toString() })}`
+      );
 
       // Get next order based on priority and queue position
       // Higher priority first, then earlier queue position
@@ -125,7 +136,25 @@ class QueueService {
         .lean();
 
       if (!nextOrder) {
-        logger.info("No orders in queue");
+        // Debug: count queued orders at different levels
+        const totalQueuedGlobal = await Order.countDocuments({
+          status: "queued",
+          queuePosition: { $exists: true, $ne: null },
+        });
+        const totalQueuedForHotel = hotel
+          ? await Order.countDocuments({
+              status: "queued",
+              queuePosition: { $exists: true, $ne: null },
+              hotel,
+            })
+          : "N/A";
+        // Check if there are orders with "pending" status that might be stuck
+        const pendingOrders = hotel
+          ? await Order.countDocuments({ status: "pending", hotel })
+          : 0;
+        logger.info(
+          `No orders in queue matching filter — global queued: ${totalQueuedGlobal}, hotel queued: ${totalQueuedForHotel}, hotel pending: ${pendingOrders}`
+        );
         return null;
       }
 
