@@ -6,6 +6,7 @@ export {
   cancelOrder,
   reorderFromPrevious,
   placeDirectOrder,
+  addItemsToOrder,
   confirmCashPayment,
   default as orderService,
 } from "./order.service.js";

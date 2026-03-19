@@ -502,3 +502,103 @@ export const debugPaymentCallback = async (req, res) => {
     );
   }
 };
+
+/**
+ * @desc    Initiate supplementary payment for add-on items
+ * @route   POST /api/v1/payment/supplementary/initiate
+ * @access  Private (User)
+ */
+export const initiateSupplementaryPayment = async (req, res) => {
+  try {
+    const { orderId, batch } = req.body;
+    const userId = req.user.id;
+
+    if (!orderId || !batch) {
+      return res
+        .status(400)
+        .json(new APIResponse(400, null, "orderId and batch are required"));
+    }
+
+    // Import dynamicPaymentService here to avoid circular deps
+    const { default: dynamicPaymentService } =
+      await import("../../services/payment/dynamicPayment.service.js");
+
+    const result = await dynamicPaymentService.initiateSupplementaryPayment({
+      orderId,
+      batch,
+      customerInfo: { userId },
+    });
+
+    return res
+      .status(200)
+      .json(
+        new APIResponse(
+          200,
+          result,
+          "Supplementary payment initiated successfully"
+        )
+      );
+  } catch (error) {
+    logger.error("Supplementary payment initiation failed", {
+      error: error.message,
+    });
+
+    return res
+      .status(error.message?.includes("not found") ? 404 : 500)
+      .json(
+        new APIResponse(
+          error.message?.includes("not found") ? 404 : 500,
+          null,
+          error.message || "Supplementary payment initiation failed"
+        )
+      );
+  }
+};
+
+/**
+ * @desc    Verify supplementary payment after completion
+ * @route   POST /api/v1/payment/supplementary/verify
+ * @access  Private (User)
+ */
+export const verifySupplementaryPayment = async (req, res) => {
+  try {
+    const { orderId, paymentId, signature, gatewayOrderId, additionalData } =
+      req.body;
+
+    if (!paymentId) {
+      return res
+        .status(400)
+        .json(new APIResponse(400, null, "paymentId is required"));
+    }
+
+    const { default: dynamicPaymentService } =
+      await import("../../services/payment/dynamicPayment.service.js");
+
+    const result = await dynamicPaymentService.verifySupplementaryPayment({
+      orderId,
+      paymentId,
+      signature,
+      gatewayOrderId,
+      additionalData,
+    });
+
+    const statusCode = result.success ? 200 : 400;
+    return res
+      .status(statusCode)
+      .json(new APIResponse(statusCode, result, result.message));
+  } catch (error) {
+    logger.error("Supplementary payment verification failed", {
+      error: error.message,
+    });
+
+    return res
+      .status(500)
+      .json(
+        new APIResponse(
+          500,
+          null,
+          error.message || "Supplementary payment verification failed"
+        )
+      );
+  }
+};

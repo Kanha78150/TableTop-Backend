@@ -14,6 +14,7 @@ import {
   getTableOrderHistory,
   downloadInvoice,
   downloadCreditNote,
+  addItemsToOrder,
 } from "../../controllers/user/order.controller.js";
 import { getOrderRefundStatus } from "../../controllers/user/refundStatus.controller.js";
 
@@ -48,6 +49,9 @@ router.put("/:orderId/cancel", cancelOrder);
 
 // Reorder from previous order
 router.post("/:orderId/reorder", reorder);
+
+// Add extra items to an existing served order
+router.post("/:orderId/add-items", addItemsToOrder);
 
 // Download invoice for order
 router.get("/:orderId/invoice", downloadInvoice);

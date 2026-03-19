@@ -12,6 +12,8 @@ import {
   getPaymentAnalytics,
   debugOrdersData,
   debugPaymentCallback,
+  initiateSupplementaryPayment,
+  verifySupplementaryPayment,
 } from "../controllers/payment/genericPayment.controller.js";
 import {
   createRefundRequest,
@@ -257,6 +259,34 @@ router.get("/debug/orders", authenticateAdmin, debugOrdersData);
 
 // Debug payment callback (temporary)
 router.post("/debug/callback", debugPaymentCallback);
+
+// =================== SUPPLEMENTARY PAYMENT ROUTES ===================
+
+// Initiate supplementary payment for add-on items
+router.post(
+  "/supplementary/initiate",
+  authenticateUser,
+  [
+    body("orderId").isMongoId().withMessage("Invalid order ID"),
+    body("batch")
+      .isInt({ min: 2 })
+      .withMessage("Batch must be an integer >= 2"),
+  ],
+  validateRequest,
+  initiateSupplementaryPayment
+);
+
+// Verify supplementary payment
+router.post(
+  "/supplementary/verify",
+  authenticateUser,
+  [
+    body("paymentId").notEmpty().withMessage("paymentId is required"),
+    body("gatewayOrderId").notEmpty().withMessage("gatewayOrderId is required"),
+  ],
+  validateRequest,
+  verifySupplementaryPayment
+);
 
 // Health check route for payment service
 router.get("/health", (req, res) => {

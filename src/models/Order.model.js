@@ -63,6 +63,8 @@ const orderSchema = new mongoose.Schema(
         // GST details for this item
         gstRate: { type: Number, required: true },
         gstAmount: { type: Number, required: true, min: 0 },
+        // Add-on batch tracking
+        batch: { type: Number, default: 1 },
       },
     ],
     status: {
@@ -79,6 +81,41 @@ const orderSchema = new mongoose.Schema(
       ],
       default: "pending",
     },
+    // Add-on batch tracking
+    currentBatch: { type: Number, default: 1 },
+    previousStatus: { type: String },
+    hasAddOns: { type: Boolean, default: false },
+    pendingAddOnPayment: { type: Boolean, default: false },
+
+    // Supplementary payments for add-on items (digital payments only)
+    supplementaryPayments: [
+      {
+        batch: { type: Number, required: true },
+        amount: { type: Number, required: true, min: 0 },
+        provider: {
+          type: String,
+          enum: ["razorpay", "phonepe", "paytm"],
+        },
+        gatewayOrderId: { type: String },
+        paymentId: { type: String },
+        transactionId: { type: String },
+        paymentStatus: {
+          type: String,
+          enum: ["pending", "paid", "failed"],
+          default: "pending",
+        },
+        commissionAmount: { type: Number, default: 0 },
+        commissionRate: { type: Number, default: 0 },
+        commissionStatus: {
+          type: String,
+          default: "not_applicable",
+        },
+        gatewayResponse: { type: Object },
+        paidAt: { type: Date },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+
     // Pricing breakdown
     subtotal: { type: Number, required: true, min: 0 },
     taxes: { type: Number, default: 0, min: 0 },

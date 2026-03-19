@@ -55,6 +55,7 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
     .populate("table", "tableNumber")
     .populate("hotel", "name")
     .populate("branch", "name")
+    .populate("items.foodItem", "name price category")
     .sort(sort)
     .limit(limitNumber)
     .skip(skip);
@@ -166,6 +167,16 @@ export const updateOrderStatus = asyncHandler(async (req, res, next) => {
       updateData["payment.commissionStatus"] = "not_applicable";
       updateData["payment.commissionAmount"] = 0;
     }
+  }
+
+  // Block completion if there are pending supplementary payments
+  if (status === "completed" && order.pendingAddOnPayment) {
+    return next(
+      new APIError(
+        400,
+        "Cannot complete order — a supplementary add-on payment is still pending"
+      )
+    );
   }
 
   const updatedOrder = await Order.findByIdAndUpdate(orderId, updateData, {
@@ -546,6 +557,92 @@ export const confirmCashPayment = asyncHandler(async (req, res, next) => {
     );
 });
 
+/**
+ * Get orders with add-on items for current staff
+ * GET /api/v1/staff/orders/add-ons
+ * @access Staff
+ */
+export const getAddOnOrders = asyncHandler(async (req, res) => {
+  const staffId = req.user._id;
+  const { paymentPending } = req.query;
+
+  const filter = {
+    staff: staffId,
+    hasAddOns: true,
+    status: { $nin: ["completed", "cancelled"] },
+  };
+
+  // Optionally filter orders waiting for supplementary digital payment
+  if (paymentPending === "true") {
+    filter.pendingAddOnPayment = true;
+  }
+
+  const orders = await Order.find(filter)
+    .populate("user", "name phone")
+    .populate("table", "tableNumber")
+    .populate("hotel", "name")
+    .populate("branch", "name")
+    .populate("items.foodItem", "name price category")
+    .sort({ updatedAt: -1 });
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { orders, count: orders.length },
+        "Add-on orders retrieved successfully"
+      )
+    );
+});
+
+/**
+ * Acknowledge add-on items notification
+ * PUT /api/v1/staff/orders/:orderId/acknowledge-addon
+ * @access Staff
+ */
+export const acknowledgeAddOn = asyncHandler(async (req, res, next) => {
+  const { orderId } = req.params;
+  const staffId = req.user._id;
+  const { batch } = req.body;
+
+  if (!orderId.match(/^[0-9a-fA-F]{24}$/)) {
+    return next(new APIError(400, "Invalid order ID"));
+  }
+
+  const order = await Order.findById(orderId);
+  if (!order) {
+    return next(new APIError(404, "Order not found"));
+  }
+
+  if (!order.staff || order.staff.toString() !== staffId.toString()) {
+    return next(new APIError(403, "You are not assigned to this order"));
+  }
+
+  // Revert to "served" → "preparing" so staff can work on new items
+  if (order.status === "served" && !order.pendingAddOnPayment) {
+    order.previousStatus = order.status;
+    order.status = "preparing";
+    order.statusHistory.push({
+      status: "preparing",
+      timestamp: new Date(),
+      updatedBy: staffId,
+      notes: `Add-on batch ${batch || order.currentBatch} acknowledged — preparing new items`,
+    });
+    await order.save();
+  }
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { order },
+        "Add-on acknowledged — order moved to preparing"
+      )
+    );
+});
+
 export default {
   getMyOrders,
   updateOrderStatus,
@@ -553,4 +650,6 @@ export default {
   getActiveOrdersCount,
   getAllTablesStatus,
   confirmCashPayment,
+  getAddOnOrders,
+  acknowledgeAddOn,
 };

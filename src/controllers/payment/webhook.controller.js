@@ -83,10 +83,16 @@ export const handleRazorpayWebhookUniversal = async (req, res) => {
       });
     }
 
-    // Look up the order to find the hotel
-    const order = await Order.findOne({
+    // Look up the order to find the hotel (check primary + supplementary payments)
+    let order = await Order.findOne({
       "payment.gatewayOrderId": razorpayOrderId,
     });
+
+    if (!order) {
+      order = await Order.findOne({
+        "supplementaryPayments.gatewayOrderId": razorpayOrderId,
+      });
+    }
 
     if (!order) {
       console.error(

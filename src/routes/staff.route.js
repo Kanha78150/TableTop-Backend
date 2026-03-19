@@ -33,6 +33,9 @@ router.get("/orders/my-orders", staffOrderController.getMyOrders);
 // Get active orders count for current staff
 router.get("/orders/active-count", staffOrderController.getActiveOrdersCount);
 
+// Get orders with add-on items
+router.get("/orders/add-ons", staffOrderController.getAddOnOrders);
+
 // Get all tables with their status
 router.get("/tables/status", staffOrderController.getAllTablesStatus);
 
@@ -41,6 +44,12 @@ router.get("/orders/:orderId", staffOrderController.getOrderDetails);
 
 // Update order status
 router.put("/orders/:orderId/status", staffOrderController.updateOrderStatus);
+
+// Acknowledge add-on items and move order to preparing
+router.put(
+  "/orders/:orderId/acknowledge-addon",
+  staffOrderController.acknowledgeAddOn
+);
 
 // Confirm cash payment for an order
 router.put(

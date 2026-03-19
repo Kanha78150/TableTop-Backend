@@ -8,6 +8,7 @@ import { PaymentGatewayFactory } from "../paymentGateways/PaymentGatewayFactory.
 import { PaymentConfig } from "../../models/PaymentConfig.model.js";
 import { Hotel } from "../../models/Hotel.model.js";
 import { Order } from "../../models/Order.model.js";
+import { Transaction } from "../../models/Transaction.model.js";
 import * as commissionCalculator from "../../utils/commissionCalculator.js";
 import assignmentService from "../assignment/assignment.service.js";
 import { paymentService } from "./payment.service.js";
@@ -714,10 +715,21 @@ class DynamicPaymentService {
         };
       }
 
-      // Find order by gateway order ID
-      const order = await Order.findOne({
+      // Find order by gateway order ID (primary payment)
+      let order = await Order.findOne({
         "payment.gatewayOrderId": paymentInfo.orderId,
       });
+
+      // Check if this is a supplementary payment webhook
+      let isSupplementaryWebhook = false;
+      if (!order) {
+        order = await Order.findOne({
+          "supplementaryPayments.gatewayOrderId": paymentInfo.orderId,
+        });
+        if (order) {
+          isSupplementaryWebhook = true;
+        }
+      }
 
       if (!order) {
         console.error("Order not found for webhook:", paymentInfo);
@@ -727,7 +739,99 @@ class DynamicPaymentService {
         };
       }
 
-      // Update order based on webhook event
+      // Handle supplementary payment webhook
+      if (isSupplementaryWebhook) {
+        const suppPayment = order.supplementaryPayments.find(
+          (sp) => sp.gatewayOrderId === paymentInfo.orderId
+        );
+        if (!suppPayment) {
+          return {
+            success: false,
+            message: "Supplementary payment entry not found",
+          };
+        }
+
+        if (paymentInfo.status === "completed") {
+          suppPayment.paymentStatus = "paid";
+          suppPayment.paymentId = paymentInfo.paymentId;
+          suppPayment.paidAt = new Date();
+          suppPayment.gatewayResponse = payload;
+          order.pendingAddOnPayment = false;
+
+          await order.save();
+
+          // Update existing transaction amount to reflect new total
+          try {
+            const existingTx = await Transaction.findOne({ order: order._id });
+            if (existingTx) {
+              existingTx.amount = order.totalPrice;
+              await existingTx.save();
+            }
+          } catch (txError) {
+            console.error(
+              `[Webhook] Supplementary transaction update error: ${txError.message}`
+            );
+          }
+
+          // Emit socket notification to staff
+          try {
+            const { getIO } = await import("../../utils/socketService.js");
+            const io = getIO();
+            const batchItems = order.items.filter(
+              (i) => i.batch === suppPayment.batch
+            );
+            const notificationData = {
+              orderId: order._id,
+              orderNumber: order.orderNumber,
+              newItems: batchItems.map((i) => ({
+                foodItemName: i.foodItemName,
+                quantity: i.quantity,
+                price: i.price,
+                totalPrice: i.totalPrice,
+              })),
+              batch: suppPayment.batch,
+              updatedTotal: order.totalPrice,
+              paymentMethod:
+                order.payment?.paymentMethod || order.payment?.provider,
+              paymentVerified: true,
+              message: "Customer paid for add-on items — ready to prepare",
+            };
+            if (order.staff) {
+              io.to(`staff_${order.staff}`).emit(
+                "order:items-added",
+                notificationData
+              );
+            }
+            if (order.branch) {
+              io.to(`branch_${order.branch}`).emit(
+                "order:items-added",
+                notificationData
+              );
+            }
+          } catch (socketError) {
+            console.error(
+              "[Webhook] Socket notification error:",
+              socketError.message
+            );
+          }
+        } else if (paymentInfo.status === "failed") {
+          suppPayment.paymentStatus = "failed";
+          suppPayment.gatewayResponse = payload;
+          await order.save();
+        }
+
+        return {
+          success: true,
+          orderId: order._id,
+          event: paymentInfo.event,
+          status: paymentInfo.status,
+          type: "supplementary",
+          batch: suppPayment.batch,
+          message: "Supplementary webhook processed successfully",
+        };
+      }
+
+      // Update order based on webhook event (primary payment)
       order.payment.paymentId = paymentInfo.paymentId;
       order.payment.gatewayResponse = payload;
 
@@ -765,11 +869,11 @@ class DynamicPaymentService {
           const paymentService = (await import("./payment.service.js")).default;
           await paymentService.createTransactionRecord(order);
           console.log(
-            `📊 [Webhook] Transaction record (${paymentInfo.status}) created for order: ${order._id}`
+            `[Webhook] Transaction record (${paymentInfo.status}) created for order: ${order._id}`
           );
         } catch (txError) {
           console.error(
-            `❌ [Webhook] Transaction record error: ${txError.message}`
+            `[Webhook] Transaction record error: ${txError.message}`
           );
         }
       }
@@ -838,6 +942,291 @@ class DynamicPaymentService {
    */
   isProviderSupported(provider) {
     return PaymentGatewayFactory.isProviderSupported(provider);
+  }
+
+  /**
+   * Initiate a supplementary payment for add-on items
+   * Creates a new gateway order for the delta amount only.
+   * @param {Object} data - { orderId, batch, customerInfo }
+   * @returns {Object} Payment initiation response
+   */
+  async initiateSupplementaryPayment(data) {
+    try {
+      const { orderId, batch, customerInfo = {} } = data;
+
+      if (!orderId || !batch) {
+        throw new Error("Missing required fields: orderId and batch");
+      }
+
+      const order = await Order.findById(orderId).populate("hotel");
+      if (!order) {
+        throw new Error(`Order not found: ${orderId}`);
+      }
+
+      // Find the pending supplementary payment for this batch
+      const suppPayment = order.supplementaryPayments.find(
+        (sp) => sp.batch === batch && sp.paymentStatus === "pending"
+      );
+      if (!suppPayment) {
+        throw new Error(
+          `No pending supplementary payment found for batch ${batch}`
+        );
+      }
+
+      const amount = suppPayment.amount;
+      if (amount <= 0) {
+        throw new Error("Supplementary payment amount must be greater than 0");
+      }
+
+      // Get payment config for the hotel
+      const { provider, credentials, hotel } = await this.getPaymentConfig(
+        order.hotel._id
+      );
+
+      // Create gateway instance
+      const gateway = PaymentGatewayFactory.createGateway(
+        provider,
+        credentials
+      );
+
+      // Create gateway order for delta amount only
+      const gatewayOrderData = {
+        orderId: `${orderId}_batch${batch}`,
+        amount,
+        currency: "INR",
+        customerInfo,
+        metadata: {
+          hotelId: hotel._id.toString(),
+          hotelName: hotel.name,
+          originalOrderId: orderId,
+          batch,
+          type: "supplementary",
+          commissionAmount: 0,
+          commissionRate: 0,
+        },
+      };
+
+      const gatewayResponse = await gateway.createOrder(gatewayOrderData);
+
+      // Update supplementary payment entry with gateway details
+      suppPayment.provider = provider;
+      suppPayment.gatewayOrderId = gatewayResponse.orderId;
+      suppPayment.gatewayResponse = {
+        orderId: gatewayResponse.orderId,
+        amount,
+        currency: "INR",
+        createdAt: new Date(),
+        metadata: gatewayResponse.metadata || {},
+      };
+
+      await order.save();
+
+      return {
+        success: true,
+        provider,
+        orderId: order._id,
+        batch,
+        gatewayOrderId: gatewayResponse.orderId,
+        amount,
+        currency: "INR",
+        type: "supplementary",
+        paymentDetails: gatewayResponse,
+        message: "Supplementary payment order created successfully",
+      };
+    } catch (error) {
+      console.error(
+        "Error creating supplementary payment order:",
+        error.message
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Verify a supplementary payment after completion
+   * @param {Object} paymentData - { orderId, paymentId, signature, additionalData }
+   * @returns {Object} Verification result
+   */
+  async verifySupplementaryPayment(paymentData) {
+    try {
+      const {
+        orderId,
+        paymentId,
+        signature,
+        gatewayOrderId,
+        additionalData = {},
+      } = paymentData;
+
+      if (!paymentId) {
+        throw new Error("Missing required field: paymentId");
+      }
+
+      // Find order by looking at supplementaryPayments.gatewayOrderId
+      let order;
+      if (orderId) {
+        order = await Order.findById(orderId).populate("hotel");
+      }
+      if (!order && gatewayOrderId) {
+        order = await Order.findOne({
+          "supplementaryPayments.gatewayOrderId": gatewayOrderId,
+        }).populate("hotel");
+      }
+      if (!order) {
+        throw new Error("Order not found for supplementary payment");
+      }
+
+      // Find the matching supplementary payment entry
+      const suppPayment = order.supplementaryPayments.find(
+        (sp) =>
+          sp.gatewayOrderId === gatewayOrderId ||
+          (sp.paymentStatus === "pending" && sp.provider)
+      );
+      if (!suppPayment) {
+        throw new Error("Supplementary payment entry not found");
+      }
+
+      // Get payment config for verification
+      const { provider, credentials } = await this.getPaymentConfig(
+        order.hotel._id
+      );
+
+      const gateway = PaymentGatewayFactory.createGateway(
+        provider,
+        credentials
+      );
+
+      // Prepare verification data based on provider
+      let verificationData = {
+        orderId: suppPayment.gatewayOrderId,
+        paymentId,
+        signature,
+      };
+
+      if (provider === "phonepe") {
+        verificationData = { ...additionalData, transactionId: paymentId };
+      } else if (provider === "paytm") {
+        verificationData = {
+          ...additionalData,
+          orderId: suppPayment.gatewayOrderId,
+          txnId: paymentId,
+        };
+      }
+
+      // Verify payment with gateway
+      const verifyResult = await gateway.verifyPayment(verificationData);
+
+      if (!verifyResult || !verifyResult.verified) {
+        suppPayment.paymentStatus = "failed";
+        await order.save();
+        return {
+          success: false,
+          verified: false,
+          orderId: order._id,
+          batch: suppPayment.batch,
+          message:
+            verifyResult?.error || "Supplementary payment verification failed",
+        };
+      }
+
+      // Get payment status
+      const paymentStatus = await gateway.getPaymentStatus(
+        paymentId,
+        suppPayment.gatewayOrderId
+      );
+
+      const isPaymentSuccessful =
+        paymentStatus.status === "captured" ||
+        paymentStatus.status === "authorized" ||
+        paymentStatus.status === "success";
+
+      if (isPaymentSuccessful) {
+        suppPayment.paymentStatus = "paid";
+        suppPayment.paymentId = paymentId;
+        suppPayment.paidAt = new Date();
+        suppPayment.gatewayResponse = paymentStatus;
+        order.pendingAddOnPayment = false;
+
+        await order.save();
+
+        // Update existing transaction amount to reflect new order total
+        try {
+          const existingTx = await Transaction.findOne({ order: order._id });
+          if (existingTx) {
+            existingTx.amount = order.totalPrice;
+            await existingTx.save();
+            console.log(
+              `Transaction updated for supplementary batch ${suppPayment.batch}, new total: ${order.totalPrice}`
+            );
+          }
+        } catch (txError) {
+          console.error(
+            `Supplementary transaction update error: ${txError.message}`
+          );
+        }
+
+        // Emit socket notification to staff — kitchen can now prepare add-on items
+        try {
+          const { getIO } = await import("../../utils/socketService.js");
+          const io = getIO();
+
+          // Get new batch items for notification
+          const batchItems = order.items.filter(
+            (i) => i.batch === suppPayment.batch
+          );
+          const notificationData = {
+            orderId: order._id,
+            orderNumber: order.orderNumber,
+            newItems: batchItems.map((i) => ({
+              foodItemName: i.foodItemName,
+              quantity: i.quantity,
+              price: i.price,
+              totalPrice: i.totalPrice,
+            })),
+            batch: suppPayment.batch,
+            updatedTotal: order.totalPrice,
+            paymentMethod:
+              order.payment?.paymentMethod || order.payment?.provider,
+            paymentVerified: true,
+            message: "Customer paid for add-on items — ready to prepare",
+          };
+
+          if (order.staff) {
+            io.to(`staff_${order.staff}`).emit(
+              "order:items-added",
+              notificationData
+            );
+          }
+          if (order.branch) {
+            io.to(`branch_${order.branch}`).emit(
+              "order:items-added",
+              notificationData
+            );
+          }
+        } catch (socketError) {
+          console.error("Socket notification error:", socketError.message);
+        }
+      } else {
+        suppPayment.paymentStatus = "failed";
+        suppPayment.gatewayResponse = paymentStatus;
+        await order.save();
+      }
+
+      return {
+        success: isPaymentSuccessful,
+        verified: true,
+        orderId: order._id,
+        batch: suppPayment.batch,
+        paymentId,
+        paymentStatus: suppPayment.paymentStatus,
+        amount: suppPayment.amount,
+        message: isPaymentSuccessful
+          ? "Supplementary payment verified successfully"
+          : "Supplementary payment failed",
+      };
+    } catch (error) {
+      console.error("Error verifying supplementary payment:", error.message);
+      throw error;
+    }
   }
 }
 
