@@ -12,7 +12,6 @@ import { logger } from "../../utils/logger.js";
 import Joi from "joi";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
-
 /**
  * Place order from user's cart
  * POST /api/v1/user/orders/place
@@ -102,7 +101,7 @@ export const placeOrder = asyncHandler(async (req, res, next) => {
       : "Order placed successfully - assignment pending";
 
   res.status(201).json(new APIResponse(201, responseData, message));
-  });
+});
 
 /**
  * Get user's orders with pagination and filters
@@ -131,7 +130,7 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, result, "Orders retrieved successfully"));
-  });
+});
 
 /**
  * Get order details by ID
@@ -153,7 +152,7 @@ export const getOrderDetails = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, { order }, "Order details retrieved successfully")
     );
-  });
+});
 
 /**
  * Get order payment information (for payment page)
@@ -310,7 +309,7 @@ export const cancelOrder = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, responseData, "Order cancelled successfully"));
-  });
+});
 
 /**
  * Reorder from previous order
@@ -347,7 +346,7 @@ export const reorder = asyncHandler(async (req, res, next) => {
         result.message || "Items added to cart for review"
       )
     );
-  });
+});
 
 /**
  * Get order status updates
@@ -392,7 +391,7 @@ export const getOrderStatus = asyncHandler(async (req, res, next) => {
         "Order status retrieved successfully"
       )
     );
-  });
+});
 
 /**
  * Get active orders (queued, pending, confirmed, preparing, ready)
@@ -418,7 +417,7 @@ export const getActiveOrders = asyncHandler(async (req, res) => {
         "Active orders retrieved successfully"
       )
     );
-  });
+});
 
 /**
  * Get order history (completed, cancelled)
@@ -480,7 +479,7 @@ export const getOrderHistory = asyncHandler(async (req, res) => {
       "Order history retrieved successfully"
     )
   );
-  });
+});
 
 /**
  * Get table order history
@@ -512,9 +511,7 @@ export const getTableOrderHistory = asyncHandler(async (req, res) => {
   if (tableId) {
     orders = orders.filter(
       (order) =>
-        order.table &&
-        order.table._id &&
-        order.table._id.toString() === tableId
+        order.table && order.table._id && order.table._id.toString() === tableId
     );
   }
 
@@ -564,7 +561,7 @@ export const getTableOrderHistory = asyncHandler(async (req, res) => {
       "Table order history retrieved successfully"
     )
   );
-  });
+});
 
 // Validation schemas
 const validatePlaceOrder = (data) => {
@@ -932,6 +929,36 @@ export const downloadCreditNote = async (req, res, next) => {
   }
 };
 
+/**
+ * Add items to an existing served order (add-on items)
+ * POST /api/v1/user/orders/:orderId/add-items
+ */
+export const addItemsToOrder = asyncHandler(async (req, res, next) => {
+  const userId = req.user._id;
+  const { orderId } = req.params;
+
+  if (!orderId) {
+    return next(new APIError(400, "Order ID is required"));
+  }
+
+  const result = await orderService.addItemsToOrder(orderId, userId);
+
+  const statusCode = result.supplementaryPayment?.required ? 200 : 200;
+
+  return res.status(statusCode).json(
+    new APIResponse(
+      statusCode,
+      {
+        order: result.order,
+        supplementaryPayment: result.supplementaryPayment,
+      },
+      result.supplementaryPayment?.required
+        ? "Items added — complete supplementary payment to notify kitchen"
+        : "Items added to order successfully"
+    )
+  );
+});
+
 export default {
   placeOrder,
   getMyOrders,
@@ -943,4 +970,5 @@ export default {
   getOrderHistory,
   downloadInvoice,
   downloadCreditNote,
+  addItemsToOrder,
 };

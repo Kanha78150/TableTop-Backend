@@ -186,12 +186,17 @@ tableSchema.statics.findByQRData = function (hotelId, branchId, tableNo) {
   }
 
   return this.findOne(query)
-    .populate("hotel", "name location contact status")
-    .populate("branch", "name location contact status");
+    .populate("hotel", "name hotelId location contact status")
+    .populate("branch", "name branchId location contact status");
 };
 
 export const Table = mongoose.model("Table", tableSchema);
 
 // Validation schemas
 // Validators extracted to src/validators/table.validators.js
-export { tableValidationSchemas, validateTable, validateQRGeneration, validateQRScan } from "../validators/table.validators.js";
+export {
+  tableValidationSchemas,
+  validateTable,
+  validateQRGeneration,
+  validateQRScan,
+} from "../validators/table.validators.js";

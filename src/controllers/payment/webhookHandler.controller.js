@@ -288,6 +288,20 @@ async function handlePaymentFailed(entity) {
 
         // Restore cart
         await paymentService.restoreCartAfterPaymentFailure(order._id);
+      } else {
+        // Check if this is a supplementary payment failure
+        const suppOrder = await Order.findOne({
+          "supplementaryPayments.gatewayOrderId": orderId,
+        });
+        if (suppOrder) {
+          const suppPayment = suppOrder.supplementaryPayments.find(
+            (sp) => sp.gatewayOrderId === orderId
+          );
+          if (suppPayment) {
+            suppPayment.paymentStatus = "failed";
+            await suppOrder.save();
+          }
+        }
       }
     }
 
@@ -716,6 +730,33 @@ async function processOrderPayment(entity, status) {
     }).populate("user");
 
     if (!order) {
+      // Check if this is a supplementary payment
+      const suppOrder = await Order.findOne({
+        "supplementaryPayments.gatewayOrderId": orderId,
+      }).populate("user");
+
+      if (suppOrder) {
+        const suppPayment = suppOrder.supplementaryPayments.find(
+          (sp) => sp.gatewayOrderId === orderId
+        );
+        if (suppPayment && suppPayment.paymentStatus !== "paid") {
+          suppPayment.paymentStatus =
+            status === "captured" || status === "authorized"
+              ? "paid"
+              : "failed";
+          suppPayment.paymentId = paymentId;
+          suppPayment.paidAt = new Date();
+          suppOrder.pendingAddOnPayment = false;
+          await suppOrder.save();
+          logger.info("Supplementary payment processed via webhook", {
+            orderId: suppOrder._id,
+            batch: suppPayment.batch,
+            status: suppPayment.paymentStatus,
+          });
+        }
+        return { success: true, message: "Supplementary payment processed" };
+      }
+
       logger.error("Order not found", { orderId });
       return { success: false, message: "Order not found" };
     }
