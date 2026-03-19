@@ -10,6 +10,7 @@ import { parseDate } from "../../utils/parseDate.js";
 import { getOrderAnalytics as _getOrderAnalytics } from "../../services/order/analytics.service.js";
 import {
   sendReviewEmailIfReady,
+  sendInvoiceEmailIfReady,
   emitPaymentConfirmed,
 } from "../../services/order/cashPayment.helper.js";
 import Joi from "joi";
@@ -329,8 +330,9 @@ export const confirmCashPayment = asyncHandler(async (req, res, next) => {
     "admin"
   );
 
-  // Send review invitation email + socket notification (shared helpers)
+  // Send review invitation email + invoice email + socket notification (shared helpers)
   await sendReviewEmailIfReady(updatedOrder, orderId);
+  await sendInvoiceEmailIfReady(updatedOrder, orderId);
   emitPaymentConfirmed(updatedOrder, "admin");
 
   logger.info(

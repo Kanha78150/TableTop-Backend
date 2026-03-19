@@ -814,7 +814,7 @@ export const sendSubscriptionRenewalReminderEmail = async (
 
   await sendEmail({
     to: email,
-    subject: `Subscription Renewal Reminder - ${daysRemaining} Days Remaining`,
+    subject: `Subscription Renewal Reminder - ${daysRemaining} Day${daysRemaining > 1 ? "s" : ""} Remaining`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
         <div style="text-align: center; margin-bottom: 30px;">
@@ -840,7 +840,7 @@ export const sendSubscriptionRenewalReminderEmail = async (
         </p>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${process.env.FRONTEND_URL}/subscription/renew" 
+          <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/subscription/renew" 
              style="background-color: #4caf50; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
             Renew Now
           </a>
@@ -911,7 +911,7 @@ export const sendSubscriptionExpiringEmail = async (
         </ul>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${process.env.FRONTEND_URL}/subscription/renew" 
+          <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/subscription/renew" 
              style="background-color: #4caf50; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
             Renew Now
           </a>
@@ -973,7 +973,7 @@ export const sendSubscriptionExpiredEmail = async (
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${process.env.FRONTEND_URL}/subscription/renew" 
+          <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/subscription/renew" 
              style="background-color: #2196f3; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
             Renew Subscription
           </a>

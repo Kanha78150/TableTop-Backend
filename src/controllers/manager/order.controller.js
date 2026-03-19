@@ -13,6 +13,7 @@ import { parseDate } from "../../utils/parseDate.js";
 import { getOrderAnalytics as _getOrderAnalytics } from "../../services/order/analytics.service.js";
 import {
   sendReviewEmailIfReady,
+  sendInvoiceEmailIfReady,
   emitPaymentConfirmed,
 } from "../../services/order/cashPayment.helper.js";
 import Joi from "joi";
@@ -313,6 +314,7 @@ export const updateOrderStatus = asyncHandler(async (req, res, next) => {
       // Send review invitation email if order is paid and email not sent yet
       if (updatedOrder.payment?.paymentStatus === "paid") {
         await sendReviewEmailIfReady(updatedOrder, orderId);
+        await sendInvoiceEmailIfReady(updatedOrder, orderId);
       }
     } catch (assignmentError) {
       logger.error(
@@ -674,8 +676,9 @@ export const confirmCashPayment = asyncHandler(async (req, res, next) => {
     "manager"
   );
 
-  // Send review invitation email + socket notification (shared helpers)
+  // Send review invitation email + invoice email + socket notification (shared helpers)
   await sendReviewEmailIfReady(updatedOrder, orderId);
+  await sendInvoiceEmailIfReady(updatedOrder, orderId);
   emitPaymentConfirmed(updatedOrder, "manager");
 
   logger.info(

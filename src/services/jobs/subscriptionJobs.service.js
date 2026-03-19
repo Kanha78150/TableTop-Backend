@@ -406,7 +406,7 @@ jobCallbacks.paymentRetry = async () => {
 
           // Send payment retry notification email
           try {
-            const { sendEmail } = await import("../utils/emailService.js");
+            const { sendEmail } = await import("../../utils/emailService.js");
             await sendEmail({
               to: subscription.admin.email,
               subject: `Action Required: Retry Payment for ${subscription.plan.name}`,
