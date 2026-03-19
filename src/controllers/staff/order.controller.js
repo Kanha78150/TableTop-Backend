@@ -10,6 +10,7 @@ import { APIError } from "../../utils/APIError.js";
 import { logger } from "../../utils/logger.js";
 import {
   sendReviewEmailIfReady,
+  sendInvoiceEmailIfReady,
   emitPaymentConfirmed,
 } from "../../services/order/cashPayment.helper.js";
 import Joi from "joi";
@@ -227,6 +228,7 @@ export const updateOrderStatus = asyncHandler(async (req, res, next) => {
       // Send review invitation email if order is paid and email not sent yet
       if (updatedOrder.payment?.paymentStatus === "paid") {
         await sendReviewEmailIfReady(updatedOrder, orderId);
+        await sendInvoiceEmailIfReady(updatedOrder, orderId);
       }
     } catch (reassignmentError) {
       logger.error(
@@ -538,8 +540,9 @@ export const confirmCashPayment = asyncHandler(async (req, res, next) => {
     "staff"
   );
 
-  // Send review invitation email + socket notification (shared helpers)
+  // Send review invitation email + invoice email + socket notification (shared helpers)
   await sendReviewEmailIfReady(updatedOrder, orderId);
+  await sendInvoiceEmailIfReady(updatedOrder, orderId);
   emitPaymentConfirmed(updatedOrder, "staff");
 
   logger.info(
