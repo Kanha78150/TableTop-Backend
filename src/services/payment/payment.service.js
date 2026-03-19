@@ -1261,7 +1261,7 @@ class PaymentService {
    */
   async createSubscriptionPaymentOrder(subscriptionData) {
     try {
-      const { subscriptionId, amount, planName, billingCycle } =
+      const { subscriptionId, amount, planName, billingCycle, ...extraNotes } =
         subscriptionData;
 
       logger.info("Creating subscription payment order", {
@@ -1283,6 +1283,7 @@ class PaymentService {
           planName: planName,
           billingCycle: billingCycle,
           type: "subscription",
+          ...extraNotes,
         },
       });
 

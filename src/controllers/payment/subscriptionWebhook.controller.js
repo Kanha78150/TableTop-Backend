@@ -1,8 +1,10 @@
 import { AdminSubscription } from "../../models/AdminSubscription.model.js";
 import { Admin } from "../../models/Admin.model.js";
+import { EmailQueue } from "../../models/EmailQueue.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { paymentService } from "../../services/payment/payment.service.js";
+import { invoiceService } from "../../services/invoice.service.js";
 import { sendEmail } from "../../utils/emailService.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
@@ -98,18 +100,86 @@ const handleSuccessfulPayment = async (payload) => {
       return;
     }
 
-    // Check if already activated
-    if (subscription.status === "active") {
-      console.log("Subscription already active:", subscriptionId);
+    // Handle upgrade payment (subscription is already active)
+    if (notes.upgradeToPlanId && subscription.status === "active") {
+      const { SubscriptionPlan } =
+        await import("../../models/SubscriptionPlan.model.js");
+      const newPlan = await SubscriptionPlan.findById(notes.upgradeToPlanId);
+      if (newPlan) {
+        subscription.plan = newPlan._id;
+        subscription.paymentHistory.push({
+          amount: amount / 100,
+          currency: "INR",
+          paymentMethod: "razorpay",
+          transactionId: paymentId,
+          paymentDate: new Date(),
+          status: "success",
+          notes: `Upgrade payment completed - ${newPlan.name} (Method: ${method})`,
+        });
+        await subscription.save();
+
+        try {
+          await sendEmail({
+            to: subscription.admin.email,
+            subject: "Plan Upgraded Successfully",
+            template: "subscription-activated",
+            data: {
+              name: subscription.admin.name,
+              planName: newPlan.name,
+              billingCycle: subscription.billingCycle,
+              startDate: subscription.startDate,
+              endDate: subscription.endDate,
+              amount: amount / 100,
+              maxHotels: newPlan.features?.maxHotels || 0,
+              maxBranches: newPlan.features?.maxBranches || 0,
+              maxManagers: newPlan.features?.maxManagers || 0,
+              maxStaff: newPlan.features?.maxStaff || 0,
+              maxTables: newPlan.features?.maxTables || 0,
+            },
+          });
+        } catch (emailError) {
+          console.error("Failed to send upgrade email:", emailError);
+        }
+
+        console.log(
+          "Subscription upgraded successfully via webhook:",
+          subscriptionId
+        );
+        return;
+      }
+    }
+
+    // Handle renewal of active subscription (extend from current endDate)
+    const isRenewal = notes.isRenewal === "true";
+
+    if (subscription.status === "active" && !isRenewal) {
+      console.log(
+        "Subscription already active (not a renewal), skipping:",
+        subscriptionId
+      );
       return;
+    }
+
+    // Determine the start date for the new period
+    const wasActive = subscription.status === "active";
+    let newStartDate;
+    if (isRenewal && wasActive && new Date(subscription.endDate) > new Date()) {
+      // Early renewal: extend from current endDate (don't lose remaining days)
+      newStartDate = new Date(subscription.endDate);
+    } else {
+      // Fresh activation or expired renewal: start from now
+      newStartDate = new Date();
     }
 
     // Update subscription status to active
     subscription.status = "active";
-    subscription.startDate = new Date();
+    // Keep original startDate for early renewals, set new one for fresh activations
+    if (!wasActive) {
+      subscription.startDate = newStartDate;
+    }
 
-    // Recalculate end date from actual activation date
-    const endDate = new Date(subscription.startDate);
+    // Calculate new end date
+    const endDate = new Date(newStartDate);
     if (subscription.billingCycle === "monthly") {
       endDate.setMonth(endDate.getMonth() + 1);
     } else {
@@ -130,16 +200,18 @@ const handleSuccessfulPayment = async (payload) => {
       } (Method: ${method})`,
     });
 
-    // Initialize usage counters
-    subscription.usage = {
-      hotels: 0,
-      branches: 0,
-      managers: 0,
-      staff: 0,
-      tables: 0,
-      ordersThisMonth: 0,
-      storageUsedGB: 0,
-    };
+    // Initialize usage counters only for fresh activations (not renewals)
+    if (!wasActive) {
+      subscription.usage = {
+        hotels: 0,
+        branches: 0,
+        managers: 0,
+        staff: 0,
+        tables: 0,
+        ordersThisMonth: 0,
+        storageUsedGB: 0,
+      };
+    }
 
     await subscription.save();
 
@@ -161,15 +233,58 @@ const handleSuccessfulPayment = async (payload) => {
           startDate: subscription.startDate,
           endDate: subscription.endDate,
           amount: amount / 100,
-          maxHotels: subscription.plan.limits?.maxHotels || 0,
-          maxBranches: subscription.plan.limits?.maxBranches || 0,
-          maxManagers: subscription.plan.limits?.maxManagers || 0,
-          maxStaff: subscription.plan.limits?.maxStaff || 0,
-          maxTables: subscription.plan.limits?.maxTables || 0,
+          maxHotels: subscription.plan.features?.maxHotels || 0,
+          maxBranches: subscription.plan.features?.maxBranches || 0,
+          maxManagers: subscription.plan.features?.maxManagers || 0,
+          maxStaff: subscription.plan.features?.maxStaff || 0,
+          maxTables: subscription.plan.features?.maxTables || 0,
         },
       });
     } catch (emailError) {
       console.error("Failed to send activation email:", emailError);
+    }
+
+    // Generate and send subscription invoice
+    try {
+      const lastPayment =
+        subscription.paymentHistory[subscription.paymentHistory.length - 1];
+      const invoice = await invoiceService.generateSubscriptionInvoice(
+        subscription,
+        lastPayment
+      );
+
+      try {
+        await invoiceService.sendInvoiceEmail(
+          invoice,
+          subscription.admin.email,
+          subscription.admin.name,
+          "invoice"
+        );
+        console.log("Subscription invoice email sent:", subscriptionId);
+      } catch (emailError) {
+        console.error(
+          "Failed to send subscription invoice email, adding to queue:",
+          emailError.message
+        );
+        await EmailQueue.create({
+          type: "subscription_invoice",
+          subscriptionId: subscription._id,
+          recipientEmail: subscription.admin.email,
+          recipientName: subscription.admin.name,
+          status: "pending",
+          emailData: {
+            subject: `Subscription Invoice ${invoice.invoiceNumber} - TableTop`,
+            invoiceNumber: invoice.invoiceNumber,
+            amount: lastPayment.amount,
+          },
+          scheduledFor: new Date(Date.now() + 5 * 60 * 1000),
+        });
+      }
+    } catch (invoiceError) {
+      console.error(
+        "Failed to generate subscription invoice:",
+        invoiceError.message
+      );
     }
 
     console.log(
@@ -222,11 +337,17 @@ const handleFailedPayment = async (payload) => {
 
     // Send payment failed email
     try {
-      await sendEmail(subscription.admin.email, "payment-failed", {
-        adminName: subscription.admin.name,
-        planName: notes.planName || "Subscription",
-        reason: error_description || "Payment processing failed",
-        retryLink: `${process.env.FRONTEND_URL}/subscription/retry/${subscriptionId}`,
+      await sendEmail({
+        to: subscription.admin.email,
+        subject: "Subscription Payment Failed",
+        template: "payment-failed",
+        data: {
+          name: subscription.admin.name,
+          amount: (payload.amount || 0) / 100,
+          transactionId: payload.order_id || "N/A",
+          reason: error_description || "Payment processing failed",
+          retryLink: `${process.env.FRONTEND_URL || "http://localhost:5173"}/subscription/retry/${subscriptionId}`,
+        },
       });
     } catch (emailError) {
       console.error("Failed to send payment failed email:", emailError);
@@ -283,11 +404,19 @@ const handleRefundedPayment = async (payload) => {
 
     // Send refund confirmation email
     try {
-      await sendEmail(subscription.admin.email, "subscription-cancelled", {
-        adminName: subscription.admin.name,
-        planName: subscription.plan?.name || "Your plan",
-        refundAmount: amount / 100,
-        refundDate: new Date().toLocaleDateString(),
+      await sendEmail({
+        to: subscription.admin.email,
+        subject: "Subscription Refunded & Cancelled",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #f44336;">Subscription Cancelled</h2>
+            <p>Hello ${subscription.admin.name},</p>
+            <p>Your subscription to <strong>${subscription.plan?.name || "Your plan"}</strong> has been cancelled and a refund of <strong>₹${amount / 100}</strong> has been processed.</p>
+            <p><strong>Refund Date:</strong> ${new Date().toLocaleDateString()}</p>
+            <p>The refund will be credited to your original payment method within 5-7 business days.</p>
+            <p>Best regards,<br><strong>Hotel Management Team</strong></p>
+          </div>
+        `,
       });
     } catch (emailError) {
       console.error("Failed to send refund email:", emailError);
@@ -342,7 +471,8 @@ export const verifySubscriptionPayment = asyncHandler(
       await paymentService.fetchPaymentDetails(razorpay_payment_id);
 
     // Find subscription
-    const subscription = await AdminSubscription.findById(subscriptionId);
+    const subscription =
+      await AdminSubscription.findById(subscriptionId).populate("plan");
     if (!subscription) {
       return next(new APIError(404, "Subscription not found"));
     }
@@ -357,6 +487,7 @@ export const verifySubscriptionPayment = asyncHandler(
       notes: {
         type: "subscription",
         subscriptionId: subscriptionId,
+        planName: subscription.plan?.name || "Subscription",
       },
     });
 

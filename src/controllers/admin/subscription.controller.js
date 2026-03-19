@@ -1,9 +1,11 @@
 import { Admin } from "../../models/Admin.model.js";
 import { SubscriptionPlan } from "../../models/SubscriptionPlan.model.js";
 import { AdminSubscription } from "../../models/AdminSubscription.model.js";
+import { EmailQueue } from "../../models/EmailQueue.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { sendEmail } from "../../utils/emailService.js";
+import { invoiceService } from "../../services/invoice.service.js";
 import { paymentService } from "../../services/payment/payment.service.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 
@@ -249,16 +251,58 @@ export const activateSubscription = asyncHandler(async (req, res, next) => {
         startDate: subscription.startDate,
         endDate: subscription.endDate,
         amount: paymentDetails.amount,
-        maxHotels: subscription.plan.limits?.maxHotels || 0,
-        maxBranches: subscription.plan.limits?.maxBranches || 0,
-        maxManagers: subscription.plan.limits?.maxManagers || 0,
-        maxStaff: subscription.plan.limits?.maxStaff || 0,
-        maxTables: subscription.plan.limits?.maxTables || 0,
+        maxHotels: subscription.plan.features?.maxHotels || 0,
+        maxBranches: subscription.plan.features?.maxBranches || 0,
+        maxManagers: subscription.plan.features?.maxManagers || 0,
+        maxStaff: subscription.plan.features?.maxStaff || 0,
+        maxTables: subscription.plan.features?.maxTables || 0,
       },
     });
   } catch (emailError) {
     console.error("Failed to send activation email:", emailError);
     // Don't fail the activation if email fails
+  }
+
+  // Generate and send subscription invoice
+  try {
+    const lastPayment =
+      subscription.paymentHistory[subscription.paymentHistory.length - 1];
+    const invoice = await invoiceService.generateSubscriptionInvoice(
+      subscription,
+      lastPayment
+    );
+
+    try {
+      await invoiceService.sendInvoiceEmail(
+        invoice,
+        subscription.admin.email,
+        subscription.admin.name,
+        "invoice"
+      );
+    } catch (emailError) {
+      console.error(
+        "Failed to send subscription invoice email, adding to queue:",
+        emailError.message
+      );
+      await EmailQueue.create({
+        type: "subscription_invoice",
+        subscriptionId: subscription._id,
+        recipientEmail: subscription.admin.email,
+        recipientName: subscription.admin.name,
+        status: "pending",
+        emailData: {
+          subject: `Subscription Invoice ${invoice.invoiceNumber} - TableTop`,
+          invoiceNumber: invoice.invoiceNumber,
+          amount: lastPayment.amount,
+        },
+        scheduledFor: new Date(Date.now() + 5 * 60 * 1000),
+      });
+    }
+  } catch (invoiceError) {
+    console.error(
+      "Failed to generate subscription invoice:",
+      invoiceError.message
+    );
   }
 
   res.status(200).json(
@@ -563,11 +607,26 @@ export const cancelSubscription = asyncHandler(async (req, res, next) => {
 
   // Send cancellation email
   try {
-    await sendEmail(subscription.admin.email, "subscription-cancelled", {
-      adminName: subscription.admin.name,
-      planName: subscription.plan?.name || "Your plan",
-      cancellationDate: new Date().toLocaleDateString(),
-      accessUntil: subscription.endDate.toLocaleDateString(),
+    await sendEmail({
+      to: subscription.admin.email,
+      subject: "Subscription Cancelled",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #f44336;">Subscription Cancelled</h2>
+          <p>Hello ${subscription.admin.name},</p>
+          <p>Your subscription to <strong>${subscription.plan?.name || "Your plan"}</strong> has been cancelled.</p>
+          <p><strong>Cancellation Date:</strong> ${new Date().toLocaleDateString()}</p>
+          <p><strong>Access Until:</strong> ${subscription.endDate.toLocaleDateString()}</p>
+          <p>You will retain access to all features until your billing period ends.</p>
+          <p style="text-align: center; margin: 30px 0;">
+            <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/admin/subscription" 
+               style="background-color: #4CAF50; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+              Resubscribe
+            </a>
+          </p>
+          <p>Best regards,<br><strong>Hotel Management Team</strong></p>
+        </div>
+      `,
     });
   } catch (emailError) {
     console.error("Failed to send cancellation email:", emailError);
@@ -620,20 +679,66 @@ export const renewSubscription = asyncHandler(async (req, res, next) => {
     );
   }
 
+  // Check if there's already a pending renewal
+  const existingPending = await AdminSubscription.findOne({
+    admin: adminId,
+    status: "pending_payment",
+  });
+
+  if (existingPending) {
+    return next(
+      new APIError(
+        400,
+        "You already have a pending payment. Please complete or cancel it first."
+      )
+    );
+  }
+
   // Calculate amount based on billing cycle
   const amount =
     subscription.billingCycle === "monthly"
       ? subscription.plan.price.monthly
       : subscription.plan.price.yearly;
 
-  // Calculate new dates
-  const startDate = new Date();
-  const endDate = new Date(startDate);
-  if (subscription.billingCycle === "monthly") {
-    endDate.setMonth(endDate.getMonth() + 1);
+  const isCurrentlyActive = subscription.status === "active";
+
+  // Create Razorpay payment order for renewal
+  // Pass isRenewal flag so webhook knows to extend from endDate
+  const paymentOrder = await paymentService.createSubscriptionPaymentOrder({
+    subscriptionId: subscription._id.toString(),
+    amount,
+    planName: subscription.plan.name,
+    billingCycle: subscription.billingCycle,
+    isRenewal: "true",
+    previousEndDate: subscription.endDate.toISOString(),
+  });
+
+  if (isCurrentlyActive) {
+    // Don't change status to pending_payment — admin should keep access
+    // until current subscription expires. Just record the renewal intent.
+    subscription.paymentHistory.push({
+      amount: 0,
+      currency: "INR",
+      paymentMethod: "renewal_initiated",
+      transactionId: `RENEW-INIT-${Date.now()}`,
+      paymentDate: new Date(),
+      status: "pending",
+      notes: `Early renewal initiated (current plan active until ${subscription.endDate.toLocaleDateString()})`,
+    });
   } else {
-    endDate.setFullYear(endDate.getFullYear() + 1);
+    // Expired subscription — mark as pending_payment
+    subscription.status = "pending_payment";
+    subscription.paymentHistory.push({
+      amount: 0,
+      currency: "INR",
+      paymentMethod: "renewal_initiated",
+      transactionId: `RENEW-INIT-${Date.now()}`,
+      paymentDate: new Date(),
+      status: "pending",
+      notes: `Renewal initiated for expired ${subscription.billingCycle} plan`,
+    });
   }
+  await subscription.save();
 
   res.status(200).json(
     new APIResponse(
@@ -643,16 +748,16 @@ export const renewSubscription = asyncHandler(async (req, res, next) => {
           id: subscription._id,
           plan: subscription.plan,
           billingCycle: subscription.billingCycle,
-          newStartDate: startDate,
-          newEndDate: endDate,
         },
-        payment: {
-          amount,
-          currency: "INR",
-          description: `${subscription.plan.name} - ${subscription.billingCycle} renewal`,
+        paymentOrder: {
+          orderId: paymentOrder.orderId,
+          amount: paymentOrder.amount,
+          amountInPaise: paymentOrder.amountInPaise,
+          currency: paymentOrder.currency,
+          key: paymentOrder.key,
         },
       },
-      "Renewal details generated. Please proceed with payment."
+      "Renewal payment order created. Please proceed with payment."
     )
   );
 });
@@ -732,32 +837,64 @@ export const upgradePlan = asyncHandler(async (req, res, next) => {
   }
 
   if (immediate) {
-    // Immediate plan change
-    subscription.plan = newPlanId;
+    if (isUpgrade && proratedAmount > 0) {
+      // For upgrades with prorated amount, create a Razorpay payment order
+      const paymentOrder = await paymentService.createSubscriptionPaymentOrder({
+        subscriptionId: subscription._id.toString(),
+        amount: Math.round(proratedAmount),
+        planName: `Upgrade to ${newPlan.name}`,
+        billingCycle,
+        upgradeFromPlanId: currentPlan._id.toString(),
+        upgradeToPlanId: newPlanId,
+      });
 
-    if (isUpgrade) {
-      // For upgrade, add payment history entry
+      // Record upgrade intent in payment history as pending
       subscription.paymentHistory.push({
         amount: proratedAmount,
         currency: "INR",
         paymentMethod: "upgrade",
-        transactionId: `UPGRADE-${Date.now()}`,
+        transactionId: `UPGRADE-PENDING-${Date.now()}`,
         paymentDate: new Date(),
-        status: "success",
-        notes: `Upgraded from ${currentPlan.name} to ${newPlan.name}`,
+        status: "pending",
+        notes: `Upgrade from ${currentPlan.name} to ${newPlan.name} (pending payment)`,
       });
-    } else {
-      // For downgrade, just change the plan (takes effect at next billing)
-      subscription.paymentHistory.push({
-        amount: 0,
-        currency: "INR",
-        paymentMethod: "downgrade",
-        transactionId: `DOWNGRADE-${Date.now()}`,
-        paymentDate: new Date(),
-        status: "success",
-        notes: `Downgraded from ${currentPlan.name} to ${newPlan.name}`,
-      });
+
+      await subscription.save();
+
+      return res.status(200).json(
+        new APIResponse(
+          200,
+          {
+            subscription: {
+              id: subscription._id,
+              currentPlan: currentPlan,
+              newPlan: newPlan,
+              changeType: planChangeType,
+            },
+            paymentOrder: {
+              orderId: paymentOrder.orderId,
+              amount: paymentOrder.amount,
+              amountInPaise: paymentOrder.amountInPaise,
+              currency: paymentOrder.currency,
+              key: paymentOrder.key,
+            },
+          },
+          `Prorated payment of ₹${Math.round(proratedAmount)} required for upgrade. Please complete payment.`
+        )
+      );
     }
+
+    // For downgrades or zero-cost upgrades, apply immediately
+    subscription.plan = newPlanId;
+    subscription.paymentHistory.push({
+      amount: 0,
+      currency: "INR",
+      paymentMethod: planChangeType,
+      transactionId: `${planChangeType.toUpperCase()}-${Date.now()}`,
+      paymentDate: new Date(),
+      status: "success",
+      notes: `${isUpgrade ? "Upgraded" : "Downgraded"} from ${currentPlan.name} to ${newPlan.name}`,
+    });
 
     await subscription.save();
 
@@ -772,17 +909,8 @@ export const upgradePlan = asyncHandler(async (req, res, next) => {
             status: subscription.status,
             changeType: planChangeType,
           },
-          payment: isUpgrade
-            ? {
-                amount: proratedAmount,
-                currency: "INR",
-                description: `Prorated amount for ${planChangeType}`,
-              }
-            : null,
         },
-        `Plan ${planChangeType}d successfully${
-          isUpgrade ? ". Please complete the payment." : "."
-        }`
+        `Plan ${planChangeType}d successfully.`
       )
     );
   } else {
