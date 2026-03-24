@@ -394,7 +394,7 @@ export const getOrderStatus = asyncHandler(async (req, res, next) => {
 });
 
 /**
- * Get active orders (queued, pending, confirmed, preparing, ready)
+ * Get active orders (queued, pending, confirmed, preparing, ready, served)
  * GET /api/v1/user/orders/active
  */
 export const getActiveOrders = asyncHandler(async (req, res) => {
@@ -402,7 +402,9 @@ export const getActiveOrders = asyncHandler(async (req, res) => {
 
   // Pass $in query to get orders with multiple statuses
   const result = await orderService.getUserOrders(userId, {
-    status: { $in: ["queued", "pending", "confirmed", "preparing", "ready"] },
+    status: {
+      $in: ["queued", "pending", "confirmed", "preparing", "ready", "served"],
+    },
     limit: 50,
     sortBy: "createdAt",
     sortOrder: "desc",
@@ -462,7 +464,7 @@ export const getOrderHistory = asyncHandler(async (req, res) => {
 
   // Get order history directly from database with proper filtering
   const result = await orderService.getUserOrders(userId, {
-    status: { $in: ["completed", "cancelled", "served"] }, // Filter at database level
+    status: { $in: ["completed", "cancelled"] }, // Filter at database level
     limit: limit || 20,
     skip: skip || 0,
     sortBy: "createdAt",

@@ -48,7 +48,7 @@ export const placeOrderFromCart = async (
     }).populate({
       path: "items.foodItem",
       select:
-        "name price discountPrice isAvailable preparationTime foodType category",
+        "name price discountPrice isAvailable preparationTime foodType category gstRate",
       populate: {
         path: "category",
         select: "name",
@@ -140,8 +140,8 @@ export const placeOrderFromCart = async (
     // 7. Calculate estimated preparation time
     const estimatedTime = calculateEstimatedTime(cart.items);
 
-    // 7. Transform cart items to order items format
-    const orderItems = cart.items.map((item) => ({
+    // 7. Transform cart items to order items format (include per-item GST)
+    const orderItems = cart.items.map((item, index) => ({
       foodItem: item.foodItem._id,
       quantity: item.quantity,
       price: item.price,
@@ -150,6 +150,9 @@ export const placeOrderFromCart = async (
       foodItemName: item.foodItem.name, // For order history
       foodType: item.foodItem.foodType,
       category: item.foodItem.category?.name,
+      gstRate: item.foodItem.gstRate ?? 0,
+      gstAmount:
+        orderCalculation.breakdown?.itemDetails?.[index]?.gstAmount ?? 0,
     }));
 
     // 8. Create order
@@ -468,6 +471,36 @@ export const reorderFromPrevious = async (
       throw new APIError(404, "Original order not found");
     }
 
+    // Validate that the user is reordering from the same hotel they scanned
+    if (orderDetails.tableId) {
+      const table = await Table.findById(orderDetails.tableId).select(
+        "hotel branch"
+      );
+      if (!table) {
+        throw new APIError(404, "Table not found");
+      }
+
+      const currentHotel = table.hotel.toString();
+      const orderHotel = originalOrder.hotel.toString();
+      if (currentHotel !== orderHotel) {
+        throw new APIError(
+          400,
+          "You can only reorder from the same hotel you are currently at. This order belongs to a different hotel."
+        );
+      }
+
+      if (
+        table.branch &&
+        originalOrder.branch &&
+        table.branch.toString() !== originalOrder.branch.toString()
+      ) {
+        throw new APIError(
+          400,
+          "You can only reorder from the same branch you are currently at. This order belongs to a different branch."
+        );
+      }
+    }
+
     // Always use cart mode for reorder - allows review and modification
     return await reorderToCart(originalOrder, userId, orderDetails);
   } catch (error) {
@@ -486,8 +519,6 @@ export const reorderFromPrevious = async (
  */
 const reorderToCart = async (originalOrder, userId, orderDetails) => {
   try {
-    const { Cart } = await import("../models/Cart.model.js");
-
     // Find or create cart for the same hotel/branch
     let cart = await Cart.findOne({
       user: userId,
@@ -632,6 +663,7 @@ const calculateOrderTotals = (cart) => {
       sgst: taxCalculation.sgst,
       serviceCharge,
       grandTotal: total,
+      itemDetails: taxCalculation.itemDetails,
     },
   };
 };
@@ -645,19 +677,21 @@ const calculateOrderTotals = (cart) => {
  */
 const calculateTaxes = (items, baseAmount, subtotal) => {
   // Calculate proportional base amount for each item (after discounts)
-  const discountRatio = baseAmount / subtotal;
+  const discountRatio = subtotal > 0 ? baseAmount / subtotal : 1;
 
   let totalTaxes = 0;
   const itemTaxDetails = [];
 
   items.forEach((item) => {
+    // Support both cart items (foodItem.gstRate) and order items (item.gstRate)
+    const gstRate = item.gstRate ?? item.foodItem?.gstRate ?? 0;
     const itemBaseAmount = item.totalPrice * discountRatio;
-    const itemGstAmount = (itemBaseAmount * item.gstRate) / 100;
+    const itemGstAmount = (itemBaseAmount * gstRate) / 100;
     totalTaxes += itemGstAmount;
 
     itemTaxDetails.push({
-      itemName: item.foodItemName || item.name,
-      gstRate: item.gstRate,
+      itemName: item.foodItemName || item.foodItem?.name || item.name,
+      gstRate,
       gstAmount: Math.round(itemGstAmount * 100) / 100,
     });
   });
@@ -966,7 +1000,17 @@ export const addItemsToOrder = async (orderId, userId) => {
 
     const newItems = cart.items.map((item) => {
       const itemPrice = item.foodItem.effectivePrice || item.foodItem.price;
-      const itemTotal = itemPrice * item.quantity;
+      let itemTotal = itemPrice * item.quantity;
+
+      // Include customization add-on prices (matching Cart model logic)
+      if (item.customizations?.addOns?.length) {
+        const addOnPrice = item.customizations.addOns.reduce(
+          (sum, addOn) => sum + addOn.price,
+          0
+        );
+        itemTotal += addOnPrice * item.quantity;
+      }
+
       addOnSubtotal += itemTotal;
 
       if (
@@ -1010,6 +1054,8 @@ export const addItemsToOrder = async (orderId, userId) => {
 
     let totalTaxes = 0;
     for (const item of allItems) {
+      // Use item.gstRate, falling back to 0 for legacy items missing the field
+      const gstRate = item.gstRate ?? 0;
       let itemBaseAmount;
       if (item.batch && item.batch > 1) {
         // New add-on items: full price (no discount)
@@ -1020,7 +1066,7 @@ export const addItemsToOrder = async (orderId, userId) => {
           existingSubtotal > 0 ? existingBaseAmount / existingSubtotal : 1;
         itemBaseAmount = item.totalPrice * discountRatio;
       }
-      const itemGstAmount = (itemBaseAmount * item.gstRate) / 100;
+      const itemGstAmount = (itemBaseAmount * gstRate) / 100;
       totalTaxes += itemGstAmount;
 
       // Update gstAmount for new items

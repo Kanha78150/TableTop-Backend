@@ -40,7 +40,7 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
   const filter = { staff: staffId };
   if (status && status !== "all") {
     if (status === "active") {
-      filter.status = { $in: ["pending", "confirmed", "preparing", "ready"] };
+      filter.status = { $in: ["pending", "confirmed", "preparing", "ready", "served"] };
     } else {
       filter.status = status;
     }
@@ -54,9 +54,9 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
   const orders = await Order.find(filter)
     .populate("user", "name phone")
     .populate("table", "tableNumber")
-    .populate("hotel", "name")
-    .populate("branch", "name")
-    .populate("items.foodItem", "name price category")
+    .populate("hotel", "name images")
+    .populate("branch", "name images")
+    .populate("items.foodItem", "name price category image")
     .sort(sort)
     .limit(limitNumber)
     .skip(skip);
@@ -82,6 +82,11 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
   );
 });
 
+/**
+ * Update order status
+ * PUT /api/v1/staff/orders/:orderId/status
+ * @access Staff
+ */
 /**
  * Update order status
  * PUT /api/v1/staff/orders/:orderId/status
@@ -186,6 +191,46 @@ export const updateOrderStatus = asyncHandler(async (req, res, next) => {
     .populate("user", "name phone")
     .populate("table", "tableNumber")
     .populate("staff", "name staffId");
+
+  // Emit real-time status update to customer and branch
+  try {
+    if (isIOInitialized()) {
+      const io = getIO();
+      const userId =
+        updatedOrder.user?._id?.toString() || updatedOrder.user?.toString();
+      const branchId = updatedOrder.branch?.toString();
+
+      const statusPayload = {
+        orderId: updatedOrder._id.toString(),
+        orderNumber:
+          updatedOrder.orderNumber ||
+          updatedOrder._id.toString().slice(-8).toUpperCase(),
+        status,
+        tableNumber: updatedOrder.table?.tableNumber || "N/A",
+        updatedBy: updatedOrder.staff?.name || "Staff",
+        updatedAt: new Date(),
+        hotel: updatedOrder.hotel?.toString(),
+        branch: branchId,
+      };
+
+      if (userId) {
+        io.to(`user_${userId}`).emit("order:status:updated", statusPayload);
+      }
+
+      if (branchId) {
+        io.to(`branch_${branchId}`).emit("order:status:updated", statusPayload);
+      }
+
+      logger.info(
+        `Socket: order:status:updated emitted for order ${orderId} → status: ${status}`
+      );
+    }
+  } catch (socketError) {
+    logger.error(
+      "Socket notification error in updateOrderStatus:",
+      socketError
+    );
+  }
 
   // Release table when order is completed or cancelled
   if (status === "completed" || status === "cancelled") {
