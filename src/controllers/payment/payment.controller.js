@@ -16,7 +16,7 @@ import dynamicPaymentService from "../../services/payment/dynamicPayment.service
  */
 export const initiatePayment = async (req, res) => {
   try {
-    const { orderId } = req.body;
+    const { orderId, batch } = req.body;
 
     if (!orderId) {
       return res.status(400).json({
@@ -24,6 +24,30 @@ export const initiatePayment = async (req, res) => {
         message: "Order ID is required",
       });
     }
+
+    // --- Supplementary payment flow (add-on items, batch >= 2) ---
+    if (batch && Number(batch) >= 2) {
+      if (!orderId.match(/^[0-9a-fA-F]{24}$/)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid orderId",
+        });
+      }
+
+      const result = await dynamicPaymentService.initiateSupplementaryPayment({
+        orderId,
+        batch: Number(batch),
+        customerInfo: { userId: req.user?._id || req.user?.id },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Supplementary payment initiated successfully",
+        data: result,
+      });
+    }
+
+    // --- Regular payment flow ---
 
     // Fetch order
     const order = await Order.findById(orderId)
@@ -113,10 +137,10 @@ export const initiatePayment = async (req, res) => {
     });
   } catch (error) {
     console.error("Error initiating payment:", error);
-    return res.status(500).json({
+    const status = error.message?.includes("not found") ? 404 : 500;
+    return res.status(status).json({
       success: false,
-      message: "Failed to initiate payment",
-      error: error.message,
+      message: error.message || "Failed to initiate payment",
     });
   }
 };
@@ -128,7 +152,8 @@ export const initiatePayment = async (req, res) => {
  */
 export const verifyPayment = async (req, res) => {
   try {
-    const { orderId, paymentId, signature, ...additionalData } = req.body;
+    const { orderId, paymentId, signature, gatewayOrderId, ...additionalData } =
+      req.body;
 
     if (!orderId || !paymentId) {
       return res.status(400).json({
@@ -155,7 +180,25 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // Verify payment
+    // --- Supplementary payment verification (add-on items) ---
+    // Auto-detect: if order has a pending add-on payment, route to supplementary verify
+    if (order.pendingAddOnPayment && gatewayOrderId) {
+      const result = await dynamicPaymentService.verifySupplementaryPayment({
+        orderId,
+        paymentId,
+        signature,
+        gatewayOrderId,
+        additionalData,
+      });
+
+      return res.status(result.success ? 200 : 400).json({
+        success: result.success,
+        message: result.message,
+        data: result,
+      });
+    }
+
+    // --- Regular payment verification ---
     const verificationResult = await dynamicPaymentService.verifyPayment({
       orderId,
       paymentId,
@@ -743,6 +786,89 @@ export const cancelPayment = async (req, res) => {
       success: false,
       message: "Failed to cancel payment",
       error: error.message,
+    });
+  }
+};
+
+/**
+ * Initiate supplementary payment for add-on items
+ * @route POST /api/v1/payments/supplementary/initiate
+ * @access Private (User)
+ */
+export const initiateSupplementaryPayment = async (req, res) => {
+  try {
+    const { orderId, batch } = req.body;
+
+    if (!orderId || !batch) {
+      return res.status(400).json({
+        success: false,
+        message: "orderId and batch are required",
+      });
+    }
+
+    if (!orderId.match(/^[0-9a-fA-F]{24}$/) || batch < 2) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid orderId or batch (must be >= 2)",
+      });
+    }
+
+    const result = await dynamicPaymentService.initiateSupplementaryPayment({
+      orderId,
+      batch: Number(batch),
+      customerInfo: { userId: req.user?._id || req.user?.id },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Supplementary payment initiated successfully",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Error initiating supplementary payment:", error);
+    const status = error.message?.includes("not found") ? 404 : 500;
+    return res.status(status).json({
+      success: false,
+      message: error.message || "Failed to initiate supplementary payment",
+    });
+  }
+};
+
+/**
+ * Verify supplementary payment after completion
+ * @route POST /api/v1/payments/supplementary/verify
+ * @access Private (User)
+ */
+export const verifySupplementaryPayment = async (req, res) => {
+  try {
+    const { orderId, paymentId, signature, gatewayOrderId, additionalData } =
+      req.body;
+
+    if (!paymentId || !gatewayOrderId) {
+      return res.status(400).json({
+        success: false,
+        message: "paymentId and gatewayOrderId are required",
+      });
+    }
+
+    const result = await dynamicPaymentService.verifySupplementaryPayment({
+      orderId,
+      paymentId,
+      signature,
+      gatewayOrderId,
+      additionalData,
+    });
+
+    return res.status(result.success ? 200 : 400).json({
+      success: result.success,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Error verifying supplementary payment:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to verify supplementary payment",
     });
   }
 };

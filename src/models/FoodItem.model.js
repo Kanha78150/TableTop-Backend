@@ -54,8 +54,9 @@ const foodItemSchema = new mongoose.Schema(
     foodType: {
       type: String,
       enum: {
-        values: ["veg", "non-veg", "vegan", "jain"],
-        message: "Food type must be veg, non-veg, vegan, or jain",
+        values: ["veg", "non-veg", "vegan", "jain", "snack", "beverages"],
+        message:
+          "Food type must be veg, non-veg, vegan, jain, snack, or beverages",
       },
       required: [true, "Food type is required"],
     },
@@ -382,10 +383,11 @@ export const foodItemValidationSchemas = {
     }),
     discountPrice: Joi.number().positive().optional(),
     foodType: Joi.string()
-      .valid("veg", "non-veg", "vegan", "jain")
+      .valid("veg", "non-veg", "vegan", "jain", "snack", "beverages")
       .required()
       .messages({
-        "any.only": "Food type must be veg, non-veg, vegan, or jain",
+        "any.only":
+          "Food type must be veg, non-veg, vegan, jain, snack, or beverages",
         "any.required": "Food type is required",
       }),
     spiceLevel: Joi.string()
@@ -497,7 +499,9 @@ export const foodItemValidationSchemas = {
     shortDescription: Joi.string().max(200).allow("").optional(),
     price: Joi.number().positive().optional(),
     discountPrice: Joi.number().positive().optional().allow(null),
-    foodType: Joi.string().valid("veg", "non-veg", "vegan", "jain").optional(),
+    foodType: Joi.string()
+      .valid("veg", "non-veg", "vegan", "jain", "snack", "beverages")
+      .optional(),
     spiceLevel: Joi.string()
       .valid("mild", "medium", "hot", "extra-hot", "none")
       .optional(),

@@ -6,6 +6,7 @@ import {
   sendSubscriptionExpiringEmail,
   sendSubscriptionExpiredEmail,
   sendSubscriptionRenewalReminderEmail,
+  sendEmail,
 } from "../../utils/emailService.js";
 
 // Job logging utility
@@ -268,6 +269,22 @@ jobCallbacks.autoRenewal = async () => {
 
     for (const subscription of subscriptionsToRenew) {
       try {
+        // Skip if plan was deleted or deactivated
+        if (!subscription.plan) {
+          logJob(
+            jobName,
+            "error",
+            `Plan not found for subscription, disabling auto-renewal`,
+            {
+              subscriptionId: subscription._id,
+            }
+          );
+          subscription.autoRenew = false;
+          await subscription.save();
+          errorCount++;
+          continue;
+        }
+
         // Calculate new dates
         const newStartDate = new Date(subscription.endDate);
         const newEndDate = new Date(newStartDate);
@@ -301,13 +318,24 @@ jobCallbacks.autoRenewal = async () => {
 
         // Send renewal confirmation email
         if (subscription.admin && subscription.admin.email) {
-          await sendSubscriptionExpiringEmail(
-            subscription.admin.email,
-            subscription.admin.name,
-            subscription.plan.name,
-            newEndDate,
-            0 // Days remaining
-          );
+          await sendEmail({
+            to: subscription.admin.email,
+            subject: "Subscription Auto-Renewed Successfully",
+            template: "subscription-activated",
+            data: {
+              name: subscription.admin.name,
+              planName: subscription.plan.name,
+              billingCycle: subscription.billingCycle,
+              startDate: newStartDate,
+              endDate: newEndDate,
+              amount,
+              maxHotels: subscription.plan.features?.maxHotels || 0,
+              maxBranches: subscription.plan.features?.maxBranches || 0,
+              maxManagers: subscription.plan.features?.maxManagers || 0,
+              maxStaff: subscription.plan.features?.maxStaff || 0,
+              maxTables: subscription.plan.features?.maxTables || 0,
+            },
+          });
         }
 
         successCount++;
@@ -406,7 +434,6 @@ jobCallbacks.paymentRetry = async () => {
 
           // Send payment retry notification email
           try {
-            const { sendEmail } = await import("../utils/emailService.js");
             await sendEmail({
               to: subscription.admin.email,
               subject: `Action Required: Retry Payment for ${subscription.plan.name}`,

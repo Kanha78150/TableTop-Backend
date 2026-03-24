@@ -10,6 +10,8 @@ import coinService from "../reward.service.js";
 import assignmentService from "../assignment/assignment.service.js";
 import { createTransactionRecord } from "../payment/postProcess.service.js";
 import { generateTransactionId } from "../../utils/idGenerator.js";
+import { calculateCommission } from "../../utils/commissionCalculator.js";
+import { getIO } from "../../utils/socketService.js";
 
 /**
  * Place order from user's cart
@@ -46,7 +48,7 @@ export const placeOrderFromCart = async (
     }).populate({
       path: "items.foodItem",
       select:
-        "name price discountPrice isAvailable preparationTime foodType category",
+        "name price discountPrice isAvailable preparationTime foodType category gstRate",
       populate: {
         path: "category",
         select: "name",
@@ -138,8 +140,8 @@ export const placeOrderFromCart = async (
     // 7. Calculate estimated preparation time
     const estimatedTime = calculateEstimatedTime(cart.items);
 
-    // 7. Transform cart items to order items format
-    const orderItems = cart.items.map((item) => ({
+    // 7. Transform cart items to order items format (include per-item GST)
+    const orderItems = cart.items.map((item, index) => ({
       foodItem: item.foodItem._id,
       quantity: item.quantity,
       price: item.price,
@@ -148,6 +150,9 @@ export const placeOrderFromCart = async (
       foodItemName: item.foodItem.name, // For order history
       foodType: item.foodItem.foodType,
       category: item.foodItem.category?.name,
+      gstRate: item.foodItem.gstRate ?? 0,
+      gstAmount:
+        orderCalculation.breakdown?.itemDetails?.[index]?.gstAmount ?? 0,
     }));
 
     // 8. Create order
@@ -466,6 +471,36 @@ export const reorderFromPrevious = async (
       throw new APIError(404, "Original order not found");
     }
 
+    // Validate that the user is reordering from the same hotel they scanned
+    if (orderDetails.tableId) {
+      const table = await Table.findById(orderDetails.tableId).select(
+        "hotel branch"
+      );
+      if (!table) {
+        throw new APIError(404, "Table not found");
+      }
+
+      const currentHotel = table.hotel.toString();
+      const orderHotel = originalOrder.hotel.toString();
+      if (currentHotel !== orderHotel) {
+        throw new APIError(
+          400,
+          "You can only reorder from the same hotel you are currently at. This order belongs to a different hotel."
+        );
+      }
+
+      if (
+        table.branch &&
+        originalOrder.branch &&
+        table.branch.toString() !== originalOrder.branch.toString()
+      ) {
+        throw new APIError(
+          400,
+          "You can only reorder from the same branch you are currently at. This order belongs to a different branch."
+        );
+      }
+    }
+
     // Always use cart mode for reorder - allows review and modification
     return await reorderToCart(originalOrder, userId, orderDetails);
   } catch (error) {
@@ -484,8 +519,6 @@ export const reorderFromPrevious = async (
  */
 const reorderToCart = async (originalOrder, userId, orderDetails) => {
   try {
-    const { Cart } = await import("../models/Cart.model.js");
-
     // Find or create cart for the same hotel/branch
     let cart = await Cart.findOne({
       user: userId,
@@ -630,6 +663,7 @@ const calculateOrderTotals = (cart) => {
       sgst: taxCalculation.sgst,
       serviceCharge,
       grandTotal: total,
+      itemDetails: taxCalculation.itemDetails,
     },
   };
 };
@@ -643,19 +677,21 @@ const calculateOrderTotals = (cart) => {
  */
 const calculateTaxes = (items, baseAmount, subtotal) => {
   // Calculate proportional base amount for each item (after discounts)
-  const discountRatio = baseAmount / subtotal;
+  const discountRatio = subtotal > 0 ? baseAmount / subtotal : 1;
 
   let totalTaxes = 0;
   const itemTaxDetails = [];
 
   items.forEach((item) => {
+    // Support both cart items (foodItem.gstRate) and order items (item.gstRate)
+    const gstRate = item.gstRate ?? item.foodItem?.gstRate ?? 0;
     const itemBaseAmount = item.totalPrice * discountRatio;
-    const itemGstAmount = (itemBaseAmount * item.gstRate) / 100;
+    const itemGstAmount = (itemBaseAmount * gstRate) / 100;
     totalTaxes += itemGstAmount;
 
     itemTaxDetails.push({
-      itemName: item.foodItemName || item.name,
-      gstRate: item.gstRate,
+      itemName: item.foodItemName || item.foodItem?.name || item.name,
+      gstRate,
       gstAmount: Math.round(itemGstAmount * 100) / 100,
     });
   });
@@ -896,6 +932,299 @@ export const placeDirectOrder = async (
 };
 
 /**
+ * Add extra items to an existing served order (add-on / supplementary items)
+ * @param {string} orderId - Order ID
+ * @param {string} userId - User ID
+ * @returns {Object} - { order, supplementaryPayment }
+ */
+export const addItemsToOrder = async (orderId, userId) => {
+  try {
+    // 1. Fetch and validate order
+    const order = await Order.findById(orderId).populate("hotel", "branch");
+    if (!order) {
+      throw new APIError(404, "Order not found");
+    }
+    if (order.user.toString() !== userId.toString()) {
+      throw new APIError(403, "You are not authorized to modify this order");
+    }
+    if (order.status !== "served") {
+      throw new APIError(
+        400,
+        `Cannot add items when order status is "${order.status}". Items can only be added after food is served.`
+      );
+    }
+    if (order.pendingAddOnPayment) {
+      throw new APIError(
+        400,
+        "A previous add-on payment is still pending. Please complete the payment before adding more items."
+      );
+    }
+
+    // 2. Fetch user's active cart for the same hotel/branch
+    const normalizedBranchId =
+      order.branch && order.branch.toString() !== "" ? order.branch : null;
+
+    const cart = await Cart.findOne({
+      user: userId,
+      hotel: order.hotel._id,
+      branch: normalizedBranchId,
+      status: "active",
+    }).populate({
+      path: "items.foodItem",
+      select:
+        "name price discountPrice effectivePrice isAvailable preparationTime foodType category gstRate",
+      populate: {
+        path: "category",
+        select: "name",
+      },
+    });
+
+    if (!cart || cart.items.length === 0) {
+      throw new APIError(
+        400,
+        "No active cart found. Please add items to your cart first."
+      );
+    }
+
+    // 3. Validate cart items
+    const validationResult = await cart.validateItems();
+    if (!validationResult.isValid) {
+      throw new APIError(400, "Cart validation failed", {
+        errors: validationResult.errors,
+      });
+    }
+
+    // 4. Map cart items to order items with new batch number
+    const newBatch = order.currentBatch + 1;
+    let addOnSubtotal = 0;
+
+    const newItems = cart.items.map((item) => {
+      const itemPrice = item.foodItem.effectivePrice || item.foodItem.price;
+      let itemTotal = itemPrice * item.quantity;
+
+      // Include customization add-on prices (matching Cart model logic)
+      if (item.customizations?.addOns?.length) {
+        const addOnPrice = item.customizations.addOns.reduce(
+          (sum, addOn) => sum + addOn.price,
+          0
+        );
+        itemTotal += addOnPrice * item.quantity;
+      }
+
+      addOnSubtotal += itemTotal;
+
+      if (
+        item.foodItem.gstRate === undefined ||
+        item.foodItem.gstRate === null
+      ) {
+        throw new APIError(
+          400,
+          `GST rate not configured for item: ${item.foodItem.name}. Please contact admin.`
+        );
+      }
+
+      return {
+        foodItem: item.foodItem._id,
+        foodItemName: item.foodItem.name,
+        quantity: item.quantity,
+        price: itemPrice,
+        totalPrice: itemTotal,
+        customizations: item.customizations,
+        foodType: item.foodItem.foodType || "veg",
+        gstRate: item.foodItem.gstRate,
+        gstAmount: 0, // Will be calculated below
+        batch: newBatch,
+      };
+    });
+
+    // 5. Recalculate order totals with all items (existing + new)
+    const existingSubtotal = order.subtotal;
+    const newSubtotal = existingSubtotal + addOnSubtotal;
+
+    // Recalculate taxes with per-item GST for ALL items
+    const allItems = [...order.items.toObject(), ...newItems];
+    // Discount ratio: apply existing discounts proportionally to original items only
+    // New items have no coin/offer discount applied
+    const existingDiscountTotal =
+      (order.coinDiscount || 0) + (order.offerDiscount || 0);
+    const existingBaseAmount = Math.max(
+      0,
+      existingSubtotal - existingDiscountTotal
+    );
+
+    let totalTaxes = 0;
+    for (const item of allItems) {
+      // Use item.gstRate, falling back to 0 for legacy items missing the field
+      const gstRate = item.gstRate ?? 0;
+      let itemBaseAmount;
+      if (item.batch && item.batch > 1) {
+        // New add-on items: full price (no discount)
+        itemBaseAmount = item.totalPrice;
+      } else {
+        // Original items: apply existing discount ratio
+        const discountRatio =
+          existingSubtotal > 0 ? existingBaseAmount / existingSubtotal : 1;
+        itemBaseAmount = item.totalPrice * discountRatio;
+      }
+      const itemGstAmount = (itemBaseAmount * gstRate) / 100;
+      totalTaxes += itemGstAmount;
+
+      // Update gstAmount for new items
+      if (item.batch && item.batch > 1) {
+        item.gstAmount = Math.round(itemGstAmount * 100) / 100;
+      }
+    }
+
+    const newTaxes = Math.max(0, Math.round(totalTaxes * 100) / 100);
+    const newServiceCharge = 0; // Matching existing logic
+    const newTotalPrice = Math.max(
+      0,
+      existingBaseAmount + addOnSubtotal + newTaxes + newServiceCharge
+    );
+
+    // 6. Recalculate commission on the new combined total (single commission)
+    const hotel = await Hotel.findById(order.hotel._id).select(
+      "commissionConfig"
+    );
+    const commissionResult = calculateCommission(hotel, newTotalPrice);
+
+    // 7. Determine if this is a digital or cash order
+    const isCashOrder = order.payment?.paymentMethod === "cash";
+    const isDigitalOrder = ["razorpay", "phonepe", "paytm"].includes(
+      order.payment?.paymentMethod
+    );
+
+    // 8. Update order
+    order.items.push(...newItems);
+    order.subtotal = newSubtotal;
+    order.taxes = newTaxes;
+    order.serviceCharge = newServiceCharge;
+    order.totalPrice = newTotalPrice;
+    order.currentBatch = newBatch;
+    order.previousStatus = order.status;
+    order.status = "confirmed";
+    order.hasAddOns = true;
+
+    // Update commission (single calculation on combined total)
+    order.payment.commissionAmount = commissionResult.amount;
+    order.payment.commissionRate = commissionResult.rate;
+    if (commissionResult.applicable) {
+      // Keep existing commission status (pending or due) — don't regress "due" back to "pending"
+      if (order.payment.commissionStatus === "not_applicable") {
+        order.payment.commissionStatus = "pending";
+      }
+    }
+
+    // Update reward coins based on new total
+    order.rewardCoins = Math.max(0, Math.floor(newTotalPrice * 0.1));
+
+    // Add status history entry
+    order.statusHistory.push({
+      status: "confirmed",
+      timestamp: new Date(),
+      notes: `Add-on items added (batch ${newBatch})`,
+    });
+
+    let supplementaryPayment = { required: false };
+
+    if (isDigitalOrder) {
+      // Digital: create supplementary payment entry
+      const addOnTaxes = newItems.reduce(
+        (sum, item) => sum + item.gstAmount,
+        0
+      );
+      const addOnTotal = Math.max(
+        0,
+        addOnSubtotal + addOnTaxes + newServiceCharge
+      );
+
+      order.pendingAddOnPayment = true;
+      order.supplementaryPayments.push({
+        batch: newBatch,
+        amount: Math.round(addOnTotal * 100) / 100,
+        provider: order.payment.provider,
+        paymentStatus: "pending",
+        commissionAmount: 0,
+        commissionRate: 0,
+        commissionStatus: "not_applicable",
+        createdAt: new Date(),
+      });
+
+      supplementaryPayment = {
+        required: true,
+        amount: Math.round(addOnTotal * 100) / 100,
+        batch: newBatch,
+        provider: order.payment.provider,
+      };
+    }
+
+    // 9. Mark cart as converted
+    cart.status = "converted";
+    cart.checkoutOrderId = order._id;
+    await cart.save();
+
+    // 10. Save order
+    await order.save();
+
+    // 11. Socket notification for cash orders (immediate)
+    // For digital orders, notification is sent after supplementary payment is verified
+    if (isCashOrder && order.staff) {
+      try {
+        const io = getIO();
+        const notificationData = {
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          newItems: newItems.map((i) => ({
+            foodItemName: i.foodItemName,
+            quantity: i.quantity,
+            price: i.price,
+            totalPrice: i.totalPrice,
+          })),
+          batch: newBatch,
+          updatedTotal: order.totalPrice,
+          paymentMethod: order.payment?.paymentMethod || "cash",
+          tableNumber: order.table?.tableNumber || null,
+          message: "Customer has added extra items to their order",
+        };
+        io.to(`staff_${order.staff}`).emit(
+          "order:items-added",
+          notificationData
+        );
+        if (order.branch) {
+          io.to(`branch_${order.branch}`).emit(
+            "order:items-added",
+            notificationData
+          );
+        }
+      } catch (socketError) {
+        // Don't fail the operation if socket notification fails
+        console.error("Socket notification error:", socketError.message);
+      }
+    }
+
+    // 12. Populate order for response
+    await order.populate([
+      { path: "user", select: "name email phone" },
+      { path: "hotel", select: "name hotelId" },
+      { path: "branch", select: "name branchId" },
+      { path: "table", select: "tableNumber" },
+      { path: "staff", select: "name staffId" },
+      {
+        path: "items.foodItem",
+        select: "name price image category foodType",
+      },
+    ]);
+
+    return { order, supplementaryPayment };
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(500, "Failed to add items to order", error.message);
+  }
+};
+
+/**
  * Confirm cash payment for an order (mark as paid)
  * @param {string} orderId - Order ID
  * @param {string} confirmedBy - User ID of the person confirming
@@ -979,5 +1308,6 @@ export default {
   getOrderById,
   cancelOrder,
   reorderFromPrevious,
+  addItemsToOrder,
   confirmCashPayment,
 };

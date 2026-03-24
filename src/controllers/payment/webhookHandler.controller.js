@@ -288,6 +288,20 @@ async function handlePaymentFailed(entity) {
 
         // Restore cart
         await paymentService.restoreCartAfterPaymentFailure(order._id);
+      } else {
+        // Check if this is a supplementary payment failure
+        const suppOrder = await Order.findOne({
+          "supplementaryPayments.gatewayOrderId": orderId,
+        });
+        if (suppOrder) {
+          const suppPayment = suppOrder.supplementaryPayments.find(
+            (sp) => sp.gatewayOrderId === orderId
+          );
+          if (suppPayment) {
+            suppPayment.paymentStatus = "failed";
+            await suppOrder.save();
+          }
+        }
       }
     }
 
@@ -581,12 +595,59 @@ async function processSubscriptionPayment(entity, status) {
       return { success: false, message: "Subscription not found" };
     }
 
-    // Activate subscription
-    if (subscription.status !== "active") {
-      subscription.status = "active";
-      subscription.startDate = new Date();
+    // Handle upgrade payment (subscription is already active)
+    if (notes.upgradeToPlanId && subscription.status === "active") {
+      const { SubscriptionPlan } =
+        await import("../../models/SubscriptionPlan.model.js");
+      const newPlan = await SubscriptionPlan.findById(notes.upgradeToPlanId);
+      if (newPlan) {
+        subscription.plan = newPlan._id;
+        subscription.paymentHistory.push({
+          amount: amount / 100,
+          currency: "INR",
+          method: method || "online",
+          transactionId: paymentId,
+          razorpayPaymentId: paymentId,
+          date: new Date(),
+          status: "success",
+          notes: `Upgrade payment completed - ${newPlan.name}`,
+        });
+        await subscription.save();
+        logger.info("Subscription upgraded successfully", { subscriptionId });
+        return { success: true, message: "Subscription upgraded" };
+      }
+    }
 
-      const endDate = new Date(subscription.startDate);
+    // Handle renewal vs fresh activation
+    const isRenewal = notes.isRenewal === "true";
+
+    if (subscription.status === "active" && !isRenewal) {
+      // Already active and not a renewal — skip duplicate activation
+      logger.info("Subscription already active (not a renewal), skipping", {
+        subscriptionId,
+      });
+    } else {
+      // Determine start date for new period
+      const wasActive = subscription.status === "active";
+      let newStartDate;
+      if (
+        isRenewal &&
+        wasActive &&
+        new Date(subscription.endDate) > new Date()
+      ) {
+        // Early renewal: extend from current endDate
+        newStartDate = new Date(subscription.endDate);
+      } else {
+        // Fresh activation or expired renewal: start from now
+        newStartDate = new Date();
+      }
+
+      subscription.status = "active";
+      if (!wasActive) {
+        subscription.startDate = newStartDate;
+      }
+
+      const endDate = new Date(newStartDate);
       if (subscription.billingCycle === "monthly") {
         endDate.setMonth(endDate.getMonth() + 1);
       } else {
@@ -594,16 +655,18 @@ async function processSubscriptionPayment(entity, status) {
       }
       subscription.endDate = endDate;
 
-      // Initialize usage
-      subscription.usage = {
-        hotels: 0,
-        branches: 0,
-        managers: 0,
-        staff: 0,
-        tables: 0,
-        ordersThisMonth: 0,
-        storageUsedGB: 0,
-      };
+      // Initialize usage only for fresh activations (not renewals)
+      if (!wasActive) {
+        subscription.usage = {
+          hotels: 0,
+          branches: 0,
+          managers: 0,
+          staff: 0,
+          tables: 0,
+          ordersThisMonth: 0,
+          storageUsedGB: 0,
+        };
+      }
     }
 
     // Add payment to history
@@ -680,7 +743,20 @@ async function processSubscriptionPayment(entity, status) {
       await sendEmail({
         to: subscription.admin.email,
         subject: "Subscription Activated Successfully",
-        html: `<p>Your subscription to ${subscription.plan.name} has been activated successfully!</p>`,
+        template: "subscription-activated",
+        data: {
+          name: subscription.admin.name,
+          planName: subscription.plan.name,
+          billingCycle: subscription.billingCycle,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+          amount: amount / 100,
+          maxHotels: subscription.plan.features?.maxHotels || 0,
+          maxBranches: subscription.plan.features?.maxBranches || 0,
+          maxManagers: subscription.plan.features?.maxManagers || 0,
+          maxStaff: subscription.plan.features?.maxStaff || 0,
+          maxTables: subscription.plan.features?.maxTables || 0,
+        },
       });
     } catch (emailError) {
       logger.error("Failed to send activation email", {
@@ -716,6 +792,33 @@ async function processOrderPayment(entity, status) {
     }).populate("user");
 
     if (!order) {
+      // Check if this is a supplementary payment
+      const suppOrder = await Order.findOne({
+        "supplementaryPayments.gatewayOrderId": orderId,
+      }).populate("user");
+
+      if (suppOrder) {
+        const suppPayment = suppOrder.supplementaryPayments.find(
+          (sp) => sp.gatewayOrderId === orderId
+        );
+        if (suppPayment && suppPayment.paymentStatus !== "paid") {
+          suppPayment.paymentStatus =
+            status === "captured" || status === "authorized"
+              ? "paid"
+              : "failed";
+          suppPayment.paymentId = paymentId;
+          suppPayment.paidAt = new Date();
+          suppOrder.pendingAddOnPayment = false;
+          await suppOrder.save();
+          logger.info("Supplementary payment processed via webhook", {
+            orderId: suppOrder._id,
+            batch: suppPayment.batch,
+            status: suppPayment.paymentStatus,
+          });
+        }
+        return { success: true, message: "Supplementary payment processed" };
+      }
+
       logger.error("Order not found", { orderId });
       return { success: false, message: "Order not found" };
     }

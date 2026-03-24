@@ -130,6 +130,7 @@ export const handleQRScan = asyncHandler(async (req, res, next) => {
         },
         hotel: {
           id: table.hotel._id,
+          hotelId: table.hotel.hotelId,
           name: table.hotel.name,
           location: table.hotel.location,
           contact: table.hotel.contact,
@@ -137,6 +138,7 @@ export const handleQRScan = asyncHandler(async (req, res, next) => {
         branch: table.branch
           ? {
               id: table.branch._id,
+              branchId: table.branch.branchId,
               name: table.branch.name,
               location: table.branch.location,
               contact: table.branch.contact,
@@ -197,6 +199,20 @@ export const validateQRScan = async (req, res, next) => {
             tableNumber: table.tableNumber,
             status: table.status,
           },
+          hotel: table.hotel
+            ? {
+                id: table.hotel._id,
+                hotelId: table.hotel.hotelId,
+                name: table.hotel.name,
+              }
+            : null,
+          branch: table.branch
+            ? {
+                id: table.branch._id,
+                branchId: table.branch.branchId,
+                name: table.branch.name,
+              }
+            : null,
           redirectUrl: qrCodeService.generateScanUrl(
             scanData.hotelId,
             scanData.branchId,

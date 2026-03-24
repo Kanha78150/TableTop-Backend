@@ -629,189 +629,391 @@ class InvoiceService {
     const leftMargin = 50;
     const rightMargin = 50;
     const contentWidth = pageWidth - leftMargin - rightMargin;
+    const tableRight = pageWidth - rightMargin;
+    const fontSize = 7;
+    const headerFontSize = 7;
+    const rowHeight = 14;
+    const headerHeight = 26; // taller for 2-line headers
 
     let currentY = 185; // Start after header
 
-    // Add items
-    order.items.forEach((item, index) => {
-      const itemName = item.foodItem?.name || item.name || "Item";
+    // --- Column positions (matching screenshot layout) ---
+    // Particulars | Gross value | Discount | Net value | CGST (Rs) | CGST % | SGST (Rs) | SGST % | Total
+    const cols = {
+      particulars: leftMargin,
+      gross: leftMargin + contentWidth * 0.3,
+      discount: leftMargin + contentWidth * 0.4,
+      net: leftMargin + contentWidth * 0.5,
+      cgstRs: leftMargin + contentWidth * 0.6,
+      cgstPct: leftMargin + contentWidth * 0.68,
+      sgstRs: leftMargin + contentWidth * 0.76,
+      sgstPct: leftMargin + contentWidth * 0.84,
+      total: leftMargin + contentWidth * 0.92,
+    };
+    const colWidths = {
+      particulars: cols.gross - cols.particulars - 2,
+      gross: cols.discount - cols.gross - 2,
+      discount: cols.net - cols.discount - 2,
+      net: cols.cgstRs - cols.net - 2,
+      cgstRs: cols.cgstPct - cols.cgstRs - 2,
+      cgstPct: cols.sgstRs - cols.cgstPct - 2,
+      sgstRs: cols.sgstPct - cols.sgstRs - 2,
+      sgstPct: cols.total - cols.sgstPct - 2,
+      total: tableRight - cols.total,
+    };
+
+    // Helper: draw a full-width horizontal line
+    const drawLine = (y, width = 0.5) => {
+      doc.moveTo(leftMargin, y).lineTo(tableRight, y).lineWidth(width).stroke();
+    };
+
+    // Helper: draw vertical column lines for a row
+    const drawRowBorders = (y, h) => {
+      doc.lineWidth(0.5);
+      // Left border
+      doc
+        .moveTo(leftMargin, y)
+        .lineTo(leftMargin, y + h)
+        .stroke();
+      // Column separators
+      Object.values(cols).forEach((x) => {
+        doc
+          .moveTo(x, y)
+          .lineTo(x, y + h)
+          .stroke();
+      });
+      // Right border
+      doc
+        .moveTo(tableRight, y)
+        .lineTo(tableRight, y + h)
+        .stroke();
+    };
+
+    // Helper: write text in a cell
+    const cell = (text, x, y, w, options = {}) => {
+      doc.text(String(text), x + 2, y + 3, {
+        width: w - 4,
+        align: options.align || "right",
+        ellipsis: true,
+        lineBreak: false,
+      });
+    };
+
+    // === TABLE HEADER ===
+    drawLine(currentY, 0.8);
+    doc.fontSize(headerFontSize).font("Helvetica-Bold");
+
+    // Two-line headers
+    cell("Particulars", cols.particulars, currentY, colWidths.particulars, {
+      align: "left",
+    });
+    cell("Gross", cols.gross, currentY, colWidths.gross);
+    cell("Discount", cols.discount, currentY, colWidths.discount);
+    cell("Net", cols.net, currentY, colWidths.net);
+    cell("CGST", cols.cgstRs, currentY, colWidths.cgstRs);
+    cell("CGST", cols.cgstPct, currentY, colWidths.cgstPct);
+    cell("SGST", cols.sgstRs, currentY, colWidths.sgstRs);
+    cell("SGST", cols.sgstPct, currentY, colWidths.sgstPct);
+    cell("Total", cols.total, currentY, colWidths.total);
+
+    // Second line of headers
+    const headerLine2Y = currentY + 11;
+    cell("", cols.particulars, headerLine2Y, colWidths.particulars);
+    cell("value", cols.gross, headerLine2Y, colWidths.gross);
+    cell("", cols.discount, headerLine2Y, colWidths.discount);
+    cell("value", cols.net, headerLine2Y, colWidths.net);
+    cell("(Rs)", cols.cgstRs, headerLine2Y, colWidths.cgstRs);
+    cell("(%)", cols.cgstPct, headerLine2Y, colWidths.cgstPct);
+    cell("(Rs)", cols.sgstRs, headerLine2Y, colWidths.sgstRs);
+    cell("(%)", cols.sgstPct, headerLine2Y, colWidths.sgstPct);
+    cell("", cols.total, headerLine2Y, colWidths.total);
+
+    drawRowBorders(currentY, headerHeight);
+    currentY += headerHeight;
+    drawLine(currentY, 0.8);
+
+    // === ITEM ROWS ===
+    doc.fontSize(fontSize).font("Helvetica");
+
+    let sumGross = 0;
+    let sumDiscount = 0;
+    let sumNet = 0;
+    let sumCgst = 0;
+    let sumSgst = 0;
+    let sumTotal = 0;
+
+    order.items.forEach((item) => {
+      const itemName =
+        item.foodItemName || item.foodItem?.name || item.name || "Item";
       const quantity = item.quantity || 0;
       const price = item.price || 0;
-      const total = quantity * price;
+      const grossValue = quantity * price;
+      const discount = item.discount || 0;
+      const netValue = grossValue - discount;
+      const gstRate = item.gstRate ?? 0;
+      const halfRate = gstRate / 2;
+      const gstAmount = item.gstAmount ?? 0;
+      const cgstAmt = gstAmount / 2;
+      const sgstAmt = gstAmount / 2;
+      const itemTotal = netValue + gstAmount;
 
-      // Item name on left
-      doc.fontSize(9).font("Helvetica");
+      sumGross += grossValue;
+      sumDiscount += discount;
+      sumNet += netValue;
+      sumCgst += cgstAmt;
+      sumSgst += sgstAmt;
+      sumTotal += itemTotal;
 
-      // Item name with quantity
-      const itemText = `${itemName}`;
-      doc.text(itemText, leftMargin, currentY, {
-        width: contentWidth - 80,
-        continued: false,
-      });
+      // Check if we need a new page
+      if (currentY > doc.page.height - 160) {
+        doc.addPage();
+        currentY = 50;
+      }
 
-      // Price on right
-      doc.text(`₹${total.toFixed(2)}`, pageWidth - rightMargin - 70, currentY, {
-        width: 70,
-        align: "right",
-      });
+      cell(
+        `${quantity} x ${itemName}`,
+        cols.particulars,
+        currentY,
+        colWidths.particulars,
+        {
+          align: "left",
+        }
+      );
+      cell(grossValue.toFixed(2), cols.gross, currentY, colWidths.gross);
+      cell(discount.toFixed(2), cols.discount, currentY, colWidths.discount);
+      cell(netValue.toFixed(2), cols.net, currentY, colWidths.net);
+      cell(cgstAmt.toFixed(2), cols.cgstRs, currentY, colWidths.cgstRs);
+      cell(`${halfRate}`, cols.cgstPct, currentY, colWidths.cgstPct);
+      cell(sgstAmt.toFixed(2), cols.sgstRs, currentY, colWidths.sgstRs);
+      cell(`${halfRate}`, cols.sgstPct, currentY, colWidths.sgstPct);
+      cell(itemTotal.toFixed(2), cols.total, currentY, colWidths.total);
 
-      currentY += 15;
+      drawRowBorders(currentY, rowHeight);
+      currentY += rowHeight;
     });
 
-    currentY += 10;
+    drawLine(currentY, 0.8);
 
-    // Use order fields directly
-    const subtotal = order.subtotal || 0;
-    const taxes = order.taxes || 0;
+    // === ITEM(S) TOTAL ROW ===
+    doc.fontSize(fontSize).font("Helvetica-Bold");
+
+    cell("Item(s) Total", cols.particulars, currentY, colWidths.particulars, {
+      align: "left",
+    });
+    cell(sumGross.toFixed(2), cols.gross, currentY, colWidths.gross);
+    cell(sumDiscount.toFixed(2), cols.discount, currentY, colWidths.discount);
+    cell(sumNet.toFixed(2), cols.net, currentY, colWidths.net);
+    cell(sumCgst.toFixed(2), cols.cgstRs, currentY, colWidths.cgstRs);
+    cell("", cols.cgstPct, currentY, colWidths.cgstPct);
+    cell(sumSgst.toFixed(2), cols.sgstRs, currentY, colWidths.sgstRs);
+    cell("", cols.sgstPct, currentY, colWidths.sgstPct);
+    cell(sumTotal.toFixed(2), cols.total, currentY, colWidths.total);
+
+    drawRowBorders(currentY, rowHeight);
+    currentY += rowHeight;
+    drawLine(currentY, 0.5);
+
+    // === SERVICE CHARGE / PACKAGING ROW ===
     const serviceCharge = order.serviceCharge || 0;
+    if (serviceCharge > 0) {
+      doc.fontSize(fontSize).font("Helvetica");
+      // Service charge may also have GST (5% standard for restaurant services)
+      const scGstRate = 5;
+      const scHalfRate = scGstRate / 2;
+      const scNet = serviceCharge / (1 + scGstRate / 100);
+      const scGst = serviceCharge - scNet;
+      const scCgst = scGst / 2;
+      const scSgst = scGst / 2;
+
+      cell(
+        "Restaurant Packaging Charge",
+        cols.particulars,
+        currentY,
+        colWidths.particulars,
+        {
+          align: "left",
+        }
+      );
+      cell(scNet.toFixed(2), cols.gross, currentY, colWidths.gross);
+      cell("0", cols.discount, currentY, colWidths.discount);
+      cell(scNet.toFixed(2), cols.net, currentY, colWidths.net);
+      cell(scCgst.toFixed(2), cols.cgstRs, currentY, colWidths.cgstRs);
+      cell(`${scHalfRate}`, cols.cgstPct, currentY, colWidths.cgstPct);
+      cell(scSgst.toFixed(2), cols.sgstRs, currentY, colWidths.sgstRs);
+      cell(`${scHalfRate}`, cols.sgstPct, currentY, colWidths.sgstPct);
+      cell(serviceCharge.toFixed(2), cols.total, currentY, colWidths.total);
+
+      drawRowBorders(currentY, rowHeight);
+      currentY += rowHeight;
+      drawLine(currentY, 0.5);
+    }
+
+    // === DISCOUNT ROWS (coin/offer) ===
     const coinDiscount = order.coinDiscount || 0;
     const offerDiscount = order.offerDiscount || 0;
-    const totalPrice = order.totalPrice || 0;
 
-    // Sub Total
-    doc.fontSize(10).font("Helvetica");
-    doc.text("Sub Total", leftMargin, currentY);
-    doc.text(
-      `₹${subtotal.toFixed(2)}`,
-      pageWidth - rightMargin - 70,
-      currentY,
-      {
-        width: 70,
-        align: "right",
-      }
-    );
-    currentY += 18;
-
-    // Service Charge
-    if (serviceCharge > 0) {
-      doc.text("Service Charge", leftMargin, currentY);
-      doc.text(
-        `₹${serviceCharge.toFixed(2)}`,
-        pageWidth - rightMargin - 70,
-        currentY,
-        {
-          width: 70,
-          align: "right",
-        }
-      );
-      currentY += 18;
-    }
-
-    // Sales Tax / GST with itemized breakdown
-    if (taxes > 0) {
-      // Check if items have different GST rates
-      const uniqueGstRates = [
-        ...new Set(order.items.map((item) => item.gstRate)),
-      ];
-      const hasMultipleRates = uniqueGstRates.length > 1;
-
-      if (hasMultipleRates) {
-        // Show itemized GST if multiple rates exist
-        doc.fontSize(9).font("Helvetica-Bold");
-        doc.text("GST Breakdown:", leftMargin, currentY);
-        currentY += 15;
-
-        doc.fontSize(8).font("Helvetica");
-        // Group items by GST rate
-        const gstGroups = {};
-        order.items.forEach((item) => {
-          const rate = item.gstRate;
-          if (!gstGroups[rate]) {
-            gstGroups[rate] = 0;
-          }
-          gstGroups[rate] += item.gstAmount || 0;
-        });
-
-        // Display each GST rate group
-        Object.entries(gstGroups).forEach(([rate, amount]) => {
-          doc.text(`  GST @ ${rate}%`, leftMargin + 10, currentY);
-          doc.text(
-            `₹${amount.toFixed(2)}`,
-            pageWidth - rightMargin - 70,
-            currentY,
-            {
-              width: 70,
-              align: "right",
-            }
-          );
-          currentY += 12;
-        });
-
-        currentY += 3;
-      }
-
-      // Total GST
-      doc.fontSize(10).font("Helvetica");
-      doc.text("Total GST", leftMargin, currentY);
-      doc.text(`₹${taxes.toFixed(2)}`, pageWidth - rightMargin - 70, currentY, {
-        width: 70,
-        align: "right",
-      });
-      currentY += 18;
-
-      // CGST/SGST breakdown
-      const cgst = taxes * 0.5;
-      const sgst = taxes * 0.5;
-
-      doc.fontSize(8).font("Helvetica");
-      doc.text(
-        `  (CGST: ₹${cgst.toFixed(2)} + SGST: ₹${sgst.toFixed(2)})`,
-        leftMargin + 10,
-        currentY
-      );
-      currentY += 18;
-    }
-
-    // Discounts
     if (coinDiscount > 0) {
-      doc.text("Coin Discount", leftMargin, currentY);
-      doc.text(
-        `-₹${coinDiscount.toFixed(2)}`,
-        pageWidth - rightMargin - 70,
+      doc.fontSize(fontSize).font("Helvetica");
+      cell("Coin Discount", cols.particulars, currentY, colWidths.particulars, {
+        align: "left",
+      });
+      cell(
+        `-${coinDiscount.toFixed(2)}`,
+        cols.total,
         currentY,
-        {
-          width: 70,
-          align: "right",
-        }
+        colWidths.total
       );
-      currentY += 18;
+      drawRowBorders(currentY, rowHeight);
+      currentY += rowHeight;
+      drawLine(currentY, 0.5);
     }
 
     if (offerDiscount > 0) {
-      doc.text("Offer Discount", leftMargin, currentY);
-      doc.text(
-        `-₹${offerDiscount.toFixed(2)}`,
-        pageWidth - rightMargin - 70,
+      doc.fontSize(fontSize).font("Helvetica");
+      cell(
+        "Offer Discount",
+        cols.particulars,
         currentY,
+        colWidths.particulars,
         {
-          width: 70,
-          align: "right",
+          align: "left",
         }
       );
-      currentY += 18;
+      cell(
+        `-${offerDiscount.toFixed(2)}`,
+        cols.total,
+        currentY,
+        colWidths.total
+      );
+      drawRowBorders(currentY, rowHeight);
+      currentY += rowHeight;
+      drawLine(currentY, 0.5);
     }
 
-    currentY += 5;
+    // === TOTAL VALUE ROW ===
+    const totalPrice = order.totalPrice || 0;
+    const taxes = order.taxes || 0;
+    const totalCgst =
+      sumCgst +
+      (serviceCharge > 0 ? (serviceCharge - serviceCharge / 1.05) / 2 : 0);
+    const totalSgst = totalCgst;
 
-    // TOTAL in bold
-    doc.fontSize(14).font("Helvetica-Bold");
-    doc.text("TOTAL", leftMargin, currentY);
-    doc.text(
-      `₹${totalPrice.toFixed(2)}`,
-      pageWidth - rightMargin - 90,
+    doc.fontSize(fontSize).font("Helvetica-Bold");
+
+    cell("Total Value", cols.particulars, currentY, colWidths.particulars, {
+      align: "left",
+    });
+    cell(
+      (sumGross + (serviceCharge > 0 ? serviceCharge / 1.05 : 0)).toFixed(2),
+      cols.gross,
       currentY,
-      {
-        width: 90,
-        align: "right",
-      }
+      colWidths.gross
     );
+    cell(
+      (sumDiscount + coinDiscount + offerDiscount).toFixed(2),
+      cols.discount,
+      currentY,
+      colWidths.discount
+    );
+    cell(
+      (
+        sumNet +
+        (serviceCharge > 0 ? serviceCharge / 1.05 : 0) -
+        coinDiscount -
+        offerDiscount
+      ).toFixed(2),
+      cols.net,
+      currentY,
+      colWidths.net
+    );
+    cell(totalCgst.toFixed(2), cols.cgstRs, currentY, colWidths.cgstRs);
+    cell("", cols.cgstPct, currentY, colWidths.cgstPct);
+    cell(totalSgst.toFixed(2), cols.sgstRs, currentY, colWidths.sgstRs);
+    cell("", cols.sgstPct, currentY, colWidths.sgstPct);
+    cell(totalPrice.toFixed(2), cols.total, currentY, colWidths.total);
 
-    currentY += 25;
+    drawRowBorders(currentY, rowHeight);
+    currentY += rowHeight;
+    drawLine(currentY, 0.8);
+
+    currentY += 8;
+
+    // === AMOUNT IN WORDS ===
+    const amountWords = this.numberToWords(totalPrice);
+    doc.fontSize(8).font("Helvetica-Bold");
+    doc.text(`Amount in words: `, leftMargin, currentY, { continued: true });
+    doc.font("Helvetica-Oblique").text(amountWords);
+
+    currentY += 18;
 
     // Dotted line separator
     this.addDottedLine(doc, currentY);
-
     currentY += 15;
+
+    // --- Payment Breakdown (for supplementary orders) ---
+    const labelX = leftMargin;
+    const valueX = pageWidth - rightMargin - 80;
+    const valueW = 80;
+
+    const suppPayments = order.supplementaryPayments || [];
+    const paidSuppPayments = suppPayments.filter(
+      (sp) => sp.paymentStatus === "paid"
+    );
+
+    if (paidSuppPayments.length > 0) {
+      doc.fontSize(10).font("Helvetica-Bold");
+      doc.text("Payment Breakdown", labelX, currentY);
+      currentY += 16;
+
+      doc.fontSize(9).font("Helvetica");
+
+      // Original payment
+      const originalAmount =
+        totalPrice - paidSuppPayments.reduce((s, sp) => s + sp.amount, 0);
+      doc.text("Payment 1 (original):", labelX + 10, currentY);
+      doc.text(`₹${originalAmount.toFixed(2)}`, valueX, currentY, {
+        width: valueW,
+        align: "right",
+      });
+      currentY += 14;
+
+      // Supplementary payments
+      paidSuppPayments.forEach((sp, i) => {
+        doc.text(
+          `Payment ${i + 2} (batch ${sp.batch}):`,
+          labelX + 10,
+          currentY
+        );
+        doc.text(`₹${sp.amount.toFixed(2)}`, valueX, currentY, {
+          width: valueW,
+          align: "right",
+        });
+        currentY += 14;
+      });
+
+      // Total collected
+      currentY += 4;
+      doc
+        .moveTo(labelX + 10, currentY)
+        .lineTo(pageWidth - rightMargin, currentY)
+        .lineWidth(0.5)
+        .stroke();
+      currentY += 6;
+
+      doc.fontSize(10).font("Helvetica-Bold");
+      doc.text("Total Collected:", labelX + 10, currentY);
+      const totalCollected =
+        originalAmount + paidSuppPayments.reduce((s, sp) => s + sp.amount, 0);
+      doc.text(`₹${totalCollected.toFixed(2)}`, valueX, currentY, {
+        width: valueW,
+        align: "right",
+      });
+      currentY += 20;
+
+      // Dotted line separator
+      this.addDottedLine(doc, currentY);
+      currentY += 15;
+    }
 
     // Coins earned
     if (order.rewardCoins > 0) {
@@ -950,6 +1152,88 @@ class InvoiceService {
     this.addDottedLine(doc, currentY);
 
     return currentY + 15;
+  }
+
+  /**
+   * Convert a number to words (Indian Rupees format)
+   */
+  numberToWords(num) {
+    if (num === 0) return "Rupees Zero Only";
+
+    const ones = [
+      "",
+      "One",
+      "Two",
+      "Three",
+      "Four",
+      "Five",
+      "Six",
+      "Seven",
+      "Eight",
+      "Nine",
+      "Ten",
+      "Eleven",
+      "Twelve",
+      "Thirteen",
+      "Fourteen",
+      "Fifteen",
+      "Sixteen",
+      "Seventeen",
+      "Eighteen",
+      "Nineteen",
+    ];
+    const tens = [
+      "",
+      "",
+      "Twenty",
+      "Thirty",
+      "Forty",
+      "Fifty",
+      "Sixty",
+      "Seventy",
+      "Eighty",
+      "Ninety",
+    ];
+
+    const numToWords = (n) => {
+      if (n === 0) return "";
+      if (n < 20) return ones[n];
+      if (n < 100)
+        return tens[Math.floor(n / 10)] + (n % 10 ? " " + ones[n % 10] : "");
+      if (n < 1000)
+        return (
+          ones[Math.floor(n / 100)] +
+          " Hundred" +
+          (n % 100 ? " and " + numToWords(n % 100) : "")
+        );
+      if (n < 100000)
+        return (
+          numToWords(Math.floor(n / 1000)) +
+          " Thousand" +
+          (n % 1000 ? " " + numToWords(n % 1000) : "")
+        );
+      if (n < 10000000)
+        return (
+          numToWords(Math.floor(n / 100000)) +
+          " Lakh" +
+          (n % 100000 ? " " + numToWords(n % 100000) : "")
+        );
+      return (
+        numToWords(Math.floor(n / 10000000)) +
+        " Crore" +
+        (n % 10000000 ? " " + numToWords(n % 10000000) : "")
+      );
+    };
+
+    const rupees = Math.floor(num);
+    const paise = Math.round((num - rupees) * 100);
+
+    let result = "Rupees " + numToWords(rupees);
+    if (paise > 0) {
+      result += " and " + numToWords(paise) + " Paise";
+    }
+    result += " Only";
+    return result;
   }
 
   /**
