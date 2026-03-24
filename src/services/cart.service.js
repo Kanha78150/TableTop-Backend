@@ -175,7 +175,7 @@ class CartService {
         {
           path: "items.foodItem",
           select:
-            "name price discountPrice image isAvailable quantityAvailable foodType spiceLevel preparationTime category",
+            "name price discountPrice image isAvailable quantityAvailable foodType spiceLevel preparationTime category gstRate",
           populate: {
             path: "category",
             select: "name",
@@ -208,9 +208,28 @@ class CartService {
         );
       }
 
+      // Calculate per-item GST and totals
+      let totalGst = 0;
+      const itemsWithGst = cart.items.map((item) => {
+        const gstRate = item.foodItem?.gstRate ?? 0;
+        const gstAmount =
+          Math.round(((item.totalPrice * gstRate) / 100) * 100) / 100;
+        totalGst += gstAmount;
+        return {
+          ...item.toObject(),
+          gstRate,
+          gstAmount,
+        };
+      });
+      totalGst = Math.round(totalGst * 100) / 100;
+
       // Add additional info for checkout carts
       const responseData = {
         ...cart.toObject(),
+        items: itemsWithGst,
+        taxes: totalGst,
+        cgst: Math.round(totalGst * 0.5 * 100) / 100,
+        sgst: Math.round(totalGst * 0.5 * 100) / 100,
         isLocked: cart.status === "checkout",
         canModify: cart.status === "active",
       };
