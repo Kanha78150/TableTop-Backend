@@ -40,7 +40,9 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
   const filter = { staff: staffId };
   if (status && status !== "all") {
     if (status === "active") {
-      filter.status = { $in: ["pending", "confirmed", "preparing", "ready", "served"] };
+      filter.status = {
+        $in: ["pending", "confirmed", "preparing", "ready", "served"],
+      };
     } else {
       filter.status = status;
     }
@@ -606,6 +608,36 @@ export const confirmCashPayment = asyncHandler(async (req, res, next) => {
 });
 
 /**
+ * Get active orders assigned to current staff
+ * GET /api/v1/staff/orders/active
+ * @access Staff
+ */
+export const getActiveOrders = asyncHandler(async (req, res) => {
+  const staffId = req.user._id;
+
+  const orders = await Order.find({
+    staff: staffId,
+    status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+  })
+    .populate("user", "name phone")
+    .populate("table", "tableNumber")
+    .populate("hotel", "name images")
+    .populate("branch", "name images")
+    .populate("items.foodItem", "name price category image")
+    .sort({ createdAt: -1 });
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { orders, count: orders.length },
+        "Active orders retrieved successfully"
+      )
+    );
+});
+
+/**
  * Get orders with add-on items for current staff
  * GET /api/v1/staff/orders/add-ons
  * @access Staff
@@ -693,6 +725,7 @@ export const acknowledgeAddOn = asyncHandler(async (req, res, next) => {
 
 export default {
   getMyOrders,
+  getActiveOrders,
   updateOrderStatus,
   getOrderDetails,
   getActiveOrdersCount,

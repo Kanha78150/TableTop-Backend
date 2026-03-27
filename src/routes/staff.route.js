@@ -30,6 +30,9 @@ router.use(requireRole(["staff"]));
 // Get orders assigned to current staff member
 router.get("/orders/my-orders", staffOrderController.getMyOrders);
 
+// Get active orders assigned to current staff
+router.get("/orders/active", staffOrderController.getActiveOrders);
+
 // Get active orders count for current staff
 router.get("/orders/active-count", staffOrderController.getActiveOrdersCount);
 
