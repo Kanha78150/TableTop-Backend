@@ -65,6 +65,12 @@ const orderSchema = new mongoose.Schema(
         gstAmount: { type: Number, required: true, min: 0 },
         // Add-on batch tracking
         batch: { type: Number, default: 1 },
+        // Item-level status for batch cancellation (soft delete)
+        itemStatus: {
+          type: String,
+          enum: ["active", "cancelled"],
+          default: "active",
+        },
       },
     ],
     status: {

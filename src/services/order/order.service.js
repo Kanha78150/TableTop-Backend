@@ -392,8 +392,21 @@ export const cancelOrder = async (
     if (!order) {
       throw new APIError(404, "Order not found");
     }
-    if (!["pending", "confirmed", "preparing"].includes(order.status)) {
-      throw new APIError(400, "Order cannot be cancelled at this stage");
+
+    // Block cancellation if order has add-on batches — must use batch cancel
+    if (order.hasAddOns && order.currentBatch > 1) {
+      throw new APIError(
+        400,
+        "This order has add-on items. Please cancel add-on batches individually using the cancel-batch endpoint."
+      );
+    }
+
+    // User can only cancel at "pending" — once staff confirms, cancellation is blocked
+    if (order.status !== "pending") {
+      throw new APIError(
+        400,
+        "Order cannot be cancelled after staff confirmation"
+      );
     }
 
     // Handle coin refunds for cancelled order
@@ -446,6 +459,222 @@ export const cancelOrder = async (
       throw error;
     }
     throw new APIError(500, "Failed to cancel order", error.message);
+  }
+};
+
+/**
+ * Cancel a specific add-on batch from an order
+ * Only allowed when order status is "pending" (before staff confirms)
+ * @param {string} orderId - Order ID
+ * @param {string} userId - User ID
+ * @param {number} batch - Batch number to cancel (must be >= 2)
+ * @param {string} reason - Cancellation reason
+ * @returns {Object} - Updated order
+ */
+export const cancelBatchItems = async (
+  orderId,
+  userId,
+  batch,
+  reason = "User cancelled add-on items"
+) => {
+  try {
+    const order = await Order.findOne({ _id: orderId, user: userId }).populate(
+      "hotel",
+      "commissionConfig"
+    );
+
+    if (!order) {
+      throw new APIError(404, "Order not found");
+    }
+
+    if (batch < 2) {
+      throw new APIError(
+        400,
+        "Cannot cancel batch 1 via batch cancel. Use the regular cancel endpoint instead."
+      );
+    }
+
+    // Only allow cancellation while status is "pending" (before staff confirms)
+    if (order.status !== "pending") {
+      throw new APIError(
+        400,
+        "Cannot cancel add-on items after staff confirmation"
+      );
+    }
+
+    // Verify the batch exists and has active items
+    const batchItems = order.items.filter(
+      (item) => item.batch === batch && item.itemStatus !== "cancelled"
+    );
+    if (batchItems.length === 0) {
+      throw new APIError(404, `No active items found for batch ${batch}`);
+    }
+
+    // Soft-cancel items in this batch
+    order.items.forEach((item) => {
+      if (item.batch === batch && item.itemStatus !== "cancelled") {
+        item.itemStatus = "cancelled";
+      }
+    });
+
+    // Recalculate totals from remaining active items
+    const activeItems = order.items.filter(
+      (item) => item.itemStatus !== "cancelled"
+    );
+
+    const newSubtotal = activeItems.reduce(
+      (sum, item) => sum + item.totalPrice,
+      0
+    );
+
+    // Recalculate taxes from active items
+    const existingDiscountTotal =
+      (order.coinDiscount || 0) + (order.offerDiscount || 0);
+    const batch1Subtotal = activeItems
+      .filter((item) => item.batch === 1)
+      .reduce((sum, item) => sum + item.totalPrice, 0);
+    const existingBaseAmount = Math.max(
+      0,
+      batch1Subtotal - existingDiscountTotal
+    );
+
+    let totalTaxes = 0;
+    for (const item of activeItems) {
+      const gstRate = item.gstRate ?? 0;
+      let itemBaseAmount;
+      if (item.batch > 1) {
+        itemBaseAmount = item.totalPrice;
+      } else {
+        const discountRatio =
+          batch1Subtotal > 0 ? existingBaseAmount / batch1Subtotal : 1;
+        itemBaseAmount = item.totalPrice * discountRatio;
+      }
+      totalTaxes += (itemBaseAmount * gstRate) / 100;
+    }
+
+    const newTaxes = Math.max(0, Math.round(totalTaxes * 100) / 100);
+    const addOnSubtotal = activeItems
+      .filter((item) => item.batch > 1)
+      .reduce((sum, item) => sum + item.totalPrice, 0);
+    const newTotalPrice = Math.max(
+      0,
+      existingBaseAmount + addOnSubtotal + newTaxes
+    );
+
+    // Recalculate commission on new total
+    const commissionResult = calculateCommission(order.hotel, newTotalPrice);
+
+    // Update order totals
+    order.subtotal = newSubtotal;
+    order.taxes = newTaxes;
+    order.totalPrice = newTotalPrice;
+    order.payment.commissionAmount = commissionResult.amount;
+    order.payment.commissionRate = commissionResult.rate;
+
+    // Update reward coins based on new total
+    order.rewardCoins = Math.max(0, Math.floor(newTotalPrice * 0.1));
+
+    // Handle supplementary payment for this batch
+    const suppPayment = order.supplementaryPayments.find(
+      (sp) => sp.batch === batch
+    );
+    if (suppPayment) {
+      if (suppPayment.paymentStatus === "paid") {
+        suppPayment.paymentStatus = "refund_pending";
+      } else if (suppPayment.paymentStatus === "pending") {
+        suppPayment.paymentStatus = "cancelled";
+      }
+    }
+
+    // Clear pending add-on payment flag if it was for this batch
+    if (order.pendingAddOnPayment && suppPayment) {
+      order.pendingAddOnPayment = false;
+    }
+
+    // Decrement currentBatch
+    order.currentBatch = batch - 1;
+
+    // Check if any add-on batches remain active
+    const remainingAddOns = order.items.some(
+      (item) => item.batch > 1 && item.itemStatus !== "cancelled"
+    );
+    if (!remainingAddOns) {
+      order.hasAddOns = false;
+    }
+
+    // Revert status to previous status (typically "served")
+    order.status = order.previousStatus || "served";
+    order.previousStatus = "pending";
+
+    // Add status history entry
+    order.statusHistory.push({
+      status: order.status,
+      timestamp: new Date(),
+      notes: `Batch ${batch} cancelled by user: ${reason}`,
+    });
+
+    await order.save();
+
+    // Socket notification to staff
+    try {
+      const io = getIO();
+      const notificationData = {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        cancelledItems: batchItems.map((i) => ({
+          foodItemName: i.foodItemName,
+          quantity: i.quantity,
+          price: i.price,
+          totalPrice: i.totalPrice,
+        })),
+        batch,
+        updatedTotal: order.totalPrice,
+        reason,
+        message: `Customer cancelled add-on items (batch ${batch})`,
+      };
+
+      if (order.staff) {
+        io.to(`staff_${order.staff}`).emit(
+          "order:batch-cancelled",
+          notificationData
+        );
+      }
+      if (order.branch) {
+        io.to(`branch_${order.branch}`).emit(
+          "order:batch-cancelled",
+          notificationData
+        );
+      }
+    } catch (socketError) {
+      console.error(
+        "Socket notification error for batch cancel:",
+        socketError.message
+      );
+    }
+
+    // Populate order for response
+    await order.populate([
+      { path: "user", select: "name email phone" },
+      { path: "hotel", select: "name hotelId" },
+      { path: "branch", select: "name branchId" },
+      { path: "table", select: "tableNumber" },
+      { path: "staff", select: "name staffId" },
+      { path: "items.foodItem", select: "name price image category foodType" },
+    ]);
+
+    return {
+      order,
+      refundRequired: suppPayment?.paymentStatus === "refund_pending",
+      refundAmount:
+        suppPayment?.paymentStatus === "refund_pending"
+          ? suppPayment.amount
+          : 0,
+    };
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(500, "Failed to cancel batch items", error.message);
   }
 };
 
@@ -1102,7 +1331,7 @@ export const addItemsToOrder = async (orderId, userId) => {
     order.totalPrice = newTotalPrice;
     order.currentBatch = newBatch;
     order.previousStatus = order.status;
-    order.status = "confirmed";
+    order.status = "pending";
     order.hasAddOns = true;
 
     // Update commission (single calculation on combined total)
@@ -1120,9 +1349,9 @@ export const addItemsToOrder = async (orderId, userId) => {
 
     // Add status history entry
     order.statusHistory.push({
-      status: "confirmed",
+      status: "pending",
       timestamp: new Date(),
-      notes: `Add-on items added (batch ${newBatch})`,
+      notes: `Add-on items added (batch ${newBatch}) — awaiting staff confirmation`,
     });
 
     let supplementaryPayment = { required: false };
@@ -1307,6 +1536,7 @@ export default {
   getUserOrders,
   getOrderById,
   cancelOrder,
+  cancelBatchItems,
   reorderFromPrevious,
   addItemsToOrder,
   confirmCashPayment,

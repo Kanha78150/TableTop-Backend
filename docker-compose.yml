@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    container_name: hotel-management-api
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=development
+      - MONGO_URI=mongodb+srv://bholasankarnanda123_db_user:OjuIeq7pXiDNqEtl@cluster0.x3eyyyh.mongodb.net/BeanrowseDEVDEB
+    restart: unless-stopped
+    volumes:
+      - ./temp:/app/temp # persist temp files if needed
+

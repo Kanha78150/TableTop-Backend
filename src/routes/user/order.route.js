@@ -7,6 +7,7 @@ import {
   getOrderDetails,
   getOrderPaymentInfo,
   cancelOrder,
+  cancelBatchItems,
   reorder,
   getOrderStatus,
   getActiveOrders,
@@ -46,6 +47,9 @@ router.get("/:orderId/status", getOrderStatus);
 
 // Cancel order
 router.put("/:orderId/cancel", cancelOrder);
+
+// Cancel a specific add-on batch
+router.put("/:orderId/cancel-batch", cancelBatchItems);
 
 // Reorder from previous order
 router.post("/:orderId/reorder", reorder);

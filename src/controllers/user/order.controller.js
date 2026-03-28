@@ -312,6 +312,63 @@ export const cancelOrder = asyncHandler(async (req, res, next) => {
 });
 
 /**
+ * Cancel a specific add-on batch from an order
+ * PUT /api/v1/user/orders/:orderId/cancel-batch
+ */
+export const cancelBatchItems = asyncHandler(async (req, res, next) => {
+  const userId = req.user._id;
+  const { orderId } = req.params;
+  const { batch, reason } = req.body;
+
+  // Validate order ID
+  if (!orderId || !orderId.match(/^[0-9a-fA-F]{24}$/)) {
+    return next(new APIError(400, "Invalid order ID"));
+  }
+
+  // Validate request body
+  const { error } = validateCancelBatch({ batch, reason });
+  if (error) {
+    return next(new APIError(400, "Validation failed", error.details));
+  }
+
+  const result = await orderService.cancelBatchItems(
+    orderId,
+    userId,
+    batch,
+    reason
+  );
+
+  // Initiate supplementary payment refund if needed
+  if (result.refundRequired) {
+    try {
+      const dynamicPaymentService = (
+        await import("../../services/payment/dynamicPayment.service.js")
+      ).default;
+      await dynamicPaymentService.refundSupplementaryPayment(orderId, batch);
+      logger.info(
+        `Supplementary refund initiated for order ${orderId} batch ${batch}`
+      );
+    } catch (refundError) {
+      logger.error(
+        `Failed to initiate supplementary refund for order ${orderId} batch ${batch}:`,
+        refundError
+      );
+      // Continue — refund can be retried manually
+    }
+  }
+
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { order: result.order, refundInitiated: result.refundRequired },
+        `Batch ${batch} cancelled successfully`
+      )
+    );
+});
+
+/**
  * Reorder from previous order
  * POST /api/v1/user/orders/:orderId/reorder
  */
@@ -634,6 +691,22 @@ const validateGetOrdersQuery = (data) => {
 
 const validateCancelOrder = (data) => {
   const schema = Joi.object({
+    reason: Joi.string().min(3).max(200).optional().messages({
+      "string.min": "Reason must be at least 3 characters",
+      "string.max": "Reason cannot exceed 200 characters",
+    }),
+  });
+  return schema.validate(data);
+};
+
+const validateCancelBatch = (data) => {
+  const schema = Joi.object({
+    batch: Joi.number().integer().min(2).required().messages({
+      "number.base": "Batch must be a number",
+      "number.integer": "Batch must be an integer",
+      "number.min": "Batch must be at least 2 (batch 1 uses full order cancel)",
+      "any.required": "Batch number is required",
+    }),
     reason: Joi.string().min(3).max(200).optional().messages({
       "string.min": "Reason must be at least 3 characters",
       "string.max": "Reason cannot exceed 200 characters",

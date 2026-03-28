@@ -1228,6 +1228,88 @@ class DynamicPaymentService {
       throw error;
     }
   }
+
+  /**
+   * Refund a supplementary payment for a cancelled add-on batch
+   * @param {string} orderId - Order ID
+   * @param {number} batch - Batch number whose payment should be refunded
+   * @returns {Object} Refund result
+   */
+  async refundSupplementaryPayment(orderId, batch) {
+    try {
+      const order = await Order.findById(orderId).populate("hotel");
+      if (!order) {
+        throw new Error(`Order not found: ${orderId}`);
+      }
+
+      const suppPayment = order.supplementaryPayments.find(
+        (sp) => sp.batch === batch
+      );
+      if (!suppPayment) {
+        throw new Error(`No supplementary payment found for batch ${batch}`);
+      }
+
+      if (suppPayment.paymentStatus !== "refund_pending") {
+        throw new Error(
+          `Supplementary payment for batch ${batch} is not eligible for refund (status: ${suppPayment.paymentStatus})`
+        );
+      }
+
+      if (!suppPayment.paymentId) {
+        throw new Error(
+          `No payment ID found for supplementary payment batch ${batch}`
+        );
+      }
+
+      // Get payment config for the hotel
+      const { provider, credentials } = await this.getPaymentConfig(
+        order.hotel._id
+      );
+
+      const gateway = PaymentGatewayFactory.createGateway(
+        provider,
+        credentials
+      );
+
+      // Process refund with gateway
+      const refundData = {
+        paymentId: suppPayment.paymentId,
+        amount: suppPayment.amount,
+        currency: "INR",
+        reason: `Add-on batch ${batch} cancelled by user`,
+        orderId: suppPayment.gatewayOrderId,
+      };
+
+      const refundResponse = await gateway.refund(refundData);
+
+      // Update supplementary payment status
+      suppPayment.paymentStatus = "refunded";
+      suppPayment.refundId = refundResponse.refundId;
+      suppPayment.refundedAt = new Date();
+      suppPayment.refundResponse = refundResponse;
+
+      await order.save();
+
+      console.log(
+        `Supplementary payment refund processed for order ${orderId} batch ${batch}, amount: ${suppPayment.amount}`
+      );
+
+      return {
+        success: true,
+        orderId: order._id,
+        batch,
+        refundAmount: suppPayment.amount,
+        refundId: refundResponse.refundId,
+        message: `Supplementary payment for batch ${batch} refunded successfully`,
+      };
+    } catch (error) {
+      console.error(
+        `Error refunding supplementary payment for batch ${batch}:`,
+        error.message
+      );
+      throw error;
+    }
+  }
 }
 
 // Export singleton instance
