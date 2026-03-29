@@ -55,6 +55,9 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
 
   // Get orders
   const orders = await Order.find(filter)
+    .select(
+      "-statusHistory -assignmentHistory -invoiceSnapshot -creditNotes -invoiceGenerationError"
+    )
     .populate("user", "name phone")
     .populate("table", "tableNumber")
     .populate("hotel", "name images")
@@ -62,7 +65,8 @@ export const getMyOrders = asyncHandler(async (req, res, next) => {
     .populate("items.foodItem", "name price category image")
     .sort(sort)
     .limit(limitNumber)
-    .skip(skip);
+    .skip(skip)
+    .lean();
 
   const totalCount = await Order.countDocuments(filter);
   const totalPages = Math.ceil(totalCount / limitNumber);
@@ -323,7 +327,8 @@ export const getOrderDetails = asyncHandler(async (req, res, next) => {
     .populate("hotel", "name")
     .populate("branch", "name")
     .populate("staff", "name staffId")
-    .populate("items.foodItem", "name price category");
+    .populate("items.foodItem", "name price category image")
+    .lean();
 
   if (!order) {
     return next(new APIError(404, "Order not found"));
@@ -620,12 +625,16 @@ export const getActiveOrders = asyncHandler(async (req, res) => {
     staff: staffId,
     status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
   })
+    .select(
+      "-statusHistory -assignmentHistory -invoiceSnapshot -creditNotes -invoiceGenerationError"
+    )
     .populate("user", "name phone")
     .populate("table", "tableNumber")
     .populate("hotel", "name images")
     .populate("branch", "name images")
     .populate("items.foodItem", "name price category image")
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .lean();
 
   res
     .status(200)

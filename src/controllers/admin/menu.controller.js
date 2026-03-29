@@ -21,6 +21,7 @@ export const getAllCategories = asyncHandler(async (req, res) => {
     limit = 10,
     search,
     branchId,
+    isActive,
     sortBy = "createdAt",
     sortOrder = "desc",
   } = req.query;
@@ -33,6 +34,11 @@ export const getAllCategories = asyncHandler(async (req, res) => {
 
   if (branchId) {
     query.branch = branchId;
+  }
+
+  // Filter by active status if specified
+  if (isActive !== undefined) {
+    query.isActive = isActive === "true" ? true : false;
   }
 
   // Filter by admin who created the categories (admin isolation)
@@ -395,6 +401,7 @@ export const getAllFoodItems = asyncHandler(async (req, res) => {
     branchId,
     categoryId,
     isAvailable,
+    foodType,
     sortBy = "createdAt",
     sortOrder = "desc",
   } = req.query;
@@ -412,8 +419,20 @@ export const getAllFoodItems = asyncHandler(async (req, res) => {
     query.branch = branchId;
   }
 
+  if (foodType) {
+    query.foodType = foodType;
+  }
+
   if (categoryId) {
-    query.category = categoryId;
+    // Convert to ObjectId if it's a valid 24-char hex string, otherwise resolve by categoryId
+    if (mongoose.Types.ObjectId.isValid(categoryId)) {
+      query.category = new mongoose.Types.ObjectId(categoryId);
+    } else {
+      const resolvedId = await resolveCategoryId(categoryId);
+      if (resolvedId) {
+        query.category = new mongoose.Types.ObjectId(resolvedId);
+      }
+    }
   }
 
   if (isAvailable !== undefined) {

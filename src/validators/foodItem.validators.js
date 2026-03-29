@@ -18,7 +18,14 @@ export const validateFoodItemData = (data, isUpdate = false) => {
     shortDescription: Joi.string().allow("").max(200),
     price: Joi.number().min(0),
     discountPrice: Joi.number().min(0),
-    foodType: Joi.string().valid("veg", "non-veg", "vegan", "jain"),
+    foodType: Joi.string().valid(
+      "veg",
+      "non-veg",
+      "vegan",
+      "jain",
+      "snacks",
+      "beverages"
+    ),
     gstRate: isUpdate
       ? Joi.number()
           .valid(...VALID_GST_RATES)
