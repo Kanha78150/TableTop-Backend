@@ -899,6 +899,129 @@ export const notifyDeactivationRequest = async ({
   }
 };
 
+// ==================== ORDER TIMEOUT NOTIFICATIONS ====================
+
+/**
+ * Notify all relevant parties when an order is auto-cancelled due to timeout
+ * Sends notifications to: user, staff, manager(s), and admin
+ * @param {Object} order - The timed-out order (populated with user, staff, hotel, branch)
+ * @param {number} maxPrepTime - The MAX_PREPARATION_TIME that was exceeded
+ */
+export const notifyOrderTimeoutCancelled = async (order, maxPrepTime) => {
+  try {
+    if (!io) {
+      logger.warn(
+        "Socket.IO not initialized, skipping timeout cancellation notifications"
+      );
+      return;
+    }
+
+    const orderId = order._id.toString();
+    const orderNumber = order.orderNumber || orderId.slice(-8).toUpperCase();
+
+    const notificationData = {
+      orderId,
+      orderNumber,
+      tableNumber: order.tableNumber || order.table?.tableNumber || "N/A",
+      totalPrice: order.totalPrice,
+      itemCount: order.items?.length || 0,
+      items:
+        order.items?.map((item) => ({
+          name: item.foodItemName || item.foodItem?.name,
+          quantity: item.quantity,
+          price: item.price,
+        })) || [],
+      reason: `Order auto-cancelled: exceeded ${maxPrepTime} minutes without confirmation`,
+      cancelledAt: new Date(),
+      hotel: order.hotel?._id?.toString() || order.hotel?.toString(),
+      branch: order.branch?._id?.toString() || order.branch?.toString(),
+    };
+
+    // 1. Notify the user who placed the order
+    const userId = order.user?._id?.toString() || order.user?.toString();
+    if (userId) {
+      io.to(`user_${userId}`).emit("order:timeout_cancelled", {
+        ...notificationData,
+        message: `Your order #${orderNumber} was automatically cancelled because the restaurant did not confirm it within ${maxPrepTime} minutes. If you were charged, a refund will be processed.`,
+      });
+      logger.info(
+        `Timeout cancellation notification sent to user_${userId} for order ${orderId}`
+      );
+    }
+
+    // 2. Notify the assigned staff
+    const staffId = order.staff?._id?.toString() || order.staff?.toString();
+    if (staffId) {
+      io.to(`staff_${staffId}`).emit("order:timeout_cancelled", {
+        ...notificationData,
+        message: `Order #${orderNumber} was auto-cancelled due to timeout (${maxPrepTime} min exceeded).`,
+      });
+      logger.info(
+        `Timeout cancellation notification sent to staff_${staffId} for order ${orderId}`
+      );
+    }
+
+    // 3. Notify managers of the hotel/branch
+    const { Manager } = await import("../models/Manager.model.js");
+    const hotelId = order.hotel?._id?.toString() || order.hotel?.toString();
+    const branchId = order.branch?._id?.toString() || order.branch?.toString();
+
+    const managerQuery = { hotel: hotelId, status: "active" };
+    if (branchId) {
+      managerQuery.branch = branchId;
+    }
+    const managers = await Manager.find(managerQuery).select("_id name").lean();
+
+    for (const manager of managers) {
+      io.to(`manager_${manager._id}`).emit("order:timeout_cancelled", {
+        ...notificationData,
+        staffName: order.staff?.name || "Unknown",
+        message: `Order #${orderNumber} was auto-cancelled. Staff did not confirm within ${maxPrepTime} minutes.`,
+        priority: "high",
+      });
+      logger.info(
+        `Timeout cancellation notification sent to manager_${manager._id} for order ${orderId}`
+      );
+    }
+
+    // 4. Notify the admin who owns the hotel
+    const { Hotel } = await import("../models/Hotel.model.js");
+    const hotel = await Hotel.findById(hotelId).select("createdBy").lean();
+    if (hotel?.createdBy) {
+      const adminId = hotel.createdBy.toString();
+      io.to(`admin_${adminId}`).emit("order:timeout_cancelled", {
+        ...notificationData,
+        staffName: order.staff?.name || "Unknown",
+        message: `Order #${orderNumber} auto-cancelled due to ${maxPrepTime} min timeout. Review staff responsiveness.`,
+        priority: "high",
+      });
+      logger.info(
+        `Timeout cancellation notification sent to admin_${adminId} for order ${orderId}`
+      );
+    }
+
+    // 5. Emit to branch room for any dashboards listening
+    if (branchId) {
+      io.to(`branch_${branchId}`).emit(
+        "order:timeout_cancelled",
+        notificationData
+      );
+    }
+
+    logger.info(
+      `All timeout cancellation notifications sent for order ${orderId}`
+    );
+    return { success: true };
+  } catch (error) {
+    logger.error("Error sending timeout cancellation notifications:", {
+      error: error.message,
+      orderId: order?._id,
+      stack: error.stack,
+    });
+    return { success: false, error: error.message };
+  }
+};
+
 // ==================== EXPORTS ====================
 
 export default {
@@ -920,4 +1043,6 @@ export default {
   notifyActivated,
   notifyDeactivated,
   notifyDeactivationRequest,
+  // Order timeout notifications
+  notifyOrderTimeoutCancelled,
 };

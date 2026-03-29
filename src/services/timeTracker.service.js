@@ -5,6 +5,9 @@ import assignmentService from "./assignment/assignment.service.js";
 import queueService from "./queue.service.js";
 import { logger } from "../utils/logger.js";
 
+import { autoCancelTimedOutOrder } from "./order/order.service.js";
+import { notifyOrderTimeoutCancelled } from "./notification.service.js";
+
 /**
  * Time Tracker Service for Monitoring Order Progress and Automatic Assignments
  *
@@ -166,6 +169,7 @@ class TimeTracker {
 
   /**
    * Check for orders that have exceeded reasonable preparation time
+   * Auto-cancels timed-out orders and notifies all relevant parties
    */
   async checkTimeoutOrders() {
     try {
@@ -173,11 +177,11 @@ class TimeTracker {
         Date.now() - this.MAX_PREPARATION_TIME * 60 * 1000
       );
 
-      // Find orders that are taking too long
+      // Find orders that are taking too long (exclude already timed-out orders)
       const timeoutOrders = await Order.find({
         status: { $in: ["pending", "preparing"] },
         createdAt: { $lt: timeoutThreshold },
-        staff: { $exists: true },
+        isTimeout: { $ne: true },
       })
         .populate("staff", "name staffId")
         .populate("user", "name phone");
@@ -188,21 +192,20 @@ class TimeTracker {
             `Order ${order._id} has exceeded maximum preparation time (${this.MAX_PREPARATION_TIME} minutes)`
           );
 
-          // Add timeout flag and notification
-          await Order.findByIdAndUpdate(order._id, {
-            isTimeout: true,
-            timeoutDetectedAt: new Date(),
-            $push: {
-              statusHistory: {
-                status: "timeout_detected",
-                timestamp: new Date(),
-                notes: `Order exceeded ${this.MAX_PREPARATION_TIME} minutes preparation time`,
-              },
-            },
-          });
+          // Auto-cancel the timed-out order
+          const cancelledOrder = await autoCancelTimedOutOrder(
+            order._id,
+            this.MAX_PREPARATION_TIME
+          );
 
-          // Could trigger notifications here
-          // await notificationService.sendTimeoutAlert(order);
+          if (cancelledOrder) {
+            // Send notifications to user, staff, manager, and admin
+            await notifyOrderTimeoutCancelled(order, this.MAX_PREPARATION_TIME);
+
+            logger.info(
+              `Order ${order._id} auto-cancelled and all parties notified`
+            );
+          }
 
           this.metrics.timeoutHandled += 1;
         } catch (error) {

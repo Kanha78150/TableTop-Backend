@@ -862,6 +862,7 @@ class CartService {
           customizations: item.customizations,
           foodType: item.foodItem.foodType || "veg",
           gstRate: item.foodItem.gstRate,
+          preparationTime: item.foodItem.preparationTime,
         };
       });
 
@@ -996,9 +997,7 @@ class CartService {
 
       // 10. Calculate estimated time
       const estimatedTime =
-        Math.max(
-          ...orderItems.map((item) => item.foodItem.preparationTime || 15)
-        ) + 5; // Add 5 minutes buffer
+        Math.max(...orderItems.map((item) => item.preparationTime || 15)) + 5; // Add 5 minutes buffer
 
       // 10.5. Calculate commission for this order
       const hotelForCommission =

@@ -463,6 +463,83 @@ export const cancelOrder = async (
 };
 
 /**
+ * Auto-cancel an order that has exceeded the maximum preparation time
+ * Called by the TimeTracker service when an order times out
+ * @param {string} orderId - Order ID
+ * @param {number} maxPrepTime - The max preparation time that was exceeded (in minutes)
+ * @returns {Object} - Updated order
+ */
+export const autoCancelTimedOutOrder = async (orderId, maxPrepTime) => {
+  try {
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      console.warn(`Timeout cancel: Order ${orderId} not found`);
+      return null;
+    }
+
+    // Only cancel orders still in pending/preparing state
+    if (!["pending", "preparing"].includes(order.status)) {
+      console.log(
+        `Timeout cancel: Order ${orderId} already in '${order.status}' state, skipping`
+      );
+      return null;
+    }
+
+    const reason = `Auto-cancelled: Order exceeded ${maxPrepTime} minutes without being served`;
+
+    // Handle coin refunds
+    const userId = order.user?.toString();
+    try {
+      await coinService.handleCoinRefund(userId, orderId);
+    } catch (coinError) {
+      console.warn(
+        `Coin refund failed during timeout cancellation for order ${orderId}:`,
+        coinError.message
+      );
+    }
+
+    // Update order status
+    order.status = "cancelled";
+    order.isTimeout = true;
+    order.timeoutDetectedAt = new Date();
+    order.cancellationReason = reason;
+    order.cancelledAt = new Date();
+    order.payment.paymentStatus =
+      order.payment.paymentStatus === "paid" ? "refund_pending" : "cancelled";
+
+    // Waive commission on timeout cancellation
+    if (order.payment.commissionStatus !== "not_applicable") {
+      order.payment.commissionStatus = "waived";
+      order.payment.commissionAmount = 0;
+    }
+
+    await order.save();
+
+    // Free up the table if applicable
+    if (order.table) {
+      await Table.findByIdAndUpdate(order.table, {
+        status: "available",
+        currentOrder: null,
+        currentCustomer: null,
+      });
+    }
+
+    console.log(
+      `Order ${orderId} auto-cancelled due to timeout (${maxPrepTime} min exceeded)`
+    );
+
+    return order;
+  } catch (error) {
+    console.error(
+      `Failed to auto-cancel timed out order ${orderId}:`,
+      error.message
+    );
+    return null;
+  }
+};
+
+/**
  * Cancel a specific add-on batch from an order
  * Only allowed when order status is "pending" (before staff confirms)
  * @param {string} orderId - Order ID
@@ -955,7 +1032,8 @@ const calculateEstimatedTime = (items) => {
   let totalComplexity = 0;
 
   items.forEach((item) => {
-    const itemPrepTime = item.foodItem?.preparationTime || 15; // Default 15 minutes
+    const itemPrepTime =
+      item.foodItem?.preparationTime || item.preparationTime || 15; // Default 15 minutes
     const itemComplexity = item.quantity * (item.customizations ? 1.2 : 1);
 
     maxPrepTime = Math.max(maxPrepTime, itemPrepTime);
@@ -1540,4 +1618,5 @@ export default {
   reorderFromPrevious,
   addItemsToOrder,
   confirmCashPayment,
+  autoCancelTimedOutOrder,
 };
