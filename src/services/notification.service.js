@@ -918,6 +918,7 @@ export const notifyOrderTimeoutCancelled = async (order, maxPrepTime) => {
 
     const orderId = order._id.toString();
     const orderNumber = order.orderNumber || orderId.slice(-8).toUpperCase();
+    const cancellationReason = `Auto-cancelled: Order exceeded ${maxPrepTime} minutes without being served`;
 
     const notificationData = {
       orderId,
@@ -931,7 +932,7 @@ export const notifyOrderTimeoutCancelled = async (order, maxPrepTime) => {
           quantity: item.quantity,
           price: item.price,
         })) || [],
-      reason: `Order auto-cancelled: exceeded ${maxPrepTime} minutes without confirmation`,
+      reason: cancellationReason,
       cancelledAt: new Date(),
       hotel: order.hotel?._id?.toString() || order.hotel?.toString(),
       branch: order.branch?._id?.toString() || order.branch?.toString(),
@@ -942,7 +943,7 @@ export const notifyOrderTimeoutCancelled = async (order, maxPrepTime) => {
     if (userId) {
       io.to(`user_${userId}`).emit("order:timeout_cancelled", {
         ...notificationData,
-        message: `Your order #${orderNumber} was automatically cancelled because the restaurant did not confirm it within ${maxPrepTime} minutes. If you were charged, a refund will be processed.`,
+        message: cancellationReason,
       });
       logger.info(
         `Timeout cancellation notification sent to user_${userId} for order ${orderId}`
@@ -954,7 +955,7 @@ export const notifyOrderTimeoutCancelled = async (order, maxPrepTime) => {
     if (staffId) {
       io.to(`staff_${staffId}`).emit("order:timeout_cancelled", {
         ...notificationData,
-        message: `Order #${orderNumber} was auto-cancelled due to timeout (${maxPrepTime} min exceeded).`,
+        message: cancellationReason,
       });
       logger.info(
         `Timeout cancellation notification sent to staff_${staffId} for order ${orderId}`
@@ -976,7 +977,7 @@ export const notifyOrderTimeoutCancelled = async (order, maxPrepTime) => {
       io.to(`manager_${manager._id}`).emit("order:timeout_cancelled", {
         ...notificationData,
         staffName: order.staff?.name || "Unknown",
-        message: `Order #${orderNumber} was auto-cancelled. Staff did not confirm within ${maxPrepTime} minutes.`,
+        message: cancellationReason,
         priority: "high",
       });
       logger.info(
@@ -992,7 +993,7 @@ export const notifyOrderTimeoutCancelled = async (order, maxPrepTime) => {
       io.to(`admin_${adminId}`).emit("order:timeout_cancelled", {
         ...notificationData,
         staffName: order.staff?.name || "Unknown",
-        message: `Order #${orderNumber} auto-cancelled due to ${maxPrepTime} min timeout. Review staff responsiveness.`,
+        message: cancellationReason,
         priority: "high",
       });
       logger.info(
