@@ -3,6 +3,10 @@ import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+import { handleDeactivationSideEffects } from "../../services/staffDeactivation.service.js";
+import {
+  CookieOptions,
+} from "../../config/jwtOptions.js";
 
 
 // Staff login
@@ -45,12 +49,19 @@ export const loginStaff = asyncHandler(async (req, res, next) => {
   }
 
   // Check if account is active
+  // Only self-deactivated ("inactive") accounts can auto-reactivate on login
+  // Admin/manager-set statuses (suspended, on_leave, on_break) must stay blocked
   const wasInactive = staff.status === "inactive";
   if (staff.status !== "active" && staff.status !== "inactive") {
+    const statusMessages = {
+      suspended: "Account is suspended. Please contact your admin.",
+      on_leave: "Account is marked as on leave. Please contact your manager.",
+      on_break: "Account is on break. Please contact your manager.",
+    };
     return next(
       new APIError(
         403,
-        "Account is not accessible. Please contact your manager."
+        statusMessages[staff.status] || "Account is not accessible. Please contact your manager."
       )
     );
   }
@@ -167,6 +178,10 @@ export const logoutStaff = asyncHandler(async (req, res, next) => {
   staff.refreshToken = null;
   await staff.save();
 
+  // Clear cookies
+  res.clearCookie("accessToken", CookieOptions);
+  res.clearCookie("refreshToken", CookieOptions);
+
   res.status(200).json(new APIResponse(200, null, "Staff logout successful"));
   });
 
@@ -253,12 +268,17 @@ export const deactivateAccount = asyncHandler(async (req, res, next) => {
   staff.updatedAt = new Date();
   await staff.save();
 
+  // Handle deactivation side effects (order reassignment, socket disconnect, manager notification)
+  const sideEffects = await handleDeactivationSideEffects(staff, {
+    deactivatedBy: "self",
+  });
+
   res
     .status(200)
     .json(
       new APIResponse(
         200,
-        null,
+        { deactivationSideEffects: sideEffects },
         "Account deactivated successfully. You can reactivate it anytime by logging in."
       )
     );

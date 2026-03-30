@@ -157,6 +157,9 @@ const staffSchema = new mongoose.Schema(
     // Authentication
     refreshToken: { type: String, default: null },
 
+    // Token version for session invalidation (incremented on deactivation)
+    tokenVersion: { type: Number, default: 0 },
+
     // Security features
     loginAttempts: { type: Number, default: 0 },
     lockUntil: { type: Date },
@@ -186,6 +189,28 @@ const staffSchema = new mongoose.Schema(
       max: 5,
       default: 3,
     },
+
+    // Deactivation audit trail
+    statusChangeHistory: [
+      {
+        fromStatus: String,
+        toStatus: String,
+        changedBy: {
+          type: String,
+          enum: ["self", "admin", "manager", "system"],
+        },
+        changedById: {
+          type: mongoose.Schema.Types.ObjectId,
+          refPath: "statusChangeHistory.changedByModel",
+        },
+        changedByModel: {
+          type: String,
+          enum: ["Admin", "Manager", "Staff"],
+        },
+        reason: String,
+        changedAt: { type: Date, default: Date.now },
+      },
+    ],
 
     // Training status
     trainingCompleted: [

@@ -278,6 +278,15 @@ export const authenticateStaff = async (req, res, next) => {
       throw new APIError(401, "Invalid access token");
     }
 
+    // Check token version for session invalidation
+    if (
+      decoded.tokenVersion !== undefined &&
+      staff.tokenVersion !== undefined &&
+      decoded.tokenVersion !== staff.tokenVersion
+    ) {
+      throw new APIError(401, "Session has been invalidated. Please login again.");
+    }
+
     // Check if staff is active
     if (staff.status !== "active") {
       throw new APIError(403, "Staff account is inactive");

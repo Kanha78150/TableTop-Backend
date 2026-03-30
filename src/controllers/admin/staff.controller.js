@@ -16,6 +16,7 @@ import {
   decreaseResourceUsage,
 } from "../../middleware/subscriptionAuth.middleware.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+import { handleDeactivationSideEffects } from "../../services/staffDeactivation.service.js";
 
 // Staff Management (admin-specific)
 export const getAllStaff = asyncHandler(async (req, res, next) => {
@@ -759,6 +760,13 @@ export const deactivateStaff = asyncHandler(async (req, res, next) => {
   staff.updatedAt = new Date();
   await staff.save();
 
+  // Handle deactivation side effects (order reassignment, socket disconnect, notifications)
+  const sideEffects = await handleDeactivationSideEffects(staff, {
+    deactivatedBy: "admin",
+    deactivatedById: req.admin._id,
+    reason: req.body.reason || null,
+  });
+
   // Populate related data for service status
   const populatedStaff = await Staff.findById(staff._id)
     .populate({
@@ -779,7 +787,7 @@ export const deactivateStaff = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(
         200,
-        staffWithStatus,
+        { ...staffWithStatus, deactivationSideEffects: sideEffects },
         "Staff deactivated successfully. They will appear in search results but marked as no services provided."
       )
     );

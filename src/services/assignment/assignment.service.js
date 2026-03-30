@@ -465,6 +465,14 @@ class AssignmentService {
         throw new APIError(404, "Waiter not found");
       }
 
+      // Check if waiter is still active before assigning from queue
+      if (waiter.status !== "active") {
+        logger.info(
+          `Waiter ${waiterId} is ${waiter.status}, skipping queue assignment`
+        );
+        return null;
+      }
+
       // Check if waiter can take more orders
       const activeOrdersCount = await Order.countDocuments({
         staff: waiterId,
@@ -596,6 +604,14 @@ class AssignmentService {
 
       if (!waiter || waiter.role !== "waiter") {
         throw new APIError(404, "Waiter not found");
+      }
+
+      // Check if waiter is active and available
+      if (waiter.status !== "active") {
+        throw new APIError(
+          400,
+          `Cannot assign order to ${waiter.status} staff. Staff must be active.`
+        );
       }
 
       // Check if waiter can take more orders

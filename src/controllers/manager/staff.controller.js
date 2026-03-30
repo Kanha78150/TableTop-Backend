@@ -10,6 +10,7 @@ import { logger } from "../../utils/logger.js";
 import Joi from "joi";
 import bcrypt from "bcrypt";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+import { handleDeactivationSideEffects } from "../../services/staffDeactivation.service.js";
 
 
 /**
@@ -334,6 +335,18 @@ export const updateStaffStatus = asyncHandler(async (req, res, next) => {
     );
   }
 
+  // Prevent manager from overriding admin-level suspension
+  if (staff.status === "suspended" && status === "active") {
+    return next(
+      new APIError(
+        403,
+        "Cannot reactivate a suspended staff member. Only an admin can lift a suspension."
+      )
+    );
+  }
+
+  const previousStatus = staff.status;
+
   // Update status
   const updatedStaff = await Staff.findByIdAndUpdate(
     staffId,
@@ -349,12 +362,22 @@ export const updateStaffStatus = asyncHandler(async (req, res, next) => {
     `Staff ${staffId} status updated to ${status} by manager ${managerId}`
   );
 
+  // Handle deactivation side effects if staff is being moved to a non-active status
+  let sideEffects = null;
+  if (previousStatus === "active" && status !== "active") {
+    sideEffects = await handleDeactivationSideEffects(staff, {
+      deactivatedBy: "manager",
+      deactivatedById: managerId,
+      reason: `Status changed to ${status} by manager`,
+    });
+  }
+
   res
     .status(200)
     .json(
       new APIResponse(
         200,
-        { staff: updatedStaff },
+        { staff: updatedStaff, ...(sideEffects && { deactivationSideEffects: sideEffects }) },
         `Staff status updated to ${status}`
       )
     );

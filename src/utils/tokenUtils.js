@@ -10,6 +10,7 @@ export const generateTokens = (user) => {
     _id: user._id?.toString() || user.id?.toString(),
     email: user.email,
     role: user.role,
+    tokenVersion: user.tokenVersion || 0,
   };
 
   const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
