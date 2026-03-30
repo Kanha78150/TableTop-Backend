@@ -12,7 +12,6 @@ import bcrypt from "bcrypt";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 import { handleDeactivationSideEffects } from "../../services/staffDeactivation.service.js";
 
-
 /**
  * Create new staff member
  * POST /api/v1/manager/staff
@@ -86,7 +85,7 @@ export const createStaff = asyncHandler(async (req, res, next) => {
         "Staff member created successfully"
       )
     );
-  });
+});
 
 /**
  * Get staff member by ID
@@ -114,9 +113,7 @@ export const getStaff = asyncHandler(async (req, res, next) => {
 
   // Check if staff belongs to manager's branch
   if (staff.branch?.toString() !== managerBranch?.toString()) {
-    return next(
-      new APIError(403, "You can only view staff from your branch")
-    );
+    return next(new APIError(403, "You can only view staff from your branch"));
   }
 
   res
@@ -128,7 +125,7 @@ export const getStaff = asyncHandler(async (req, res, next) => {
         "Staff member details retrieved successfully"
       )
     );
-  });
+});
 
 /**
  * Get all staff members for the branch
@@ -191,7 +188,7 @@ export const getAllStaff = asyncHandler(async (req, res, next) => {
       "Staff members retrieved successfully"
     )
   );
-  });
+});
 
 /**
  * Update staff member
@@ -245,7 +242,7 @@ export const updateStaff = asyncHandler(async (req, res, next) => {
         "Staff member updated successfully"
       )
     );
-  });
+});
 
 /**
  * Delete staff member
@@ -303,7 +300,7 @@ export const deleteStaff = asyncHandler(async (req, res, next) => {
   res
     .status(200)
     .json(new APIResponse(200, null, "Staff member deleted successfully"));
-  });
+});
 
 /**
  * Update staff status
@@ -345,6 +342,28 @@ export const updateStaffStatus = asyncHandler(async (req, res, next) => {
     );
   }
 
+  // Block inactive/on_break/on_leave if staff has active orders
+  // Only completed and cancelled orders are terminal — everything else blocks the action
+  // Note: "queued" orders are not assigned to staff, so they don't need to be checked
+  if (
+    ["inactive", "on_break", "on_leave"].includes(status) &&
+    status !== staff.status
+  ) {
+    const activeOrdersCount = await Order.countDocuments({
+      staff: staffId,
+      status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+    });
+
+    if (activeOrdersCount > 0) {
+      return next(
+        new APIError(
+          400,
+          `Cannot set staff to ${status}. Staff has ${activeOrdersCount} active order(s). Orders must be completed or reassigned first.`
+        )
+      );
+    }
+  }
+
   const previousStatus = staff.status;
 
   // Update status
@@ -377,11 +396,14 @@ export const updateStaffStatus = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(
         200,
-        { staff: updatedStaff, ...(sideEffects && { deactivationSideEffects: sideEffects }) },
+        {
+          staff: updatedStaff,
+          ...(sideEffects && { deactivationSideEffects: sideEffects }),
+        },
         `Staff status updated to ${status}`
       )
     );
-  });
+});
 
 /**
  * Get staff performance metrics
@@ -390,11 +412,7 @@ export const updateStaffStatus = asyncHandler(async (req, res, next) => {
  */
 export const getStaffPerformance = asyncHandler(async (req, res, next) => {
   const { staffId } = req.params;
-  const {
-    days,
-    startDate: startDateParam,
-    endDate: endDateParam,
-  } = req.query;
+  const { days, startDate: startDateParam, endDate: endDateParam } = req.query;
   const managerBranch = req.user.branch;
 
   // Get staff
@@ -528,7 +546,7 @@ export const getStaffPerformance = asyncHandler(async (req, res, next) => {
       "Staff performance retrieved successfully"
     )
   );
-  });
+});
 
 /**
  * Update staff performance rating
@@ -588,7 +606,7 @@ export const updateStaffPerformance = asyncHandler(async (req, res, next) => {
         "Performance rating updated successfully"
       )
     );
-  });
+});
 
 /**
  * Add training record for staff
@@ -619,10 +637,7 @@ export const addStaffTraining = asyncHandler(async (req, res, next) => {
   // Check branch access
   if (staff.branch?.toString() !== managerBranch?.toString()) {
     return next(
-      new APIError(
-        403,
-        "You can only add training for staff from your branch"
-      )
+      new APIError(403, "You can only add training for staff from your branch")
     );
   }
 
@@ -655,7 +670,7 @@ export const addStaffTraining = asyncHandler(async (req, res, next) => {
         "Training record added successfully"
       )
     );
-  });
+});
 
 /**
  * Get staff schedule
@@ -675,10 +690,7 @@ export const getStaffSchedule = asyncHandler(async (req, res, next) => {
   // Check branch access
   if (staff.branch?.toString() !== managerBranch?.toString()) {
     return next(
-      new APIError(
-        403,
-        "You can only view schedule of staff from your branch"
-      )
+      new APIError(403, "You can only view schedule of staff from your branch")
     );
   }
 
@@ -703,7 +715,7 @@ export const getStaffSchedule = asyncHandler(async (req, res, next) => {
         "Staff schedule retrieved successfully"
       )
     );
-  });
+});
 
 /**
  * Update staff schedule
@@ -758,7 +770,7 @@ export const updateStaffSchedule = asyncHandler(async (req, res, next) => {
         "Staff schedule updated successfully"
       )
     );
-  });
+});
 
 // Validation schemas
 const validateGetStaffQuery = (data) => {

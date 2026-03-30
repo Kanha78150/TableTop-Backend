@@ -1,4 +1,5 @@
 import { Staff, staffValidationSchemas } from "../../models/Staff.model.js";
+import { Order } from "../../models/Order.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
@@ -174,6 +175,21 @@ export const logoutStaff = asyncHandler(async (req, res, next) => {
     return next(new APIError(404, "Staff not found"));
   }
 
+  // Block logout if staff has active orders
+  const activeOrdersCount = await Order.countDocuments({
+    staff: staff._id,
+    status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+  });
+
+  if (activeOrdersCount > 0) {
+    return next(
+      new APIError(
+        400,
+        `Cannot logout. You have ${activeOrdersCount} active order(s). Please complete or hand off all orders before logging out.`
+      )
+    );
+  }
+
   // Clear refresh token
   staff.refreshToken = null;
   await staff.save();
@@ -261,6 +277,23 @@ export const deactivateAccount = asyncHandler(async (req, res, next) => {
 
   if (staff.status === "inactive") {
     return next(new APIError(400, "Account is already deactivated"));
+  }
+
+  // Block deactivation if staff has active orders
+  // Only completed and cancelled orders are terminal — everything else blocks deactivation
+  // Note: "queued" orders are not assigned to staff, so they don't need to be checked
+  const activeOrdersCount = await Order.countDocuments({
+    staff: staff._id,
+    status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+  });
+
+  if (activeOrdersCount > 0) {
+    return next(
+      new APIError(
+        400,
+        `Cannot deactivate account. You have ${activeOrdersCount} active order(s). Please complete or hand off all orders before deactivating.`
+      )
+    );
   }
 
   // Deactivate the account

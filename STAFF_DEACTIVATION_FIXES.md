@@ -1,6 +1,6 @@
 # Staff Deactivation & Activation — Gap Fixes
 
-This document covers all 12 gaps identified and fixed in the staff deactivation/activation flow.
+This document covers all 13 gaps identified and fixed in the staff deactivation/activation flow.
 
 ---
 
@@ -10,18 +10,19 @@ This document covers all 12 gaps identified and fixed in the staff deactivation/
   - [1. Auto-Reactivation Bypass on Login](#1-auto-reactivation-bypass-on-login)
   - [2. Manual Assignment to Inactive Staff](#2-manual-assignment-to-inactive-staff)
   - [3. Queue Auto-Assignment to Inactive Staff](#3-queue-auto-assignment-to-inactive-staff)
+  - [4. Block Logout / Self-Deactivation / Break / Leave with Active Orders](#4-block-logout--self-deactivation--break--leave-with-active-orders)
 - [P1 — High Priority Fixes](#p1--high-priority-fixes)
-  - [4. Order Handoff on Deactivation](#4-order-handoff-on-deactivation)
-  - [5. Force-Disconnect Sockets on Deactivation](#5-force-disconnect-sockets-on-deactivation)
-  - [6. Manager Cannot Override Admin Suspension](#6-manager-cannot-override-admin-suspension)
+  - [5. Order Handoff on Deactivation](#5-order-handoff-on-deactivation)
+  - [6. Force-Disconnect Sockets on Deactivation](#6-force-disconnect-sockets-on-deactivation)
+  - [7. Manager Cannot Override Admin Suspension](#7-manager-cannot-override-admin-suspension)
 - [P2 — Medium Priority Fixes](#p2--medium-priority-fixes)
-  - [7. Notify Staff on Deactivation](#7-notify-staff-on-deactivation)
-  - [8. Notify Manager on Self-Deactivation](#8-notify-manager-on-self-deactivation)
-  - [9. Deactivation Reason & Audit Trail](#9-deactivation-reason--audit-trail)
+  - [8. Notify Staff on Deactivation](#8-notify-staff-on-deactivation)
+  - [9. Notify Manager on Self-Deactivation](#9-notify-manager-on-self-deactivation)
+  - [10. Deactivation Reason & Audit Trail](#10-deactivation-reason--audit-trail)
 - [P3 — Low Priority Fixes](#p3--low-priority-fixes)
-  - [10. JWT/Session Invalidation](#10-jwtsession-invalidation)
-  - [11. Sync isAvailable on All Deactivation Paths](#11-sync-isavailable-on-all-deactivation-paths)
-  - [12. Reset activeOrdersCount on Deactivation](#12-reset-activeorderscount-on-deactivation)
+  - [11. JWT/Session Invalidation](#11-jwtsession-invalidation)
+  - [12. Sync isAvailable on All Deactivation Paths](#12-sync-isavailable-on-all-deactivation-paths)
+  - [13. Reset activeOrdersCount on Deactivation](#13-reset-activeorderscount-on-deactivation)
 - [Files Changed](#files-changed)
 - [New File Created](#new-file-created)
 - [New Socket Events](#new-socket-events)
@@ -153,9 +154,82 @@ if (waiter.status !== "active") {
 
 ---
 
+### 4. Block Logout / Self-Deactivation / Break / Leave with Active Orders
+
+**Files:**
+- `src/controllers/auth/staffAuth.controller.js` → `logoutStaff()`, `deactivateAccount()`
+- `src/controllers/manager/staff.controller.js` → `updateStaffStatus()`
+
+**Problem:**
+A staff member with active orders (pending, confirmed, preparing, ready, served) could logout, self-deactivate, or be set to `on_break` / `on_leave`. The orders would then get orphaned or immediately reassigned to another waiter, which is unfair — the staff should complete their own orders before stepping away.
+
+**Solution — Staff Logout:**
+```js
+// Block logout if staff has active orders
+const activeOrdersCount = await Order.countDocuments({
+  staff: staff._id,
+  status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+});
+
+if (activeOrdersCount > 0) {
+  return next(
+    new APIError(
+      400,
+      `Cannot logout. You have ${activeOrdersCount} active order(s). Please complete or hand off all orders before logging out.`
+    )
+  );
+}
+```
+
+**Solution — Staff Self-Deactivation:**
+```js
+// Block deactivation if staff has active orders
+const activeOrdersCount = await Order.countDocuments({
+  staff: staff._id,
+  status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+});
+
+if (activeOrdersCount > 0) {
+  return next(
+    new APIError(
+      400,
+      `Cannot deactivate account. You have ${activeOrdersCount} active order(s). Please complete or hand off all orders before deactivating.`
+    )
+  );
+}
+```
+
+**Solution — Manager Setting Break / Leave / Inactive:**
+```js
+// Block inactive/on_break/on_leave if staff has active orders
+if (["inactive", "on_break", "on_leave"].includes(status) && status !== staff.status) {
+  const activeOrdersCount = await Order.countDocuments({
+    staff: staffId,
+    status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+  });
+
+  if (activeOrdersCount > 0) {
+    return next(
+      new APIError(
+        400,
+        `Cannot set staff to ${status}. Staff has ${activeOrdersCount} active order(s). Orders must be completed or reassigned first.`
+      )
+    );
+  }
+}
+```
+
+**Behavior:**
+- Staff with active orders **CANNOT**: logout, self-deactivate, go on break, or go on leave
+- Returns `400` with exact count of active orders
+- **Admin suspension is NOT blocked** — suspension is a disciplinary action; orders get reassigned via the deactivation side-effects service (admin has authority)
+- Staff must complete or have their orders manually reassigned before they can step away
+
+---
+
 ## P1 — High Priority Fixes
 
-### 4. Order Handoff on Deactivation
+### 5. Order Handoff on Deactivation
 
 **File:** `src/services/staffDeactivation.service.js` → `handleActiveOrders()`
 
@@ -173,7 +247,7 @@ On deactivation, the system now:
 
 ---
 
-### 5. Force-Disconnect Sockets on Deactivation
+### 6. Force-Disconnect Sockets on Deactivation
 
 **File:** `src/services/staffDeactivation.service.js` → `forceDisconnectStaff()`
 
@@ -189,7 +263,7 @@ On deactivation:
 
 ---
 
-### 6. Manager Cannot Override Admin Suspension
+### 7. Manager Cannot Override Admin Suspension
 
 **File:** `src/controllers/manager/staff.controller.js` → `updateStaffStatus()`
 
@@ -223,7 +297,7 @@ Additionally, when a manager sets status to a non-active value, deactivation sid
 
 ## P2 — Medium Priority Fixes
 
-### 7. Notify Staff on Deactivation
+### 8. Notify Staff on Deactivation
 
 **File:** `src/services/staffDeactivation.service.js` → `notifyStaffDeactivated()`
 
@@ -245,7 +319,7 @@ This is emitted BEFORE the force-disconnect, so the client receives it.
 
 ---
 
-### 8. Notify Manager on Self-Deactivation
+### 9. Notify Manager on Self-Deactivation
 
 **File:** `src/services/staffDeactivation.service.js` → `notifyManagerStaffDeactivated()`
 
@@ -267,7 +341,7 @@ When staff self-deactivates, the system emits a `staff:self_deactivated` socket 
 
 ---
 
-### 9. Deactivation Reason & Audit Trail
+### 10. Deactivation Reason & Audit Trail
 
 **Files:**
 - `src/models/Staff.model.js` — new `statusChangeHistory` field
@@ -298,7 +372,7 @@ Every deactivation automatically pushes an entry to this array with full context
 
 ## P3 — Low Priority Fixes
 
-### 10. JWT/Session Invalidation
+### 11. JWT/Session Invalidation
 
 **Files:**
 - `src/models/Staff.model.js` — new `tokenVersion` field
@@ -321,7 +395,7 @@ This immediately invalidates ALL existing sessions without maintaining a token b
 
 ---
 
-### 11. Sync isAvailable on All Deactivation Paths
+### 12. Sync isAvailable on All Deactivation Paths
 
 **File:** `src/services/staffDeactivation.service.js`
 
@@ -333,7 +407,7 @@ The centralized `handleDeactivationSideEffects()` now sets `isAvailable: false` 
 
 ---
 
-### 12. Reset activeOrdersCount on Deactivation
+### 13. Reset activeOrdersCount on Deactivation
 
 **File:** `src/services/staffDeactivation.service.js`
 
@@ -349,13 +423,13 @@ The centralized `handleDeactivationSideEffects()` sets `activeOrdersCount: 0` af
 
 | # | File | What Changed |
 |---|---|---|
-| 1 | `src/controllers/auth/staffAuth.controller.js` | P0 #1: Only `inactive` auto-reactivates. Specific error messages for `suspended`/`on_leave`/`on_break`. Integrated deactivation side-effects on self-deactivation. |
+| 1 | `src/controllers/auth/staffAuth.controller.js` | P0 #1: Only `inactive` auto-reactivates. Specific error messages for `suspended`/`on_leave`/`on_break`. P0 #4: Blocks logout and self-deactivation if staff has active orders. Integrated deactivation side-effects on self-deactivation. Cookie clearing on logout. |
 | 2 | `src/services/assignment/assignment.service.js` | P0 #2: `manualAssignment()` rejects inactive staff with 400. P0 #3: `assignFromQueue()` skips inactive staff. |
-| 3 | `src/controllers/admin/staff.controller.js` | P1 #4/5, P2 #7/9: Admin deactivation triggers `handleDeactivationSideEffects()`. |
-| 4 | `src/controllers/manager/staff.controller.js` | P1 #6: Blocks manager from reactivating `suspended` staff. Triggers deactivation side-effects when moving to non-active status. |
-| 5 | `src/models/Staff.model.js` | P2 #9: Added `statusChangeHistory` array. P3 #10: Added `tokenVersion` field. |
-| 6 | `src/middleware/auth.middleware.js` | P3 #10: Checks `tokenVersion` in JWT against DB value. |
-| 7 | `src/utils/tokenUtils.js` | P3 #10: Includes `tokenVersion` in JWT payload. |
+| 3 | `src/controllers/admin/staff.controller.js` | P1 #5/6, P2 #8/10: Admin deactivation triggers `handleDeactivationSideEffects()`. |
+| 4 | `src/controllers/manager/staff.controller.js` | P0 #4: Blocks `inactive`/`on_break`/`on_leave` if staff has active orders. P1 #7: Blocks manager from reactivating `suspended` staff. Triggers deactivation side-effects when moving to non-active status. |
+| 5 | `src/models/Staff.model.js` | P2 #10: Added `statusChangeHistory` array. P3 #11: Added `tokenVersion` field. |
+| 6 | `src/middleware/auth.middleware.js` | P3 #11: Checks `tokenVersion` in JWT against DB value. |
+| 7 | `src/utils/tokenUtils.js` | P3 #11: Includes `tokenVersion` in JWT payload. |
 
 ## New File Created
 
