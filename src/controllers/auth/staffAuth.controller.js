@@ -5,10 +5,7 @@ import { APIError } from "../../utils/APIError.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
 import { handleDeactivationSideEffects } from "../../services/staffDeactivation.service.js";
-import {
-  CookieOptions,
-} from "../../config/jwtOptions.js";
-
+import { CookieOptions } from "../../config/jwtOptions.js";
 
 // Staff login
 export const loginStaff = asyncHandler(async (req, res, next) => {
@@ -62,7 +59,8 @@ export const loginStaff = asyncHandler(async (req, res, next) => {
     return next(
       new APIError(
         403,
-        statusMessages[staff.status] || "Account is not accessible. Please contact your manager."
+        statusMessages[staff.status] ||
+          "Account is not accessible. Please contact your manager."
       )
     );
   }
@@ -166,9 +164,9 @@ export const loginStaff = asyncHandler(async (req, res, next) => {
   } catch (tokenError) {
     return next(new APIError(500, "Error generating authentication tokens"));
   }
-  });
+});
 
-// Staff logout
+// Staff logout (also deactivates account)
 export const logoutStaff = asyncHandler(async (req, res, next) => {
   const staff = await Staff.findById(req.staff._id);
   if (!staff) {
@@ -190,16 +188,35 @@ export const logoutStaff = asyncHandler(async (req, res, next) => {
     );
   }
 
+  // Deactivate the account on logout
+  if (staff.status !== "inactive") {
+    staff.status = "inactive";
+    staff.updatedAt = new Date();
+  }
+
   // Clear refresh token
   staff.refreshToken = null;
   await staff.save();
+
+  // Handle deactivation side effects (socket disconnect, manager notification, audit trail)
+  const sideEffects = await handleDeactivationSideEffects(staff, {
+    deactivatedBy: "self",
+  });
 
   // Clear cookies
   res.clearCookie("accessToken", CookieOptions);
   res.clearCookie("refreshToken", CookieOptions);
 
-  res.status(200).json(new APIResponse(200, null, "Staff logout successful"));
-  });
+  res
+    .status(200)
+    .json(
+      new APIResponse(
+        200,
+        { deactivationSideEffects: sideEffects },
+        "Staff logged out and account deactivated successfully. You can reactivate by logging in again."
+      )
+    );
+});
 
 // Get staff profile
 export const getStaffProfile = asyncHandler(async (req, res, next) => {
@@ -218,7 +235,7 @@ export const getStaffProfile = asyncHandler(async (req, res, next) => {
     .json(
       new APIResponse(200, { staff }, "Staff profile retrieved successfully")
     );
-  });
+});
 
 // Change staff password
 export const changeStaffPassword = asyncHandler(async (req, res, next) => {
@@ -252,70 +269,7 @@ export const changeStaffPassword = asyncHandler(async (req, res, next) => {
         "Password changed successfully. First login complete."
       )
     );
-  });
-
-// Staff self-deactivation
-export const deactivateAccount = asyncHandler(async (req, res, next) => {
-  const { password } = req.body;
-
-  if (!password) {
-    return next(
-      new APIError(400, "Password is required to deactivate account")
-    );
-  }
-
-  const staff = await Staff.findById(req.staff._id);
-  if (!staff) {
-    return next(new APIError(404, "Staff not found"));
-  }
-
-  // Verify password before deactivation
-  const isPasswordValid = await staff.comparePassword(password);
-  if (!isPasswordValid) {
-    return next(new APIError(400, "Incorrect password"));
-  }
-
-  if (staff.status === "inactive") {
-    return next(new APIError(400, "Account is already deactivated"));
-  }
-
-  // Block deactivation if staff has active orders
-  // Only completed and cancelled orders are terminal — everything else blocks deactivation
-  // Note: "queued" orders are not assigned to staff, so they don't need to be checked
-  const activeOrdersCount = await Order.countDocuments({
-    staff: staff._id,
-    status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
-  });
-
-  if (activeOrdersCount > 0) {
-    return next(
-      new APIError(
-        400,
-        `Cannot deactivate account. You have ${activeOrdersCount} active order(s). Please complete or hand off all orders before deactivating.`
-      )
-    );
-  }
-
-  // Deactivate the account
-  staff.status = "inactive";
-  staff.updatedAt = new Date();
-  await staff.save();
-
-  // Handle deactivation side effects (order reassignment, socket disconnect, manager notification)
-  const sideEffects = await handleDeactivationSideEffects(staff, {
-    deactivatedBy: "self",
-  });
-
-  res
-    .status(200)
-    .json(
-      new APIResponse(
-        200,
-        { deactivationSideEffects: sideEffects },
-        "Account deactivated successfully. You can reactivate it anytime by logging in."
-      )
-    );
-  });
+});
 
 // Staff self-reactivation
 export const reactivateAccount = asyncHandler(async (req, res, next) => {
@@ -356,4 +310,4 @@ export const reactivateAccount = asyncHandler(async (req, res, next) => {
         "Account reactivated successfully. Welcome back!"
       )
     );
-  });
+});

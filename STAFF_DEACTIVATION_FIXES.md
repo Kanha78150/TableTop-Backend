@@ -10,7 +10,7 @@ This document covers all 13 gaps identified and fixed in the staff deactivation/
   - [1. Auto-Reactivation Bypass on Login](#1-auto-reactivation-bypass-on-login)
   - [2. Manual Assignment to Inactive Staff](#2-manual-assignment-to-inactive-staff)
   - [3. Queue Auto-Assignment to Inactive Staff](#3-queue-auto-assignment-to-inactive-staff)
-  - [4. Block Logout / Self-Deactivation / Break / Leave with Active Orders](#4-block-logout--self-deactivation--break--leave-with-active-orders)
+  - [4. Logout Deactivates Staff & Block with Active Orders](#4-logout-deactivates-staff--block-with-active-orders)
 - [P1 — High Priority Fixes](#p1--high-priority-fixes)
   - [5. Order Handoff on Deactivation](#5-order-handoff-on-deactivation)
   - [6. Force-Disconnect Sockets on Deactivation](#6-force-disconnect-sockets-on-deactivation)
@@ -40,10 +40,13 @@ This document covers all 13 gaps identified and fixed in the staff deactivation/
 Any staff with a non-active status (`suspended`, `on_leave`, `on_break`) could simply log in and get auto-reactivated. This undermined admin authority — an admin suspends a staff member for misconduct, but the staff logs in and is automatically back to `active`.
 
 **Before:**
+
 ```js
 const wasInactive = staff.status === "inactive";
 if (staff.status !== "active" && staff.status !== "inactive") {
-  return next(new APIError(403, "Account is not accessible. Please contact your manager."));
+  return next(
+    new APIError(403, "Account is not accessible. Please contact your manager.")
+  );
 }
 
 // Auto-reactivate inactive account on successful login
@@ -55,6 +58,7 @@ if (wasInactive) {
 ```
 
 **After:**
+
 ```js
 // Only self-deactivated ("inactive") accounts can auto-reactivate on login
 // Admin/manager-set statuses (suspended, on_leave, on_break) must stay blocked
@@ -66,12 +70,17 @@ if (staff.status !== "active" && staff.status !== "inactive") {
     on_break: "Account is on break. Please contact your manager.",
   };
   return next(
-    new APIError(403, statusMessages[staff.status] || "Account is not accessible. Please contact your manager.")
+    new APIError(
+      403,
+      statusMessages[staff.status] ||
+        "Account is not accessible. Please contact your manager."
+    )
   );
 }
 ```
 
 **Behavior:**
+
 - `inactive` (self-deactivated) → auto-reactivates on login (unchanged)
 - `suspended` → blocked with `"Account is suspended. Please contact your admin."`
 - `on_leave` → blocked with `"Account is marked as on leave. Please contact your manager."`
@@ -87,6 +96,7 @@ if (staff.status !== "active" && staff.status !== "inactive") {
 A manager could call `POST /assignment/manual-assign` and assign an order to an inactive/suspended staff member. The order would get stuck — assigned but unhandled because the staff can't access the API.
 
 **Before:**
+
 ```js
 if (!waiter || waiter.role !== "waiter") {
   throw new APIError(404, "Waiter not found");
@@ -96,6 +106,7 @@ if (!waiter || waiter.role !== "waiter") {
 ```
 
 **After:**
+
 ```js
 if (!waiter || waiter.role !== "waiter") {
   throw new APIError(404, "Waiter not found");
@@ -103,13 +114,17 @@ if (!waiter || waiter.role !== "waiter") {
 
 // Check if waiter is active and available
 if (waiter.status !== "active") {
-  throw new APIError(400, `Cannot assign order to ${waiter.status} staff. Staff must be active.`);
+  throw new APIError(
+    400,
+    `Cannot assign order to ${waiter.status} staff. Staff must be active.`
+  );
 }
 
 // Check if waiter can take more orders
 ```
 
 **Behavior:**
+
 - Returns `400` with a clear error message if the staff is not `active`
 - Prevents stuck/orphaned orders
 
@@ -123,6 +138,7 @@ if (waiter.status !== "active") {
 When a staff member completes an order, `assignFromQueue()` automatically pulls the next queued order and assigns it. There was no check for staff status — if the staff was deactivated while they had an in-progress order, completing that order could auto-assign a new one.
 
 **Before:**
+
 ```js
 const waiter = await Staff.findById(waiterId);
 if (!waiter) {
@@ -133,6 +149,7 @@ if (!waiter) {
 ```
 
 **After:**
+
 ```js
 const waiter = await Staff.findById(waiterId);
 if (!waiter) {
@@ -141,7 +158,9 @@ if (!waiter) {
 
 // Check if waiter is still active before assigning from queue
 if (waiter.status !== "active") {
-  logger.info(`Waiter ${waiterId} is ${waiter.status}, skipping queue assignment`);
+  logger.info(
+    `Waiter ${waiterId} is ${waiter.status}, skipping queue assignment`
+  );
   return null;
 }
 
@@ -149,21 +168,30 @@ if (waiter.status !== "active") {
 ```
 
 **Behavior:**
+
 - Returns `null` (no assignment) instead of assigning to inactive staff
 - Queued order stays in queue for the next available active waiter
 
 ---
 
-### 4. Block Logout / Self-Deactivation / Break / Leave with Active Orders
+### 4. Logout Deactivates Staff & Block with Active Orders
 
 **Files:**
-- `src/controllers/auth/staffAuth.controller.js` → `logoutStaff()`, `deactivateAccount()`
+
+- `src/controllers/auth/staffAuth.controller.js` → `logoutStaff()`
 - `src/controllers/manager/staff.controller.js` → `updateStaffStatus()`
+- `src/routes/auth/staffAuth.route.js` → removed `/deactivate` route
 
 **Problem:**
-A staff member with active orders (pending, confirmed, preparing, ready, served) could logout, self-deactivate, or be set to `on_break` / `on_leave`. The orders would then get orphaned or immediately reassigned to another waiter, which is unfair — the staff should complete their own orders before stepping away.
+Previously, staff had a separate `/auth/staff/deactivate` endpoint for self-deactivation. This was redundant — logout and deactivation should be a single action. A staff member logging out should automatically be deactivated. Additionally, staff with active orders could logout/deactivate, orphaning their orders.
 
-**Solution — Staff Logout:**
+**Change:**
+The separate `deactivateAccount()` controller and `PATCH /auth/staff/deactivate` route have been **removed**. The `logoutStaff()` controller now handles both logout AND deactivation in a single step.
+
+**Route removed:** `PATCH /auth/staff/deactivate`
+
+**Solution — Staff Logout (with auto-deactivation):**
+
 ```js
 // Block logout if staff has active orders
 const activeOrdersCount = await Order.countDocuments({
@@ -179,30 +207,35 @@ if (activeOrdersCount > 0) {
     )
   );
 }
-```
 
-**Solution — Staff Self-Deactivation:**
-```js
-// Block deactivation if staff has active orders
-const activeOrdersCount = await Order.countDocuments({
-  staff: staff._id,
-  status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
+// Deactivate the account on logout
+if (staff.status !== "inactive") {
+  staff.status = "inactive";
+  staff.updatedAt = new Date();
+}
+
+// Clear refresh token
+staff.refreshToken = null;
+await staff.save();
+
+// Handle deactivation side effects (socket disconnect, manager notification, audit trail)
+const sideEffects = await handleDeactivationSideEffects(staff, {
+  deactivatedBy: "self",
 });
 
-if (activeOrdersCount > 0) {
-  return next(
-    new APIError(
-      400,
-      `Cannot deactivate account. You have ${activeOrdersCount} active order(s). Please complete or hand off all orders before deactivating.`
-    )
-  );
-}
+// Clear cookies
+res.clearCookie("accessToken", CookieOptions);
+res.clearCookie("refreshToken", CookieOptions);
 ```
 
 **Solution — Manager Setting Break / Leave / Inactive:**
+
 ```js
 // Block inactive/on_break/on_leave if staff has active orders
-if (["inactive", "on_break", "on_leave"].includes(status) && status !== staff.status) {
+if (
+  ["inactive", "on_break", "on_leave"].includes(status) &&
+  status !== staff.status
+) {
   const activeOrdersCount = await Order.countDocuments({
     staff: staffId,
     status: { $in: ["pending", "confirmed", "preparing", "ready", "served"] },
@@ -220,10 +253,12 @@ if (["inactive", "on_break", "on_leave"].includes(status) && status !== staff.st
 ```
 
 **Behavior:**
-- Staff with active orders **CANNOT**: logout, self-deactivate, go on break, or go on leave
-- Returns `400` with exact count of active orders
+
+- **Logout = Logout + Deactivation** — single action, no separate deactivation endpoint
+- Staff with active orders **CANNOT** logout (returns `400` with exact count)
+- Auto-reactivation on next login restores the account (unchanged)
+- Manager-set `on_break`/`on_leave`/`inactive` also blocked if staff has active orders
 - **Admin suspension is NOT blocked** — suspension is a disciplinary action; orders get reassigned via the deactivation side-effects service (admin has authority)
-- Staff must complete or have their orders manually reassigned before they can step away
 
 ---
 
@@ -238,6 +273,7 @@ When a staff member was deactivated, their active orders were orphaned — no re
 
 **Solution:**
 On deactivation, the system now:
+
 1. Finds all active orders assigned to the staff (`pending`, `confirmed`, `preparing`, `ready`)
 2. Looks for another available waiter in the same branch (`status: "active"`, `isAvailable: true`)
 3. If found → reassigns all orders to that waiter with `method: "auto-reassign"` in assignment history
@@ -256,6 +292,7 @@ When a staff was deactivated, existing socket connections stayed alive. The staf
 
 **Solution:**
 On deactivation:
+
 1. Emits `account:deactivated` event to the staff's socket room with the reason
 2. Fetches all sockets in the `staff_{id}` room using `io.in(roomName).fetchSockets()`
 3. Calls `socket.disconnect(true)` on each to force-disconnect
@@ -271,22 +308,28 @@ On deactivation:
 A manager could call `PUT /manager/staff/:staffId/status` with `{ status: "active" }` and reactivate a staff member that was `suspended` by an admin. This broke the role hierarchy.
 
 **Before:**
+
 ```js
 // No hierarchy check — any status change allowed
 const updatedStaff = await Staff.findByIdAndUpdate(staffId, { status, ... });
 ```
 
 **After:**
+
 ```js
 // Prevent manager from overriding admin-level suspension
 if (staff.status === "suspended" && status === "active") {
   return next(
-    new APIError(403, "Cannot reactivate a suspended staff member. Only an admin can lift a suspension.")
+    new APIError(
+      403,
+      "Cannot reactivate a suspended staff member. Only an admin can lift a suspension."
+    )
   );
 }
 ```
 
 **Behavior:**
+
 - Manager can still change between `active`, `inactive`, `on_break`, `on_leave`
 - Manager CANNOT change `suspended` → `active` (returns `403`)
 - Only admin reactivation endpoint can lift a suspension
@@ -306,6 +349,7 @@ When an admin or manager deactivated a staff member, the staff received no notif
 
 **Solution:**
 When staff is deactivated by admin/manager, the system emits an `account:deactivated` socket event to the staff with:
+
 ```json
 {
   "message": "Your account has been deactivated by admin",
@@ -328,6 +372,7 @@ When a staff member self-deactivated, their branch manager had no idea. This cou
 
 **Solution:**
 When staff self-deactivates, the system emits a `staff:self_deactivated` socket event to the manager:
+
 ```json
 {
   "staffId": "...",
@@ -344,6 +389,7 @@ When staff self-deactivates, the system emits a `staff:self_deactivated` socket 
 ### 10. Deactivation Reason & Audit Trail
 
 **Files:**
+
 - `src/models/Staff.model.js` — new `statusChangeHistory` field
 - `src/services/staffDeactivation.service.js` — pushes audit entries
 
@@ -351,18 +397,19 @@ When staff self-deactivates, the system emits a `staff:self_deactivated` socket 
 No record of who deactivated a staff member, when, or why. Bad for HR, dispute resolution, and compliance.
 
 **New Schema Field:**
+
 ```js
 statusChangeHistory: [
   {
-    fromStatus: String,      // e.g., "active"
-    toStatus: String,        // e.g., "inactive"
-    changedBy: String,       // "self" | "admin" | "manager" | "system"
-    changedById: ObjectId,   // ref to Admin, Manager, or Staff
-    changedByModel: String,  // "Admin" | "Manager" | "Staff"
-    reason: String,          // "Misconduct" or "Deactivated by admin"
+    fromStatus: String, // e.g., "active"
+    toStatus: String, // e.g., "inactive"
+    changedBy: String, // "self" | "admin" | "manager" | "system"
+    changedById: ObjectId, // ref to Admin, Manager, or Staff
+    changedByModel: String, // "Admin" | "Manager" | "Staff"
+    reason: String, // "Misconduct" or "Deactivated by admin"
     changedAt: Date,
-  }
-]
+  },
+];
 ```
 
 **Behavior:**
@@ -375,6 +422,7 @@ Every deactivation automatically pushes an entry to this array with full context
 ### 11. JWT/Session Invalidation
 
 **Files:**
+
 - `src/models/Staff.model.js` — new `tokenVersion` field
 - `src/utils/tokenUtils.js` — includes `tokenVersion` in JWT payload
 - `src/middleware/auth.middleware.js` — checks `tokenVersion` on each request
@@ -421,34 +469,35 @@ The centralized `handleDeactivationSideEffects()` sets `activeOrdersCount: 0` af
 
 ## Files Changed
 
-| # | File | What Changed |
-|---|---|---|
-| 1 | `src/controllers/auth/staffAuth.controller.js` | P0 #1: Only `inactive` auto-reactivates. Specific error messages for `suspended`/`on_leave`/`on_break`. P0 #4: Blocks logout and self-deactivation if staff has active orders. Integrated deactivation side-effects on self-deactivation. Cookie clearing on logout. |
-| 2 | `src/services/assignment/assignment.service.js` | P0 #2: `manualAssignment()` rejects inactive staff with 400. P0 #3: `assignFromQueue()` skips inactive staff. |
-| 3 | `src/controllers/admin/staff.controller.js` | P1 #5/6, P2 #8/10: Admin deactivation triggers `handleDeactivationSideEffects()`. |
-| 4 | `src/controllers/manager/staff.controller.js` | P0 #4: Blocks `inactive`/`on_break`/`on_leave` if staff has active orders. P1 #7: Blocks manager from reactivating `suspended` staff. Triggers deactivation side-effects when moving to non-active status. |
-| 5 | `src/models/Staff.model.js` | P2 #10: Added `statusChangeHistory` array. P3 #11: Added `tokenVersion` field. |
-| 6 | `src/middleware/auth.middleware.js` | P3 #11: Checks `tokenVersion` in JWT against DB value. |
-| 7 | `src/utils/tokenUtils.js` | P3 #11: Includes `tokenVersion` in JWT payload. |
+| #   | File                                            | What Changed                                                                                                                                                                                                                                                                            |
+| --- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `src/controllers/auth/staffAuth.controller.js`  | P0 #1: Only `inactive` auto-reactivates. Specific error messages for `suspended`/`on_leave`/`on_break`. P0 #4: Logout now deactivates account (merged with former `deactivateAccount()`). Blocks logout if staff has active orders. Triggers deactivation side-effects. Clears cookies. |
+| 1b  | `src/routes/auth/staffAuth.route.js`            | P0 #4: Removed `PATCH /deactivate` route and `deactivateAccount` import.                                                                                                                                                                                                                |
+| 2   | `src/services/assignment/assignment.service.js` | P0 #2: `manualAssignment()` rejects inactive staff with 400. P0 #3: `assignFromQueue()` skips inactive staff.                                                                                                                                                                           |
+| 3   | `src/controllers/admin/staff.controller.js`     | P1 #5/6, P2 #8/10: Admin deactivation triggers `handleDeactivationSideEffects()`.                                                                                                                                                                                                       |
+| 4   | `src/controllers/manager/staff.controller.js`   | P0 #4: Blocks `inactive`/`on_break`/`on_leave` if staff has active orders. P1 #7: Blocks manager from reactivating `suspended` staff. Triggers deactivation side-effects when moving to non-active status.                                                                              |
+| 5   | `src/models/Staff.model.js`                     | P2 #10: Added `statusChangeHistory` array. P3 #11: Added `tokenVersion` field.                                                                                                                                                                                                          |
+| 6   | `src/middleware/auth.middleware.js`             | P3 #11: Checks `tokenVersion` in JWT against DB value.                                                                                                                                                                                                                                  |
+| 7   | `src/utils/tokenUtils.js`                       | P3 #11: Includes `tokenVersion` in JWT payload.                                                                                                                                                                                                                                         |
 
 ## New File Created
 
-| File | Purpose |
-|---|---|
+| File                                        | Purpose                                                                                                                                                                                                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/services/staffDeactivation.service.js` | Centralized service for all deactivation side-effects. Called by admin, manager, and self-deactivation flows. Handles: order reassignment, socket disconnect, staff notification, manager notification, `isAvailable`/`activeOrdersCount` reset, token invalidation, and audit trail. |
 
 ## New Socket Events
 
-| Event | Emitted To | When | Payload |
-|---|---|---|---|
-| `account:deactivated` | Staff (`staff_{id}`) | Admin/manager deactivates staff | `{ message, reason, deactivatedBy, deactivatedAt }` |
-| `staff:self_deactivated` | Manager (`manager_{id}`) | Staff self-deactivates | `{ staffId, staffName, staffRole, branch, deactivatedAt, message }` |
-| `order:reassigned` | New waiter (`staff_{id}`) | Orders are reassigned from deactivated staff | `{ orderId, message, priority: "high" }` |
-| `staff:orders_reassigned` | Manager (`manager_{id}`) | Orders are handled during deactivation | `{ staffId, staffName, ordersReassigned, ordersUnassigned, reassignedTo }` |
+| Event                     | Emitted To                | When                                         | Payload                                                                    |
+| ------------------------- | ------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |
+| `account:deactivated`     | Staff (`staff_{id}`)      | Admin/manager deactivates staff              | `{ message, reason, deactivatedBy, deactivatedAt }`                        |
+| `staff:self_deactivated`  | Manager (`manager_{id}`)  | Staff self-deactivates                       | `{ staffId, staffName, staffRole, branch, deactivatedAt, message }`        |
+| `order:reassigned`        | New waiter (`staff_{id}`) | Orders are reassigned from deactivated staff | `{ orderId, message, priority: "high" }`                                   |
+| `staff:orders_reassigned` | Manager (`manager_{id}`)  | Orders are handled during deactivation       | `{ staffId, staffName, ordersReassigned, ordersUnassigned, reassignedTo }` |
 
 ## New Staff Model Fields
 
-| Field | Type | Default | Purpose |
-|---|---|---|---|
-| `tokenVersion` | `Number` | `0` | Incremented on deactivation to invalidate all existing JWT sessions |
-| `statusChangeHistory` | `Array` | `[]` | Audit trail of all status changes with `fromStatus`, `toStatus`, `changedBy`, `changedById`, `reason`, `changedAt` |
+| Field                 | Type     | Default | Purpose                                                                                                            |
+| --------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
+| `tokenVersion`        | `Number` | `0`     | Incremented on deactivation to invalidate all existing JWT sessions                                                |
+| `statusChangeHistory` | `Array`  | `[]`    | Audit trail of all status changes with `fromStatus`, `toStatus`, `changedBy`, `changedById`, `reason`, `changedAt` |
