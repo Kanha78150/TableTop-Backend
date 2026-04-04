@@ -20,25 +20,31 @@ export const requireActiveSubscription = async (req, res, next) => {
     }
 
     // Find active subscription for the admin
+    // Note: findActiveSubscription auto-expires subscriptions past their endDate
     const subscription = await AdminSubscription.findActiveSubscription(
       req.admin._id
     );
 
     if (!subscription) {
+      // Check if there's an expired subscription to give a better message
+      const expiredSub = await AdminSubscription.findOne({
+        admin: req.admin._id,
+        status: "expired",
+      });
+
+      if (expiredSub) {
+        return next(
+          new APIError(
+            403,
+            "Your subscription has expired. Please renew to continue using this feature."
+          )
+        );
+      }
+
       return next(
         new APIError(
           403,
           "No active subscription found. Please subscribe to a plan to access this feature."
-        )
-      );
-    }
-
-    // Check if subscription has expired
-    if (subscription.isExpired) {
-      return next(
-        new APIError(
-          403,
-          "Your subscription has expired. Please renew to continue using this feature."
         )
       );
     }

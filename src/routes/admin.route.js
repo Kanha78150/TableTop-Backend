@@ -17,6 +17,7 @@ import orderRoutes from "./admin/order.route.js";
 import scheduledJobsRoutes from "./admin/scheduledJobs.route.js";
 import accountingRoutes from "./admin/accounting.route.js";
 import reviewRoutes from "./admin/review.route.js";
+import dashboardRoutes from "./admin/dashboard.route.js";
 
 const router = express.Router();
 
@@ -38,6 +39,7 @@ router.use("/orders", orderRoutes);
 router.use("/scheduled-jobs", scheduledJobsRoutes);
 router.use("/accounting", accountingRoutes);
 router.use("/reviews", reviewRoutes);
+router.use("/dashboard", dashboardRoutes);
 
 // Analytics routes use mixed prefixes (/dashboard, /reports/*, /analytics/*)
 // so mount at root level to preserve original paths

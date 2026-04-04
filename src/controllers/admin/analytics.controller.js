@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Order } from "../../models/Order.model.js";
 import { Transaction } from "../../models/Transaction.model.js";
 import { User } from "../../models/User.model.js";
@@ -6,11 +7,43 @@ import { Branch } from "../../models/Branch.model.js";
 import { APIResponse } from "../../utils/APIResponse.js";
 import { APIError } from "../../utils/APIError.js";
 import { asyncHandler } from "../../middleware/errorHandler.middleware.js";
+import { getAdminHotelScope } from "../../utils/adminHotelScope.js";
 
+/**
+ * Build a scoped branchQuery that enforces hotel ownership.
+ * - Validates hotelId/branchId belong to the admin (throws 403 if not)
+ * - When no hotelId is passed, scopes to all hotels the admin owns
+ * - Handles branch_admin assigned branches
+ */
+async function buildScopedBranchQuery(req, { hotelId, branchId } = {}) {
+  // Validate ownership and get admin's hotel IDs
+  const adminHotelIds = await getAdminHotelScope(req, { hotelId, branchId });
+
+  const branchQuery = {};
+
+  if (branchId) {
+    branchQuery.branch = new mongoose.Types.ObjectId(branchId);
+  } else if (req.admin.role === "branch_admin") {
+    branchQuery.branch = {
+      $in: req.admin.assignedBranches.map(
+        (id) => new mongoose.Types.ObjectId(id)
+      ),
+    };
+  }
+
+  if (hotelId) {
+    branchQuery.hotel = new mongoose.Types.ObjectId(hotelId);
+  } else if (adminHotelIds && adminHotelIds.length > 0) {
+    // No specific hotel requested — scope to all admin's hotels
+    branchQuery.hotel = { $in: adminHotelIds };
+  }
+
+  return branchQuery;
+}
 
 // Dashboard Overview
 export const getDashboardOverview = asyncHandler(async (req, res, next) => {
-  const { branchId, timeRange = "30d" } = req.query;
+  const { hotelId, branchId, timeRange = "30d" } = req.query;
 
   // Calculate date range
   const now = new Date();
@@ -33,23 +66,20 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
       startDate = new Date(now - 30 * 24 * 60 * 60 * 1000);
   }
 
-  // Build query based on admin access
-  let branchQuery = {};
-  if (branchId) {
-    // Check if admin has access to this branch
-    if (
-      req.admin.role === "branch_admin" &&
-      !req.admin.canAccessBranch(branchId)
-    ) {
-      return next(new APIError(403, "You don't have access to this branch"));
-    }
-    branchQuery.branch = branchId;
-  } else if (req.admin.role === "branch_admin") {
-    branchQuery.branch = { $in: req.admin.assignedBranches };
-  }
+  // Build scoped query — validates hotel/branch ownership
+  const branchQuery = await buildScopedBranchQuery(req, { hotelId, branchId });
 
   const dateQuery = { createdAt: { $gte: startDate } };
   const orderQuery = { ...branchQuery, ...dateQuery };
+
+  // Build branch count query scoped by hotel
+  let branchCountQuery = { status: "active" };
+  if (branchQuery.hotel) {
+    branchCountQuery.hotel = branchQuery.hotel;
+  }
+  if (branchId) {
+    branchCountQuery._id = new mongoose.Types.ObjectId(branchId);
+  }
 
   // Get basic stats
   const [
@@ -58,8 +88,8 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
     cancelledOrders,
     pendingOrders,
     totalRevenue,
-    totalCustomers,
-    newCustomers,
+    customerAgg,
+    newCustomerAgg,
     totalBranches,
   ] = await Promise.all([
     Order.countDocuments(orderQuery),
@@ -71,14 +101,28 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
     }),
     Order.aggregate([
       { $match: { ...orderQuery, status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$totalAmount" } } },
+      { $group: { _id: null, total: { $sum: "$totalPrice" } } },
     ]),
-    User.countDocuments(),
-    User.countDocuments({ createdAt: { $gte: startDate } }),
+    // Scope customers: distinct users who ordered within this hotel/branch
+    Order.aggregate([
+      { $match: { ...branchQuery } },
+      { $group: { _id: "$user" } },
+      { $count: "total" },
+    ]),
+    // Scope new customers: distinct users whose first order in this scope is within date range
+    Order.aggregate([
+      { $match: { ...branchQuery } },
+      { $group: { _id: "$user", firstOrder: { $min: "$createdAt" } } },
+      { $match: { firstOrder: { $gte: startDate } } },
+      { $count: "total" },
+    ]),
     req.admin.role === "branch_admin"
       ? req.admin.assignedBranches.length
-      : Branch.countDocuments({ status: "active" }),
+      : Branch.countDocuments(branchCountQuery),
   ]);
+
+  const totalCustomers = customerAgg[0]?.total || 0;
+  const newCustomers = newCustomerAgg[0]?.total || 0;
 
   const revenue = totalRevenue[0]?.total || 0;
 
@@ -94,7 +138,7 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
         orders: { $sum: 1 },
         revenue: {
           $sum: {
-            $cond: [{ $eq: ["$status", "completed"] }, "$totalAmount", 0],
+            $cond: [{ $eq: ["$status", "completed"] }, "$totalPrice", 0],
           },
         },
       },
@@ -144,7 +188,7 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
     Order.countDocuments(previousOrderQuery),
     Order.aggregate([
       { $match: { ...previousOrderQuery, status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$totalAmount" } } },
+      { $group: { _id: null, total: { $sum: "$totalPrice" } } },
     ]),
   ]);
 
@@ -152,9 +196,15 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
   const orderGrowth =
     previousOrders > 0
       ? ((totalOrders - previousOrders) / previousOrders) * 100
-      : 0;
+      : totalOrders > 0
+        ? 100
+        : 0;
   const revenueGrowth =
-    prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
+    prevRevenue > 0
+      ? ((revenue - prevRevenue) / prevRevenue) * 100
+      : revenue > 0
+        ? 100
+        : 0;
 
   res.status(200).json(
     new APIResponse(
@@ -166,6 +216,10 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
           cancelledOrders,
           pendingOrders,
           totalRevenue: revenue,
+          averageOrderValue:
+            completedOrders > 0
+              ? Math.round((revenue / completedOrders) * 100) / 100
+              : 0,
           totalCustomers,
           newCustomers,
           totalBranches,
@@ -181,11 +235,12 @@ export const getDashboardOverview = asyncHandler(async (req, res, next) => {
       "Dashboard overview retrieved successfully"
     )
   );
-  });
+});
 
 // Sales Reports
 export const getSalesReport = asyncHandler(async (req, res, next) => {
   const {
+    hotelId,
     branchId,
     startDate,
     endDate,
@@ -199,19 +254,8 @@ export const getSalesReport = asyncHandler(async (req, res, next) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
 
-  // Build query based on admin access
-  let branchQuery = {};
-  if (branchId) {
-    if (
-      req.admin.role === "branch_admin" &&
-      !req.admin.canAccessBranch(branchId)
-    ) {
-      return next(new APIError(403, "You don't have access to this branch"));
-    }
-    branchQuery.branch = branchId;
-  } else if (req.admin.role === "branch_admin") {
-    branchQuery.branch = { $in: req.admin.assignedBranches };
-  }
+  // Build scoped query — validates hotel/branch ownership
+  const branchQuery = await buildScopedBranchQuery(req, { hotelId, branchId });
 
   // Define grouping format
   let dateFormat, sortField;
@@ -249,8 +293,14 @@ export const getSalesReport = asyncHandler(async (req, res, next) => {
           },
         },
         totalOrders: { $sum: 1 },
-        totalRevenue: { $sum: "$totalAmount" },
-        averageOrderValue: { $avg: "$totalAmount" },
+        totalRevenue: { $sum: "$totalPrice" },
+        averageOrderValue: { $avg: "$totalPrice" },
+      },
+    },
+    {
+      $addFields: {
+        totalRevenue: { $round: ["$totalRevenue", 2] },
+        averageOrderValue: { $round: ["$averageOrderValue", 2] },
       },
     },
     { $sort: { [sortField]: 1 } },
@@ -267,9 +317,9 @@ export const getSalesReport = asyncHandler(async (req, res, next) => {
     },
     {
       $group: {
-        _id: "$paymentMethod",
+        _id: "$payment.paymentMethod",
         count: { $sum: 1 },
-        revenue: { $sum: "$totalAmount" },
+        revenue: { $sum: "$totalPrice" },
       },
     },
   ]);
@@ -292,7 +342,7 @@ export const getSalesReport = asyncHandler(async (req, res, next) => {
         $group: {
           _id: "$branch",
           totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: "$totalAmount" },
+          totalRevenue: { $sum: "$totalPrice" },
         },
       },
       {
@@ -336,7 +386,7 @@ export const getSalesReport = asyncHandler(async (req, res, next) => {
           totalRevenue: totalStats.revenue,
           averageOrderValue:
             totalStats.orders > 0
-              ? totalStats.revenue / totalStats.orders
+              ? Math.round((totalStats.revenue / totalStats.orders) * 100) / 100
               : 0,
           period: { startDate, endDate },
           groupBy,
@@ -345,11 +395,11 @@ export const getSalesReport = asyncHandler(async (req, res, next) => {
       "Sales report generated successfully"
     )
   );
-  });
+});
 
 // Profit & Loss Report
 export const getProfitLossReport = asyncHandler(async (req, res, next) => {
-  const { branchId, startDate, endDate } = req.query;
+  const { hotelId, branchId, startDate, endDate } = req.query;
 
   if (!startDate || !endDate) {
     return next(new APIError(400, "Start date and end date are required"));
@@ -365,18 +415,8 @@ export const getProfitLossReport = asyncHandler(async (req, res, next) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
 
-  let branchQuery = {};
-  if (branchId) {
-    if (
-      req.admin.role === "branch_admin" &&
-      !req.admin.canAccessBranch(branchId)
-    ) {
-      return next(new APIError(403, "You don't have access to this branch"));
-    }
-    branchQuery.branch = branchId;
-  } else if (req.admin.role === "branch_admin") {
-    branchQuery.branch = { $in: req.admin.assignedBranches };
-  }
+  // Build scoped query — validates hotel/branch ownership
+  const branchQuery = await buildScopedBranchQuery(req, { hotelId, branchId });
 
   // Calculate revenue
   const revenueData = await Order.aggregate([
@@ -390,7 +430,7 @@ export const getProfitLossReport = asyncHandler(async (req, res, next) => {
     {
       $group: {
         _id: null,
-        totalRevenue: { $sum: "$totalAmount" },
+        totalRevenue: { $sum: "$totalPrice" },
         totalOrders: { $sum: 1 },
       },
     },
@@ -431,7 +471,7 @@ export const getProfitLossReport = asyncHandler(async (req, res, next) => {
         _id: {
           month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
         },
-        revenue: { $sum: "$totalAmount" },
+        revenue: { $sum: "$totalPrice" },
         orders: { $sum: 1 },
       },
     },
@@ -463,11 +503,11 @@ export const getProfitLossReport = asyncHandler(async (req, res, next) => {
       "Profit & Loss report generated successfully"
     )
   );
-  });
+});
 
 // Customer Analytics
 export const getCustomerAnalytics = asyncHandler(async (req, res, next) => {
-  const { branchId, timeRange = "30d" } = req.query;
+  const { hotelId, branchId, timeRange = "30d" } = req.query;
 
   const now = new Date();
   let startDate;
@@ -486,40 +526,48 @@ export const getCustomerAnalytics = asyncHandler(async (req, res, next) => {
       startDate = new Date(now - 30 * 24 * 60 * 60 * 1000);
   }
 
-  let branchQuery = {};
-  if (branchId) {
-    if (
-      req.admin.role === "branch_admin" &&
-      !req.admin.canAccessBranch(branchId)
-    ) {
-      return next(new APIError(403, "You don't have access to this branch"));
-    }
-    branchQuery.branch = branchId;
-  } else if (req.admin.role === "branch_admin") {
-    branchQuery.branch = { $in: req.admin.assignedBranches };
-  }
+  // Build scoped query — validates hotel/branch ownership
+  const branchQuery = await buildScopedBranchQuery(req, { hotelId, branchId });
 
-  // Customer statistics
-  const [totalCustomers, newCustomers, returningCustomers, activeCustomers] =
-    await Promise.all([
-      User.countDocuments(),
-      User.countDocuments({ createdAt: { $gte: startDate } }),
-      Order.distinct("user", {
-        ...branchQuery,
-        createdAt: { $gte: startDate },
-        status: "completed",
-      }).then((users) =>
-        User.countDocuments({
-          _id: { $in: users },
-          createdAt: { $lt: startDate },
-        })
-      ),
-      Order.distinct("user", {
-        ...branchQuery,
-        createdAt: { $gte: startDate },
-        status: "completed",
-      }).then((users) => users.length),
-    ]);
+  // Customer statistics - scoped to hotel/branch orders
+  const [
+    totalCustomerAgg,
+    newCustomerAgg,
+    returningCustomers,
+    activeCustomers,
+  ] = await Promise.all([
+    // Total distinct customers who have ever ordered in this scope
+    Order.aggregate([
+      { $match: { ...branchQuery } },
+      { $group: { _id: "$user" } },
+      { $count: "total" },
+    ]),
+    // New customers: first order in this scope falls within date range
+    Order.aggregate([
+      { $match: { ...branchQuery } },
+      { $group: { _id: "$user", firstOrder: { $min: "$createdAt" } } },
+      { $match: { firstOrder: { $gte: startDate } } },
+      { $count: "total" },
+    ]),
+    Order.distinct("user", {
+      ...branchQuery,
+      createdAt: { $gte: startDate },
+      status: "completed",
+    }).then((users) =>
+      User.countDocuments({
+        _id: { $in: users },
+        createdAt: { $lt: startDate },
+      })
+    ),
+    Order.distinct("user", {
+      ...branchQuery,
+      createdAt: { $gte: startDate },
+      status: "completed",
+    }).then((users) => users.length),
+  ]);
+
+  const totalCustomers = totalCustomerAgg[0]?.total || 0;
+  const newCustomers = newCustomerAgg[0]?.total || 0;
 
   // Customer segmentation by order frequency
   const customerSegments = await Order.aggregate([
@@ -534,7 +582,7 @@ export const getCustomerAnalytics = asyncHandler(async (req, res, next) => {
       $group: {
         _id: "$user",
         orderCount: { $sum: 1 },
-        totalSpent: { $sum: "$totalAmount" },
+        totalSpent: { $sum: "$totalPrice" },
       },
     },
     {
@@ -563,8 +611,8 @@ export const getCustomerAnalytics = asyncHandler(async (req, res, next) => {
       $group: {
         _id: "$user",
         orderCount: { $sum: 1 },
-        totalSpent: { $sum: "$totalAmount" },
-        avgOrderValue: { $avg: "$totalAmount" },
+        totalSpent: { $sum: "$totalPrice" },
+        avgOrderValue: { $avg: "$totalPrice" },
       },
     },
     { $sort: { totalSpent: -1 } },
@@ -610,31 +658,19 @@ export const getCustomerAnalytics = asyncHandler(async (req, res, next) => {
       "Customer analytics retrieved successfully"
     )
   );
-  });
+});
 
 // Best Selling Items Report
 export const getBestSellingItems = asyncHandler(async (req, res, next) => {
-  const { branchId, startDate, endDate, limit = 20 } = req.query;
+  const { hotelId, branchId, startDate, endDate, limit = 20 } = req.query;
 
-  if (!startDate || !endDate) {
-    return next(new APIError(400, "Start date and end date are required"));
-  }
+  const end = endDate ? new Date(endDate) : new Date();
+  const start = startDate
+    ? new Date(startDate)
+    : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-
-  let branchQuery = {};
-  if (branchId) {
-    if (
-      req.admin.role === "branch_admin" &&
-      !req.admin.canAccessBranch(branchId)
-    ) {
-      return next(new APIError(403, "You don't have access to this branch"));
-    }
-    branchQuery.branch = branchId;
-  } else if (req.admin.role === "branch_admin") {
-    branchQuery.branch = { $in: req.admin.assignedBranches };
-  }
+  // Build scoped query — validates hotel/branch ownership
+  const branchQuery = await buildScopedBranchQuery(req, { hotelId, branchId });
 
   const bestSellers = await Order.aggregate([
     {
@@ -704,10 +740,13 @@ export const getBestSellingItems = asyncHandler(async (req, res, next) => {
       200,
       {
         bestSellers,
-        period: { startDate, endDate },
+        period: {
+          startDate: start.toISOString().split("T")[0],
+          endDate: end.toISOString().split("T")[0],
+        },
         totalItems: bestSellers.length,
       },
       "Best selling items report generated successfully"
     )
   );
-  });
+});

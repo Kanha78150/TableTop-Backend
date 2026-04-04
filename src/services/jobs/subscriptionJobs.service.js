@@ -31,19 +31,12 @@ jobCallbacks.expiryCheck = async () => {
   logJob(jobName, "start", "Starting subscription expiry check...");
 
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
 
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    // Find all active subscriptions that expire today
+    // Find all active subscriptions that have expired (endDate in the past)
     const expiringSubscriptions = await AdminSubscription.find({
       status: "active",
-      endDate: {
-        $gte: today,
-        $lt: tomorrow,
-      },
+      endDate: { $lt: now },
     }).populate("admin plan");
 
     logJob(

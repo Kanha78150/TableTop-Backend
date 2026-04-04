@@ -195,12 +195,23 @@ adminSubscriptionSchema.index({ endDate: 1 });
 adminSubscriptionSchema.index({ admin: 1, status: 1 }); // Compound index
 
 // Static method to find active subscription for admin
-// IMPORTANT: Only returns truly active (paid) subscriptions
-adminSubscriptionSchema.statics.findActiveSubscription = function (adminId) {
-  return this.findOne({
+// IMPORTANT: Only returns truly active (paid) and non-expired subscriptions
+adminSubscriptionSchema.statics.findActiveSubscription = async function (
+  adminId
+) {
+  const subscription = await this.findOne({
     admin: adminId,
     status: "active",
   }).populate("plan");
+
+  // If subscription exists but has expired, update its status and return null
+  if (subscription && new Date() > subscription.endDate) {
+    subscription.status = "expired";
+    await subscription.save();
+    return null;
+  }
+
+  return subscription;
 };
 
 // Static method to find pending payment subscription for admin
@@ -263,4 +274,9 @@ export const AdminSubscription = mongoose.model(
 
 // Validation schema for creating subscription
 // Validators extracted to src/validators/adminsubscription.validators.js
-export { validateSubscription, validatePayment, validatePlanSelection, validateCancellation } from "../validators/adminsubscription.validators.js";
+export {
+  validateSubscription,
+  validatePayment,
+  validatePlanSelection,
+  validateCancellation,
+} from "../validators/adminsubscription.validators.js";
