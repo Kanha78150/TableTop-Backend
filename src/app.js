@@ -74,6 +74,23 @@ app.get("/", (req, res) => {
   res.json({ message: "Beanrow System API is running." });
 });
 
+// Docker / Cloud Run health check
+app.get("/health", async (req, res) => {
+  try {
+    const mongoose = (await import("mongoose")).default;
+    const dbState = mongoose.connection.readyState;
+    const status = dbState === 1 ? "ok" : "degraded";
+    res.status(dbState === 1 ? 200 : 503).json({
+      status,
+      uptime: process.uptime(),
+      db: ["disconnected", "connected", "connecting", "disconnecting"][dbState],
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({ status: "error", message: error.message });
+  }
+});
+
 // Email queue health check
 app.get("/health/email-queue", async (req, res) => {
   try {
