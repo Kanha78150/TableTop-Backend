@@ -995,9 +995,11 @@ class CartService {
           Math.round(itemTaxDetails[index].gstAmount * 100) / 100;
       });
 
-      // 10. Calculate estimated time
-      const estimatedTime =
-        Math.max(...orderItems.map((item) => item.preparationTime || 15)) + 5; // Add 5 minutes buffer
+      // 10. Calculate estimated time (sum of all items' preparation times)
+      const estimatedTime = orderItems.reduce(
+        (total, item) => total + (item.preparationTime || 15),
+        0
+      );
 
       // 10.5. Calculate commission for this order
       const hotelForCommission =

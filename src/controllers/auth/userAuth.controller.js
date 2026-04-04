@@ -17,6 +17,7 @@ import { logger } from "../../utils/logger.js";
 import { generateTokens } from "../../utils/tokenUtils.js";
 import { uploadToCloudinary } from "../../utils/cloudinary.js";
 import { generateOtp } from "../../utils/otpGenerator.js";
+import { hashOtp, verifyOtp } from "../../utils/otpGenerator.js";
 import {
   sendEmailOtp,
   sendPasswordResetEmail,
@@ -88,6 +89,8 @@ export const Signup = async (req, res) => {
 
     // Generate only email OTP (skip SMS for now)
     const emailOtp = generateOtp();
+    const hashedOtp = hashOtp(emailOtp);
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     logger.info("Creating new user...");
     // Create user
@@ -98,7 +101,9 @@ export const Signup = async (req, res) => {
       phone,
       password: hashedPassword,
       profileImage: profileImageUrl,
-      emailOtp,
+      emailOtp: hashedOtp,
+      emailOtpExpiry: otpExpiry,
+      otpAttempts: 0,
       // phoneOtp removed - we'll implement SMS verification later
       // isPhoneVerified defaults to false, phone verification will be added later
     });
@@ -170,13 +175,47 @@ export const verifyEmailOtp = async (req, res) => {
       throw new APIError(400, "Email is already verified");
     }
 
-    if (user.emailOtp !== otp) {
+    // Check if OTP attempts are locked
+    if (user.otpLockedUntil && user.otpLockedUntil > new Date()) {
+      const remainingMs = user.otpLockedUntil - new Date();
+      const remainingMin = Math.ceil(remainingMs / 60000);
+      throw new APIError(
+        429,
+        `Too many failed attempts. Please try again in ${remainingMin} minute(s).`
+      );
+    }
+
+    // Check if OTP has expired
+    if (user.emailOtpExpiry && user.emailOtpExpiry < new Date()) {
+      throw new APIError(400, "OTP has expired. Please request a new one.");
+    }
+
+    // Verify OTP using timing-safe comparison
+    if (!verifyOtp(otp, user.emailOtp)) {
+      // Increment failed attempts
+      user.otpAttempts = (user.otpAttempts || 0) + 1;
+
+      // Lock after 5 failed attempts for 30 minutes
+      if (user.otpAttempts >= 5) {
+        user.otpLockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+        user.otpAttempts = 0;
+        await user.save();
+        throw new APIError(
+          429,
+          "Too many failed attempts. Account locked for 30 minutes."
+        );
+      }
+
+      await user.save();
       throw new APIError(400, "Invalid OTP");
     }
 
     // Update user verification status
     user.isEmailVerified = true;
-    user.emailOtp = null; // Clear OTP after verification
+    user.emailOtp = null;
+    user.emailOtpExpiry = null;
+    user.otpAttempts = 0;
+    user.otpLockedUntil = null;
     await user.save();
 
     res.status(200).json({
@@ -287,10 +326,13 @@ export const resendEmailOtp = async (req, res) => {
 
     // Generate new OTP
     const emailOtp = generateOtp();
-    user.emailOtp = emailOtp;
+    user.emailOtp = hashOtp(emailOtp);
+    user.emailOtpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    user.otpAttempts = 0;
+    user.otpLockedUntil = null;
     await user.save();
 
-    // Send OTP
+    // Send OTP (send plaintext OTP via email, not hashed)
     await sendEmailOtp(email, emailOtp);
 
     res.status(200).json({
@@ -607,9 +649,11 @@ export const logoutAll = async (req, res) => {
   try {
     const userId = req.user.id; // From auth middleware
 
-    // Clear refresh token from database (invalidates all sessions)
+    // Increment tokenVersion to invalidate all existing tokens across devices
+    // Clear refresh token from database
     await User.findByIdAndUpdate(userId, {
       refreshToken: null,
+      $inc: { tokenVersion: 1 },
     });
 
     // Clear cookies

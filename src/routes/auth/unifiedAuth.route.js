@@ -3,6 +3,10 @@ import {
   unifiedLogin,
   refreshToken,
 } from "../../controllers/auth/unifiedAuth.controller.js";
+import {
+  authLimiter,
+  generalLimiter,
+} from "../../middleware/rateLimiter.middleware.js";
 
 const router = express.Router();
 
@@ -14,7 +18,7 @@ const router = express.Router();
  * @body {string} password - User password
  * @returns {object} User data, tokens, and userType
  */
-router.post("/login", unifiedLogin);
+router.post("/login", authLimiter, unifiedLogin);
 
 /**
  * @route POST /api/v1/auth/refresh-token
@@ -24,6 +28,6 @@ router.post("/login", unifiedLogin);
  * @cookie {string} refreshToken - Refresh token from cookies
  * @returns {object} New access and refresh tokens
  */
-router.post("/refresh-token", refreshToken);
+router.post("/refresh-token", generalLimiter, refreshToken);
 
 export default router;

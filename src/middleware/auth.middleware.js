@@ -27,6 +27,18 @@ export const authenticateUser = async (req, res, next) => {
       throw new APIError(401, "Invalid access token");
     }
 
+    // Check if token version matches (invalidated by logout from all devices)
+    if (
+      decoded.tokenVersion !== undefined &&
+      user.tokenVersion !== undefined &&
+      decoded.tokenVersion !== user.tokenVersion
+    ) {
+      throw new APIError(
+        401,
+        "Session has been invalidated. Please login again."
+      );
+    }
+
     // Check if email is verified
     if (!user.isEmailVerified) {
       throw new APIError(403, "Email verification required");
@@ -284,7 +296,10 @@ export const authenticateStaff = async (req, res, next) => {
       staff.tokenVersion !== undefined &&
       decoded.tokenVersion !== staff.tokenVersion
     ) {
-      throw new APIError(401, "Session has been invalidated. Please login again.");
+      throw new APIError(
+        401,
+        "Session has been invalidated. Please login again."
+      );
     }
 
     // Check if staff is active

@@ -25,6 +25,9 @@ const userSchema = new mongoose.Schema(
       },
     },
     emailOtp: { type: String, default: null },
+    emailOtpExpiry: { type: Date, default: null },
+    otpAttempts: { type: Number, default: 0 },
+    otpLockedUntil: { type: Date, default: null },
     phoneOtp: { type: String, default: null },
     isEmailVerified: { type: Boolean, default: false },
     isPhoneVerified: { type: Boolean, default: false },
@@ -40,6 +43,7 @@ const userSchema = new mongoose.Schema(
       },
     },
     refreshToken: { type: String, default: null },
+    tokenVersion: { type: Number, default: 0 },
     profileImage: { type: String, default: null },
     avatar: { type: String, default: null },
     role: { type: String, enum: ["user"], default: "user" },
@@ -157,4 +161,10 @@ userSchema.statics.getTotalCoinsInCirculation = async function () {
 export const User = mongoose.model("User", userSchema);
 
 // Validators extracted to src/validators/user.validators.js
-export { validateUser, validateEditProfile, validateChangePassword, validateResetPassword, validateOAuthUserCompletion } from "../validators/user.validators.js";
+export {
+  validateUser,
+  validateEditProfile,
+  validateChangePassword,
+  validateResetPassword,
+  validateOAuthUserCompletion,
+} from "../validators/user.validators.js";

@@ -21,6 +21,9 @@ export const uploadToCloudinary = async (localFilePath) => {
       resource_type: "auto",
     });
     // After uploading to cloudinary remove file from local uploads folder
+    if (fs.existsSync(localFilePath)) {
+      fs.unlinkSync(localFilePath);
+    }
     console.log("File is uploaded in cloudinary", result.url);
     return result;
   } catch (error) {

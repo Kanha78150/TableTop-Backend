@@ -30,6 +30,12 @@ import {
   authenticateUser,
   authenticateOAuthUser,
 } from "../../middleware/auth.middleware.js";
+import {
+  authLimiter,
+  signupLimiter,
+  otpLimiter,
+  passwordResetLimiter,
+} from "../../middleware/rateLimiter.middleware.js";
 
 // Import oauth
 import passport from "../../config/oauth.js";
@@ -37,12 +43,25 @@ import passport from "../../config/oauth.js";
 const router = Router();
 
 // Public routes (no authentication required)
-router.post("/signup", upload.single("profileImage"), asyncHandler(Signup));
-router.post("/login", asyncHandler(Login));
-router.post("/verify-email-otp", asyncHandler(verifyEmailOtp));
-router.post("/resend-email-otp", asyncHandler(resendEmailOtp));
-router.post("/forgot-password", asyncHandler(forgotPassword));
-router.post("/reset-password", asyncHandler(resetPassword));
+router.post(
+  "/signup",
+  signupLimiter,
+  upload.single("profileImage"),
+  asyncHandler(Signup)
+);
+router.post("/login", authLimiter, asyncHandler(Login));
+router.post("/verify-email-otp", otpLimiter, asyncHandler(verifyEmailOtp));
+router.post("/resend-email-otp", otpLimiter, asyncHandler(resendEmailOtp));
+router.post(
+  "/forgot-password",
+  passwordResetLimiter,
+  asyncHandler(forgotPassword)
+);
+router.post(
+  "/reset-password",
+  passwordResetLimiter,
+  asyncHandler(resetPassword)
+);
 
 // Google OAuth routes
 // For signup flow

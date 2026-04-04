@@ -1028,25 +1028,15 @@ const calculateServiceCharge = (amount) => {
  * @returns {number} - Estimated time in minutes
  */
 const calculateEstimatedTime = (items) => {
-  let maxPrepTime = 0;
-  let totalComplexity = 0;
+  let totalPrepTime = 0;
 
   items.forEach((item) => {
     const itemPrepTime =
       item.foodItem?.preparationTime || item.preparationTime || 15; // Default 15 minutes
-    const itemComplexity = item.quantity * (item.customizations ? 1.2 : 1);
-
-    maxPrepTime = Math.max(maxPrepTime, itemPrepTime);
-    totalComplexity += itemComplexity;
+    totalPrepTime += itemPrepTime;
   });
 
-  // Base time is the longest preparation time + complexity factor
-  const baseTime = maxPrepTime + Math.ceil(totalComplexity / 2);
-
-  // Add buffer time (10-20% based on order size)
-  const bufferMultiplier = 1 + items.length * 0.02; // 2% per item
-
-  return Math.ceil(baseTime * bufferMultiplier);
+  return totalPrepTime;
 };
 
 /**
